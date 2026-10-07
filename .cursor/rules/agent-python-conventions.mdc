@@ -1,0 +1,48 @@
+---
+description: Python conventions for the OGX agent and FastMCP server code
+globs: doc-gen-agent/*.py,github-mcp-server/*.py
+alwaysApply: false
+---
+
+# Agent & MCP Server Python Conventions
+
+## OGX agent (`doc-gen-agent/agent.py`)
+
+- Agent logic uses the **OGX Responses API** (`AsyncOgxClient`), not
+  LangChain/LangGraph — the server-side agentic loop (tool calls,
+  inference) runs in the OGX sidecar container, not in this process.
+- `run_agent()` is an async generator that `yield`s text chunks; always
+  preserve streaming behavior (don't buffer the full response before
+  returning) so the Gradio UI can render incrementally.
+- All config comes from environment variables with sensible defaults
+  (`OGX_BASE_URL`, `GITHUB_MCP_URL`, `MODEL_NAME`, `KNOWLEDGE_FILE`) —
+  never hardcode a cluster-internal URL inline; add a new env var instead.
+- Keep the token-budget guardrails in the system prompt in sync with
+  `MAX_INFER_ITERS` — if you change one, reconsider the other.
+- Wrap OGX stream consumption in the existing `asyncio.timeout` /
+  `asyncio.TimeoutError` / broad `except Exception` pattern so a stuck
+  tool-call loop degrades to a user-visible error instead of hanging.
+
+## GitHub MCP server (`github-mcp-server/server.py`)
+
+- Built with `FastMCP`; tools are plain `async def` functions decorated
+  with `@mcp.tool()`. Docstrings are the only documentation an agent sees
+  — write them as instructions to the model (when to call it, what it
+  returns), not just a human-facing description.
+- Every tool must return a `dict[str, Any]` with an `"error"` key on
+  failure rather than raising — the agent has no way to catch exceptions.
+- Respect the existing guardrails when adding new tools: cap result size
+  (see `MAX_TREE_ENTRIES`, `MAX_FILE_BYTES`), and filter out
+  binary/vendor paths (`EXCLUDED_PATH_PREFIXES`, `EXCLUDED_EXTENSIONS`)
+  rather than returning everything and relying on the model to ignore it.
+- `GITHUB_TOKEN` is optional — any new tool that requires it (like
+  `search_code`) must check for it and return a clear `"error"` message
+  rather than failing with a raw 401 from the GitHub API.
+
+## General
+
+- No test suite exists yet; after edits, at minimum run
+  `python3 -m py_compile <file>`.
+- Don't add a dependency on an external LLM API (OpenAI, Anthropic,
+  etc.) — all inference must go through the in-cluster vLLM endpoint via
+  OGX.

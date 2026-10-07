@@ -1,0 +1,169 @@
+---
+# Note: the ogx-stack-config and agent-knowledge ConfigMaps are managed by
+# build-and-deploy.sh via:
+#   oc create configmap ogx-stack-config --from-file=stack_run_config.yaml=ogx/stack_run_config.yaml
+#   oc create configmap agent-knowledge --from-file=knowledge.md=knowledge.md
+# Do NOT inline them here to avoid YAML-within-YAML parsing issues.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doc-gen-agent
+  namespace: doc-gen-demo
+  labels:
+    app: doc-gen-agent
+    app.kubernetes.io/name: doc-gen-agent
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: doc-gen-agent
+  template:
+    metadata:
+      labels:
+        app: doc-gen-agent
+    spec:
+      serviceAccountName: doc-gen-agent-sa
+      containers:
+        # ── OGX sidecar ──────────────────────────────────────────────────────
+        - name: ogx-server
+          image: ogxai/distribution-starter:latest
+          imagePullPolicy: Always
+          command:
+            - uvicorn
+            - ogx.core.server.server:create_app
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "8321"
+            - --factory
+          ports:
+            - containerPort: 8321
+              name: ogx-http
+              protocol: TCP
+          env:
+            - name: OGX_CONFIG
+              value: "/etc/ogx/stack_run_config.yaml"
+            - name: OGX_LOGGING
+              value: "all=INFO"
+            - name: SQLITE_STORE_DIR
+              value: "/tmp/ogx"
+            - name: VLLM_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: cluster-config
+                  key: vllm_url
+            - name: VLLM_MAX_TOKENS
+              value: "8192"
+            - name: VLLM_API_TOKEN
+              value: "unused"
+            - name: INFERENCE_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: cluster-config
+                  key: model_name
+            - name: OPENAI_MAX_RETRIES
+              value: "8"
+          volumeMounts:
+            - name: ogx-config
+              mountPath: /etc/ogx
+            - name: ogx-data
+              mountPath: /tmp/ogx
+          livenessProbe:
+            httpGet:
+              path: /v1/models
+              port: 8321
+            initialDelaySeconds: 45
+            periodSeconds: 20
+            failureThreshold: 4
+          readinessProbe:
+            httpGet:
+              path: /v1/models
+              port: 8321
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+        # ── Gradio UI ────────────────────────────────────────────────────────
+        - name: doc-gen-agent
+          image: image-registry.openshift-image-registry.svc:5000/doc-gen-demo/doc-gen-agent:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 7860
+              name: http
+              protocol: TCP
+          env:
+            - name: GRADIO_PORT
+              value: "7860"
+            - name: GRADIO_ANALYTICS_ENABLED
+              value: "False"
+            - name: OGX_BASE_URL
+              value: "http://localhost:8321"
+            - name: GITHUB_MCP_URL
+              value: "http://github-mcp-server.doc-gen-demo.svc.cluster.local:8080/mcp"
+            - name: MODEL_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: cluster-config
+                  key: model_name
+            - name: KNOWLEDGE_FILE
+              value: "/etc/agent-knowledge/knowledge.md"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 7860
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 4
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 7860
+            initialDelaySeconds: 45
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "200m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          volumeMounts:
+            - name: agent-knowledge
+              mountPath: /etc/agent-knowledge
+              readOnly: true
+      volumes:
+        - name: ogx-config
+          configMap:
+            name: ogx-stack-config
+        - name: ogx-data
+          emptyDir: {}
+        - name: agent-knowledge
+          configMap:
+            name: agent-knowledge
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: doc-gen-agent
+  namespace: doc-gen-demo
+  labels:
+    app: doc-gen-agent
+spec:
+  selector:
+    app: doc-gen-agent
+  ports:
+    - name: http
+      port: 7860
+      targetPort: 7860
+      protocol: TCP

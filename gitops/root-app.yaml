@@ -1,0 +1,41 @@
+# Root ArgoCD "App-of-Apps".
+#
+# Applying this single Application bootstraps the entire demo: it tells
+# ArgoCD to watch gitops/apps/ and create one child Application per
+# component found there (RHOAI operator, model serving, GitHub MCP
+# server, doc-gen agent). Each child Application then manages its own
+# Kubernetes resources independently.
+#
+# NOTE: `repoURL` below is replaced by gitops/bootstrap.sh with the
+# actual git remote URL of this repository before being applied.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: doc-gen-demo-root
+  namespace: openshift-gitops
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/YOUR_ORG/agentic-doc-generation.git
+    targetRevision: HEAD
+    path: gitops/apps
+    directory:
+      recurse: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openshift-gitops
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

@@ -1,0 +1,35 @@
+# Child Application: deploys the doc-gen agent (Gradio UI + OGX sidecar).
+#
+# sync-wave 2 — depends on model-serving (needs the vLLM InferenceService
+# URL) and github-mcp-server (needs its Service DNS name) from wave 1.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: doc-gen-agent
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/YOUR_ORG/agentic-doc-generation.git
+    targetRevision: HEAD
+    path: doc-gen-agent/k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: doc-gen-demo
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

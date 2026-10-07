@@ -1,0 +1,88 @@
+version: '2'
+distro_name: doc-gen-agent
+
+apis:
+  - inference
+  - responses
+  - tool_runtime
+  - vector_io
+  - files
+
+providers:
+  inference:
+    - provider_id: local-model
+      provider_type: remote::vllm
+      config:
+        base_url: ${env.VLLM_URL}
+        max_tokens: ${env.VLLM_MAX_TOKENS:=4096}
+        api_token: ${env.VLLM_API_TOKEN:=unused}
+        network:
+          tls:
+            verify: false
+
+  responses:
+    - provider_id: builtin
+      provider_type: inline::builtin
+      config:
+        persistence:
+          responses:
+            table_name: responses
+            backend: sql_default
+
+  vector_io:
+    - provider_id: faiss
+      provider_type: inline::faiss
+      config:
+        persistence:
+          namespace: vector_io::faiss
+          backend: kv_default
+
+  tool_runtime:
+    - provider_id: model-context-protocol
+      provider_type: remote::model-context-protocol
+      config: {}
+
+  files:
+    - provider_id: builtin-files
+      provider_type: inline::localfs
+      config:
+        storage_dir: /tmp/ogx/files
+        metadata_store:
+          table_name: files_metadata
+          backend: sql_default
+
+storage:
+  backends:
+    kv_default:
+      type: kv_sqlite
+      db_path: /tmp/ogx/kvstore.db
+    sql_default:
+      type: sql_sqlite
+      db_path: /tmp/ogx/sql_store.db
+  stores:
+    metadata:
+      namespace: registry
+      backend: kv_default
+    inference:
+      table_name: inference_store
+      backend: sql_default
+    conversations:
+      table_name: openai_conversations
+      backend: sql_default
+    prompts:
+      table_name: prompts
+      backend: sql_default
+
+# NOTE: model_id below must match MODEL_NAME in doc-gen-agent/k8s/cluster-config.yaml
+# and the served-model-name set by gitops/model-serving/serving-runtime.yaml.
+# Swapping models: update provider_model_id/model_id here to match.
+registered_resources:
+  models:
+    - metadata: {}
+      model_id: granite-3.1-8b-instruct
+      provider_id: local-model
+      provider_model_id: granite-3.1-8b-instruct
+      model_type: llm
+
+server:
+  port: 8321

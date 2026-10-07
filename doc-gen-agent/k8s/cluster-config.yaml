@@ -1,0 +1,17 @@
+# Central place for cluster-specific / model-specific values consumed by
+# the Deployment. Keep MODEL_NAME in sync with:
+#   - gitops/model-serving/inference-service.yaml (served-model-name via the
+#     ServingRuntime's {{.Name}} template == this InferenceService's name
+#     is "doc-gen-llm", but the served *model* name comes from the
+#     ServingRuntime args; for vLLM this is normally the model repo id)
+#   - doc-gen-agent/ogx/stack_run_config.yaml (registered_resources.models.model_id)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-config
+  namespace: doc-gen-demo
+data:
+  model_name: "granite-3.1-8b-instruct"
+  # In-cluster URL of the vLLM InferenceService predictor (RawDeployment
+  # mode creates a plain k8s Service named "<isvc-name>-predictor").
+  vllm_url: "http://doc-gen-llm-predictor.doc-gen-demo.svc.cluster.local:8080/v1"

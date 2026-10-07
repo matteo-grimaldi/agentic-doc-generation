@@ -1,0 +1,50 @@
+---
+description: GitOps / ArgoCD conventions for this repo's gitops/ directory
+globs: gitops/**/*.yaml,*/k8s/**/*.yaml
+alwaysApply: false
+---
+
+# GitOps Conventions
+
+This repo deploys everything through ArgoCD App-of-Apps
+(`gitops/root-app.yaml` → `gitops/apps/*.yaml`). Follow these rules when
+touching any manifest under `gitops/` or a component's `k8s/` directory.
+
+## repoURL placeholder
+
+Every ArgoCD `Application` resource must use the literal placeholder:
+
+```yaml
+repoURL: https://github.com/YOUR_ORG/agentic-doc-generation.git
+```
+
+Never replace this with a real URL in committed manifests —
+`gitops/bootstrap.sh` substitutes it at bootstrap time via `sed`.
+
+## Sync-wave ordering
+
+Preserve `argocd.argoproj.io/sync-wave` annotations:
+
+- Wave 0 — `rhoai-operator` (OLM Subscription, OperatorGroup, DSCI, DSC)
+- Wave 1 — `model-serving`, `github-mcp-server` (depend on wave 0's CRDs)
+- Wave 2 — `doc-gen-agent` (depends on wave 1's Services)
+
+If you add a resource that depends on another wave's output (a CRD, a
+Service DNS name, a ConfigMap), give it a sync-wave annotation at least
+one higher than its dependency, don't just rely on apply order.
+
+## Resource/namespace conventions
+
+- All app-namespace resources (model serving, MCP server, agent) live in
+  `doc-gen-demo`. Don't introduce a new namespace without a reason.
+- Every container needs `resources.requests`/`limits`, a `livenessProbe`,
+  and a `readinessProbe` — copy an existing `deployment.yaml` rather than
+  inventing a new shape. Containers run as non-root (`USER 1001`).
+
+## File-backed ConfigMaps
+
+`ogx-stack-config` and `agent-knowledge` are generated from files by each
+component's `build-and-deploy.sh` (`oc create configmap --from-file=...`),
+not committed as inline YAML (avoids YAML-in-YAML). Follow this pattern
+for new file-backed ConfigMaps, and note how it's generated in a comment
+at the top of the consuming `deployment.yaml`.

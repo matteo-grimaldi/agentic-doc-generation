@@ -1,0 +1,14 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: doc-gen-agent
+  namespace: doc-gen-demo
+spec:
+  to:
+    kind: Service
+    name: doc-gen-agent
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

@@ -1,0 +1,24 @@
+---
+description: Conventions for build-and-deploy.sh shell scripts in this repo
+globs: *build-and-deploy*.sh,gitops/bootstrap.sh
+alwaysApply: false
+---
+
+# Deploy Script Conventions
+
+- Every script starts with `set -euo pipefail`.
+- Resolve paths relative to the script's own location:
+  `SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"` — never
+  assume a working directory.
+- `NAMESPACE` is always overridable via an env var with a default
+  (`NAMESPACE="${NAMESPACE:-doc-gen-demo}"`).
+- Idempotent by construction: use `oc apply`, `oc create ... --dry-run=client -o yaml | oc apply -f -`
+  for ConfigMaps/Secrets, and check-before-create
+  (`oc get X >/dev/null 2>&1 || oc create X`) for one-time setup steps
+  like `oc new-build`.
+- Echo a one-line `==>` status message before each major step so the
+  script's output reads as a narrated log, matching the existing scripts.
+- End with an explicit `oc rollout status` wait and print the resulting
+  Route URL (if any) — don't leave the user guessing whether it worked.
+- After editing any script, validate with `bash -n <script>` before
+  committing.

@@ -1,0 +1,50 @@
+# InferenceService — serves the local model the doc-gen agent calls for
+# inference. Deployed with RawDeployment mode (see dsc.yaml), so it is
+# reachable in-cluster as a plain Kubernetes Service — no Knative/Service
+# Mesh route required:
+#
+#   http://doc-gen-llm-predictor.doc-gen-demo.svc.cluster.local:8080/v1
+#
+# ── Swapping the model ──────────────────────────────────────────────────
+# This is the ONLY file (plus doc-gen-agent/k8s/cluster-config.yaml) you
+# need to edit to change the served model. Three supported examples:
+#
+#   Granite 3.1 8B Instruct (default, smallest GPU footprint):
+#     storageUri: oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.4
+#
+#   Mistral 7B Instruct v0.3:
+#     storageUri: hf://mistralai/Mistral-7B-Instruct-v0.3
+#
+#   Llama 3.1 8B Instruct:
+#     storageUri: hf://meta-llama/Llama-3.1-8B-Instruct
+#
+# After editing, update the matching MODEL_NAME value in
+# doc-gen-agent/k8s/cluster-config.yaml, commit, and push — ArgoCD
+# (self-heal) will roll out the change automatically.
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: doc-gen-llm
+  namespace: doc-gen-demo
+  labels:
+    opendatahub.io/dashboard: "true"
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+spec:
+  predictor:
+    minReplicas: 1
+    maxReplicas: 1
+    model:
+      modelFormat:
+        name: vLLM
+      runtime: vllm-runtime
+      storageUri: oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.4
+      resources:
+        requests:
+          cpu: "4"
+          memory: 16Gi
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "8"
+          memory: 24Gi
+          nvidia.com/gpu: "1"

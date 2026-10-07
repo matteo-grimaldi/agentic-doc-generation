@@ -1,0 +1,37 @@
+# Child Application: deploys the GitHub MCP server that lets the agent
+# browse a target repository's structure and file contents.
+#
+# sync-wave 1 — independent of model-serving, but still needs the
+# doc-gen-demo namespace (created by model-serving's namespace.yaml, or
+# created here via CreateNamespace=true if it runs first).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: github-mcp-server
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/YOUR_ORG/agentic-doc-generation.git
+    targetRevision: HEAD
+    path: github-mcp-server/k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: doc-gen-demo
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

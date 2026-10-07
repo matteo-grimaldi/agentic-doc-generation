@@ -1,0 +1,8 @@
+# The doc-gen agent only talks to the GitHub MCP server and the in-cluster
+# vLLM endpoint — it does not need any Kubernetes/OpenShift API access, so
+# this is a plain ServiceAccount with no role bindings.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: doc-gen-agent-sa
+  namespace: doc-gen-demo

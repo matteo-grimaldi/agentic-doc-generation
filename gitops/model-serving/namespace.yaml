@@ -1,0 +1,10 @@
+# Shared demo namespace for model serving, the GitHub MCP server, and the
+# doc-gen agent. Labeled as a data science project so it shows up in the
+# RHOAI dashboard and is eligible for KServe RawDeployment serving.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: doc-gen-demo
+  labels:
+    opendatahub.io/dashboard: "true"
+    modelmesh-enabled: "false"

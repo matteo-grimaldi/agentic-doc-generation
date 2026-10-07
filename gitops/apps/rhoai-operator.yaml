@@ -1,0 +1,35 @@
+# Child Application: installs the Red Hat OpenShift AI (RHOAI) operator
+# and configures it via DSCInitialization + DataScienceCluster.
+#
+# sync-wave 0 (of the root app) — must land before model-serving, since
+# model-serving depends on the KServe CRDs this operator provides.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rhoai-operator
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/YOUR_ORG/agentic-doc-generation.git
+    targetRevision: HEAD
+    path: gitops/operators/rhoai
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 20
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

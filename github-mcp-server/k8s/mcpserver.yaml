@@ -1,0 +1,20 @@
+# Registers the already-deployed GitHub MCP server (deployment.yaml) in
+# the RHOAI MCP catalog (RHOAI 3.4+, MCP lifecycle operator). This is
+# purely a catalog registration -- it does NOT create the Deployment;
+# unlike the ocp-troubleshooter-demo reference, this demo always deploys
+# the server itself (deployment.yaml) and uses this CR only so it is
+# discoverable from the GenAI Playground / dashboard.
+apiVersion: mcp.opendatahub.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: github-mcp-server
+  namespace: doc-gen-demo
+  annotations:
+    # The MCP lifecycle operator / CRD is optional and not installed by
+    # this demo's gitops/operators/rhoai stack. Skip this resource
+    # instead of failing the whole Application sync if the CRD is absent.
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  description: "Browse GitHub repository structure and file contents for architecture analysis"
+  transport: streamable-http
+  endpoint: "http://github-mcp-server.doc-gen-demo.svc.cluster.local:8080/mcp"
