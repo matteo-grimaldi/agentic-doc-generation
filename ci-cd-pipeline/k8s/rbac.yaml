@@ -1,0 +1,58 @@
+# ServiceAccount used by PipelineRuns in ci-cd-demo. It needs:
+#  - "edit" in its own namespace, so the deploy-app Task can create/update
+#    the Deployment/Service/Route it generates for the built application.
+#  - "system:image-builder", so OpenShift auto-mounts internal registry
+#    push credentials into this SA's pods, letting the buildah Task's push
+#    step push to image-registry.openshift-image-registry.svc:5000/...
+#    without any explicit login/dockerconfig workspace.
+#  - the "privileged" SCC, because the catalog `buildah` Task (0.4) runs
+#    its build step with `securityContext.privileged: true` — standard
+#    for Buildah-in-a-container on OpenShift (see the upstream
+#    openshift/pipelines-tutorial for the same pattern).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ci-cd-pipeline-sa
+  namespace: ci-cd-demo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ci-cd-pipeline-sa-edit
+  namespace: ci-cd-demo
+subjects:
+  - kind: ServiceAccount
+    name: ci-cd-pipeline-sa
+    namespace: ci-cd-demo
+roleRef:
+  kind: ClusterRole
+  name: edit
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ci-cd-pipeline-sa-image-builder
+  namespace: ci-cd-demo
+subjects:
+  - kind: ServiceAccount
+    name: ci-cd-pipeline-sa
+    namespace: ci-cd-demo
+roleRef:
+  kind: ClusterRole
+  name: system:image-builder
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ci-cd-pipeline-sa-privileged-scc
+  namespace: ci-cd-demo
+subjects:
+  - kind: ServiceAccount
+    name: ci-cd-pipeline-sa
+    namespace: ci-cd-demo
+roleRef:
+  kind: ClusterRole
+  name: system:openshift:scc:privileged
+  apiGroup: rbac.authorization.k8s.io

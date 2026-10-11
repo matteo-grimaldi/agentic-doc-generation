@@ -1,0 +1,134 @@
+# Generic "build and deploy any public repo" CI/CD pipeline, demonstrating
+# how a pipeline run can trigger the doc-gen-agent (doc-gen-agent/app.py's
+# POST /invoke endpoint) *before* building/deploying, without blocking on
+# it: the invoke-doc-gen-agent Task fires the request and returns almost
+# immediately (the endpoint itself responds 202 and runs the actual agent
+# loop as a background task), so the rest of the pipeline proceeds without
+# waiting for architecture-doc generation to finish.
+#
+# The git-clone and buildah Tasks are resolved from the Tekton Hub catalog
+# at run time (no local copies to keep in sync) — this requires the `hub`
+# resolver, which is enabled by default in OpenShift Pipelines.
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: build-deploy-app
+  namespace: ci-cd-demo
+spec:
+  description: >-
+    Builds a container image (via Buildah, from a Dockerfile in the given
+    public repo) and deploys it, after kicking off a non-blocking
+    doc-gen-agent architecture-documentation run for the same repo.
+  params:
+    - name: repo-url
+      type: string
+      description: Public git repository URL to build and deploy.
+    - name: repo-revision
+      type: string
+      description: Branch, tag, or commit to check out.
+      default: main
+    - name: app-name
+      type: string
+      description: Name used for the built image, Deployment, Service, and Route.
+    - name: image-tag
+      type: string
+      default: latest
+    - name: dockerfile-path
+      type: string
+      description: Path to the Dockerfile within the cloned repo.
+      default: ./Dockerfile
+    - name: target-namespace
+      type: string
+      description: Namespace to build the image in and deploy the application into.
+      default: ci-cd-demo
+    - name: target-port
+      type: string
+      description: Port the built application container listens on.
+      default: "8080"
+    - name: doc-gen-agent-url
+      type: string
+      description: doc-gen-agent /invoke endpoint URL.
+      default: "http://doc-gen-agent.doc-gen-demo.svc.cluster.local:7860/invoke"
+  workspaces:
+    - name: shared-workspace
+      description: Holds the cloned repo between the fetch-source and build-image Tasks.
+  tasks:
+    # 1. Fire the doc-gen-agent request first — but non-blocking: the
+    #    endpoint returns almost instantly, and this Task tolerates
+    #    failures/timeouts without stopping the pipeline, so it never
+    #    meaningfully delays fetch-source below.
+    - name: invoke-doc-gen-agent
+      taskRef:
+        name: invoke-doc-gen-agent
+      params:
+        - name: repo-url
+          value: $(params.repo-url)
+        - name: agent-url
+          value: $(params.doc-gen-agent-url)
+
+    - name: fetch-source
+      runAfter:
+        - invoke-doc-gen-agent
+      taskRef:
+        resolver: hub
+        params:
+          - name: catalog
+            value: tekton
+          - name: type
+            value: artifact
+          - name: kind
+            value: task
+          - name: name
+            value: git-clone
+          - name: version
+            value: "0.9"
+      workspaces:
+        - name: output
+          workspace: shared-workspace
+      params:
+        - name: url
+          value: $(params.repo-url)
+        - name: revision
+          value: $(params.repo-revision)
+
+    - name: build-image
+      runAfter:
+        - fetch-source
+      taskRef:
+        resolver: hub
+        params:
+          - name: catalog
+            value: tekton
+          - name: type
+            value: artifact
+          - name: kind
+            value: task
+          - name: name
+            value: buildah
+          - name: version
+            value: "0.4"
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+      params:
+        - name: IMAGE
+          value: "image-registry.openshift-image-registry.svc:5000/$(params.target-namespace)/$(params.app-name):$(params.image-tag)"
+        - name: DOCKERFILE
+          value: $(params.dockerfile-path)
+        - name: TLSVERIFY
+          value: "false"
+
+    - name: deploy
+      runAfter:
+        - build-image
+      taskRef:
+        name: deploy-app
+      params:
+        - name: app-name
+          value: $(params.app-name)
+        - name: image
+          value: "image-registry.openshift-image-registry.svc:5000/$(params.target-namespace)/$(params.app-name):$(params.image-tag)"
+        - name: namespace
+          value: $(params.target-namespace)
+        - name: target-port
+          value: $(params.target-port)

@@ -11,11 +11,15 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
 
 # Disable Gradio telemetry — prevents outbound calls to api.gradio.app / HuggingFace
 os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
 
 import gradio as gr
+import uvicorn
+from fastapi import BackgroundTasks, FastAPI, HTTPException
+from pydantic import BaseModel
 
 from agent import MODEL_NAME, run_agent
 
@@ -65,6 +69,30 @@ async def chat(message: str, history: list[dict]) -> gr.Chatbot:
         response_so_far += chunk
         history[-1] = {"role": "assistant", "content": response_so_far}
         yield history
+
+
+class InvokeRequest(BaseModel):
+    """Body for POST /invoke — the prompt is typically a GitHub repo URL,
+    optionally wrapped in instruction text (see agent.py's run_agent)."""
+
+    prompt: str
+
+
+async def _run_agent_in_background(prompt: str, job_id: str) -> None:
+    """
+    Drain run_agent() to completion outside of any HTTP request/response
+    cycle. This is the CI/CD trigger path (no UI session to stream into),
+    so chunks are only logged — the point of this endpoint is to kick off
+    doc generation asynchronously, not to return its result synchronously.
+    """
+    logger.info("Background agent job %s started for prompt=%s", job_id, prompt[:200])
+    response_chars = 0
+    try:
+        async for chunk in run_agent(prompt):
+            response_chars += len(chunk)
+        logger.info("Background agent job %s completed (%d chars generated)", job_id, response_chars)
+    except Exception:
+        logger.exception("Background agent job %s failed", job_id)
 
 
 def build_ui() -> gr.Blocks:
@@ -140,11 +168,40 @@ def build_ui() -> gr.Blocks:
     return demo
 
 
+def build_app() -> FastAPI:
+    """
+    Build the FastAPI app that serves both the Gradio chat UI (mounted at
+    "/") and a plain REST API for programmatic/CI-CD callers — notably
+    POST /invoke, which triggers an agent run without blocking the caller
+    on its full (potentially multi-minute) execution. This is what lets an
+    external pipeline (e.g. a Tekton Task) fire the agent and move on
+    immediately instead of waiting for the response.
+    """
+    fastapi_app = FastAPI(title="Doc-Gen Agent")
+
+    @fastapi_app.get("/healthz")
+    async def healthz() -> dict:
+        return {"status": "ok"}
+
+    @fastapi_app.post("/invoke", status_code=202)
+    async def invoke(req: InvokeRequest, background_tasks: BackgroundTasks) -> dict:
+        prompt = req.prompt.strip()
+        if not prompt:
+            raise HTTPException(status_code=400, detail="prompt must not be empty")
+
+        job_id = str(uuid.uuid4())
+        logger.info("POST /invoke accepted job %s, prompt=%s", job_id, prompt[:200])
+        background_tasks.add_task(_run_agent_in_background, prompt, job_id)
+        # Returns immediately (202 Accepted) — the agent run happens after
+        # this response is sent, via starlette's BackgroundTasks, so a
+        # caller (e.g. a CI/CD pipeline step) is never blocked on it.
+        return {"status": "accepted", "job_id": job_id}
+
+    demo = build_ui()
+    gr.mount_gradio_app(fastapi_app, demo, path="/")
+    return fastapi_app
+
+
 if __name__ == "__main__":
     port = int(os.getenv("GRADIO_PORT", "7860"))
-    demo = build_ui()
-    demo.launch(
-        server_name="0.0.0.0",
-        server_port=port,
-        show_api=False,
-    )
+    uvicorn.run(build_app(), host="0.0.0.0", port=port)

@@ -203,9 +203,64 @@ agentic-doc-generation/
 │   ├── ogx/stack_run_config.yaml        # OGX + external model config
 │   ├── build-and-deploy.sh
 │   └── k8s/
+├── ci-cd-pipeline/                      # OpenShift Pipelines (Tekton) build/deploy demo
+│   ├── install-operator.sh              # One-time: installs the OpenShift Pipelines operator
+│   ├── build-and-deploy.sh
+│   ├── pipelinerun-example.yaml
+│   └── k8s/
 ├── build-and-deploy-all.sh              # Quick-start (non-GitOps) for app components
 └── README.md
 ```
+
+## CI/CD pipeline demo (OpenShift Pipelines)
+
+[`ci-cd-pipeline/`](ci-cd-pipeline/) adds a self-contained Tekton
+`build-deploy-app` Pipeline that demonstrates how an external CI/CD run
+can **trigger the doc-gen agent without blocking** on it: before building
+or deploying anything, the pipeline POSTs to the agent's `/invoke`
+endpoint, which accepts the request (`202 Accepted`) and runs the actual
+documentation generation in the background — so the pipeline's
+build/deploy steps proceed immediately rather than waiting minutes for a
+full agent turn.
+
+```mermaid
+flowchart LR
+    invokeAgent["invoke-doc-gen-agent\n(fires & returns in ms)"] --> fetchSource["fetch-source\n(git-clone)"]
+    fetchSource --> buildImage["build-image\n(buildah)"]
+    buildImage --> deploy["deploy\n(oc apply)"]
+    invokeAgent -.->|"background task"| agentRun["doc-gen-agent POST /invoke\nruns full doc generation async"]
+```
+
+The pipeline builds the target repo's `Dockerfile` with Buildah, pushes
+to the internal OpenShift registry, and deploys a generic
+Deployment/Service/Route for it — so it works with **any public repo
+that has a Dockerfile**, not just this one.
+
+Prerequisites: the Red Hat **OpenShift Pipelines** operator (Tekton).
+
+```bash
+./ci-cd-pipeline/install-operator.sh    # one-time: installs the operator, waits for its CRDs
+./ci-cd-pipeline/build-and-deploy.sh    # applies the Namespace/RBAC/Tasks/Pipeline
+oc create -f ci-cd-pipeline/pipelinerun-example.yaml -n ci-cd-demo
+tkn pipelinerun logs -f -n ci-cd-demo
+```
+
+Or substitute any public repo/app name directly with the `tkn` CLI:
+
+```bash
+tkn pipeline start build-deploy-app -n ci-cd-demo \
+  -p repo-url=https://github.com/<org>/<repo> \
+  -p app-name=<name> \
+  -w name=shared-workspace,claimName=ci-cd-pipeline-workspace \
+  --serviceaccount=ci-cd-pipeline-sa
+```
+
+If using GitOps, `gitops/apps/ci-cd-pipeline.yaml` registers this
+component as an ArgoCD-managed child Application (sync-wave 2) — but the
+operator install step above must still be run manually first, since
+ArgoCD can't apply `Pipeline`/`Task` resources before their CRDs exist
+(the same reason `gitops/bootstrap.sh` installs the OpenShift GitOps
+operator itself imperatively).
 
 ## Known limitations
 

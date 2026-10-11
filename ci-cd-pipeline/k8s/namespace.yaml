@@ -1,0 +1,11 @@
+# Separate namespace from doc-gen-demo: this component builds and deploys
+# arbitrary third-party applications (whatever public repo a PipelineRun
+# points at), which is a distinct lifecycle/blast-radius from the agent
+# stack itself. The agent stack is only ever *called* from here, never
+# deployed here.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ci-cd-demo
+  labels:
+    app.kubernetes.io/part-of: agentic-doc-generation

@@ -1,0 +1,43 @@
+# Example PipelineRun — substitute any public repo URL that has a
+# Dockerfile at its root. Deliberately kept outside k8s/ (which is
+# GitOps-synced) so ArgoCD never auto-creates a PipelineRun on sync; start
+# runs explicitly instead:
+#
+#   oc create -f ci-cd-pipeline/pipelinerun-example.yaml -n ci-cd-demo
+#
+# or, with the `tkn` CLI, override params on the fly:
+#
+#   tkn pipeline start build-deploy-app -n ci-cd-demo \
+#     -p repo-url=https://github.com/<org>/<repo> \
+#     -p app-name=<name> \
+#     -w name=shared-workspace,claimName=ci-cd-pipeline-workspace \
+#     --serviceaccount=ci-cd-pipeline-sa
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: build-deploy-app-run-
+  namespace: ci-cd-demo
+spec:
+  pipelineRef:
+    name: build-deploy-app
+  serviceAccountName: ci-cd-pipeline-sa
+  params:
+    - name: repo-url
+      value: https://github.com/sclorg/nodejs-ex
+    - name: repo-revision
+      value: master
+    - name: app-name
+      value: nodejs-ex-demo
+    - name: dockerfile-path
+      value: ./Dockerfile
+    - name: target-port
+      value: "8080"
+  workspaces:
+    - name: shared-workspace
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
