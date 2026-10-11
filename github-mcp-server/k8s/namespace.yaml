@@ -1,0 +1,8 @@
+# Shared demo namespace for the GitHub MCP server and the doc-gen agent.
+# Declared here (sync-wave 0, the first component deployed) so both
+# components land in a namespace that already exists; ArgoCD's
+# CreateNamespace=true syncOption would otherwise create a bare one.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: doc-gen-demo

@@ -3,11 +3,12 @@
 # Quick-start, non-GitOps deploy of the two application components
 # (github-mcp-server, doc-gen-agent) directly with `oc`.
 #
-# This assumes the RHOAI operator and model-serving stack are already
-# present on the cluster (either via `gitops/bootstrap.sh`, or applied
-# manually from gitops/operators/rhoai and gitops/model-serving). For a
-# single command that provisions EVERYTHING, including the RHOAI
-# operator and model serving, use gitops/bootstrap.sh instead.
+# Inference is served by an external, configurable OpenAI-compatible
+# endpoint (no in-cluster model serving) — set it via
+# doc-gen-agent/k8s/cluster-config.yaml (and, if your endpoint requires
+# auth, $EXTERNAL_MODEL_API_KEY — see doc-gen-agent/build-and-deploy.sh).
+# For a single command that provisions the whole stack via GitOps, use
+# gitops/bootstrap.sh instead.
 #
 # Usage:
 #   ./build-and-deploy-all.sh                  # deploy everything
@@ -21,17 +22,14 @@ NAMESPACE="${NAMESPACE:-doc-gen-demo}"
 echo "==> Checking cluster login..."
 oc whoami >/dev/null || { echo "error: not logged into an OpenShift cluster (run 'oc login' first)"; exit 1; }
 
-echo "==> Checking for model-serving InferenceService in ${NAMESPACE}..."
-if ! oc get inferenceservice doc-gen-llm -n "${NAMESPACE}" >/dev/null 2>&1; then
+MODEL_BASE_URL_SET=$(oc get configmap cluster-config -n "${NAMESPACE}" -o jsonpath='{.data.model_base_url}' 2>/dev/null || true)
+if [[ -z "${MODEL_BASE_URL_SET}" || "${MODEL_BASE_URL_SET}" == REPLACE_WITH_* ]]; then
   echo ""
-  echo "    WARNING: InferenceService 'doc-gen-llm' not found in namespace '${NAMESPACE}'."
-  echo "    The RHOAI operator and model-serving stack do not appear to be deployed yet."
-  echo "    Deploy them first with one of:"
-  echo "      ./gitops/bootstrap.sh                     (recommended: full GitOps deploy)"
-  echo "      oc apply -k gitops/operators/rhoai && oc apply -k gitops/model-serving"
+  echo "    NOTE: doc-gen-agent/k8s/cluster-config.yaml's model_base_url still looks"
+  echo "    unset or is the placeholder value. Edit it to point at your external"
+  echo "    OpenAI-compatible endpoint before (or right after) deploying doc-gen-agent,"
+  echo "    and set \$EXTERNAL_MODEL_API_KEY if that endpoint requires auth."
   echo ""
-  read -r -p "    Continue deploying app components anyway? [y/N] " REPLY
-  [[ "${REPLY}" =~ ^[Yy]$ ]] || exit 1
 fi
 
 COMPONENTS=("github-mcp-server" "doc-gen-agent")

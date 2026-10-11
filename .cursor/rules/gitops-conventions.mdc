@@ -25,9 +25,14 @@ Never replace this with a real URL in committed manifests —
 
 Preserve `argocd.argoproj.io/sync-wave` annotations:
 
-- Wave 0 — `rhoai-operator` (OLM Subscription, OperatorGroup, DSCI, DSC)
-- Wave 1 — `model-serving`, `github-mcp-server` (depend on wave 0's CRDs)
-- Wave 2 — `doc-gen-agent` (depends on wave 1's Services)
+- Wave 0 — `github-mcp-server` (no dependencies)
+- Wave 1 — `doc-gen-agent` (depends on wave 0's Service DNS name)
+
+Model inference on this branch goes to a configurable external
+OpenAI-compatible endpoint (no in-cluster operator/CRD dependency). The
+`local-model` branch preserves the original three-wave ordering
+(`rhoai-operator` → `model-serving`/`github-mcp-server` → `doc-gen-agent`)
+for in-cluster GPU serving.
 
 If you add a resource that depends on another wave's output (a CRD, a
 Service DNS name, a ConfigMap), give it a sync-wave annotation at least

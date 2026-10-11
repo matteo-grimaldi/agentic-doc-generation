@@ -2,9 +2,9 @@
 Doc-Gen Agent — Gradio Chat UI.
 
 Launches a Gradio chat interface. The user pastes a GitHub repository
-URL; the agent (OGX sidecar + GitHub MCP server + local vLLM model)
-explores the repo and streams back an architecture summary with Mermaid
-diagrams.
+URL; the agent (OGX sidecar + GitHub MCP server + an external, configurable
+OpenAI-compatible model endpoint) explores the repo and streams back an
+architecture summary with Mermaid diagrams.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ EXAMPLE_PROMPTS = [
 HEADER_HTML = f"""
 <div style="text-align:center; margin-bottom: 0.5rem;">
   <h1>📐 Agentic Doc Generation</h1>
-  <p style="color:#666;">Powered by {MODEL_NAME} (vLLM on OpenShift AI) · GitHub MCP · OGX</p>
+  <p style="color:#666;">Powered by {MODEL_NAME} (external OpenAI-compatible endpoint) · GitHub MCP · OGX</p>
 </div>
 """
 
@@ -122,11 +122,12 @@ def build_ui() -> gr.Blocks:
                 1. You paste a GitHub repository URL
                 2. The agent queries the **GitHub MCP server** to map the repo structure and read key files
                    (README, entry points, manifests, Dockerfiles, k8s/CI configs)
-                3. **{MODEL_NAME}**, served locally via vLLM on OpenShift AI, synthesizes the findings into:
+                3. **{MODEL_NAME}**, served via a configurable external OpenAI-compatible endpoint, synthesizes the findings into:
                    - A structured architecture document (overview, components, data flow, dependencies, deployment, security)
                    - Three Mermaid diagrams: component, data flow, and dependency diagrams
 
-                Everything runs in-cluster — no external LLM API calls.
+                The in-cluster components (Gradio UI, OGX sidecar, GitHub MCP server) need no GPU — only the
+                configured external endpoint performs inference.
                 """
             )
 

@@ -10,12 +10,16 @@ apis:
 
 providers:
   inference:
-    - provider_id: local-model
+    # remote::vllm speaks the OpenAI-compatible chat-completions protocol,
+    # which is why it works against any OpenAI-compatible endpoint, not
+    # just vLLM — point it at whatever external provider cluster-config
+    # specifies (vLLM elsewhere, OpenAI, Azure OpenAI gateway, etc.).
+    - provider_id: external-model
       provider_type: remote::vllm
       config:
-        base_url: ${env.VLLM_URL}
-        max_tokens: ${env.VLLM_MAX_TOKENS:=4096}
-        api_token: ${env.VLLM_API_TOKEN:=unused}
+        base_url: ${env.INFERENCE_BASE_URL}
+        max_tokens: ${env.INFERENCE_MAX_TOKENS:=4096}
+        api_token: ${env.INFERENCE_API_KEY:=unused}
         network:
           tls:
             verify: false
@@ -73,15 +77,17 @@ storage:
       table_name: prompts
       backend: sql_default
 
-# NOTE: model_id below must match MODEL_NAME in doc-gen-agent/k8s/cluster-config.yaml
-# and the served-model-name set by gitops/model-serving/serving-runtime.yaml.
-# Swapping models: update provider_model_id/model_id here to match.
+# NOTE: model_id/provider_model_id below must match model_name in
+# doc-gen-agent/k8s/cluster-config.yaml, AND the exact model identifier
+# your external OpenAI-compatible endpoint expects (e.g. "gpt-4o-mini"
+# for OpenAI, or a served-model-name for a self-hosted vLLM/Ollama/etc.).
+# Switching endpoints or models: update all three in lockstep.
 registered_resources:
   models:
     - metadata: {}
-      model_id: granite-3.1-8b-instruct
-      provider_id: local-model
-      provider_model_id: granite-3.1-8b-instruct
+      model_id: REPLACE_WITH_YOUR_MODEL_NAME
+      provider_id: external-model
+      provider_model_id: REPLACE_WITH_YOUR_MODEL_NAME
       model_type: llm
 
 server:

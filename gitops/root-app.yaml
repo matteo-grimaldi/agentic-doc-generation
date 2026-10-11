@@ -2,9 +2,13 @@
 #
 # Applying this single Application bootstraps the entire demo: it tells
 # ArgoCD to watch gitops/apps/ and create one child Application per
-# component found there (RHOAI operator, model serving, GitHub MCP
-# server, doc-gen agent). Each child Application then manages its own
-# Kubernetes resources independently.
+# component found there (GitHub MCP server, doc-gen agent). Each child
+# Application then manages its own Kubernetes resources independently.
+# Model inference is NOT provisioned by this repo on this branch — the
+# doc-gen agent calls a configurable external OpenAI-compatible endpoint
+# (see doc-gen-agent/k8s/cluster-config.yaml). For the original design
+# that serves the model in-cluster via vLLM on OpenShift AI (GPU
+# required), see the `local-model` branch.
 #
 # NOTE: `repoURL` below is replaced by gitops/bootstrap.sh with the
 # actual git remote URL of this repository before being applied.

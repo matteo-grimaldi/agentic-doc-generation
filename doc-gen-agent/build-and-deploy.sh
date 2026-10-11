@@ -27,6 +27,18 @@ oc create configmap agent-knowledge \
   --from-file=knowledge.md="${SCRIPT_DIR}/knowledge.md" \
   -n "${NAMESPACE}" --dry-run=client -o yaml | oc apply -f -
 
+if [[ -n "${EXTERNAL_MODEL_API_KEY:-}" ]]; then
+  echo "==> Creating/updating external-model-credentials secret from \$EXTERNAL_MODEL_API_KEY..."
+  oc create secret generic external-model-credentials --from-literal=api_key="${EXTERNAL_MODEL_API_KEY}" \
+    -n "${NAMESPACE}" --dry-run=client -o yaml | oc apply -f -
+else
+  echo "==> \$EXTERNAL_MODEL_API_KEY not set — skipping secret creation (fine for endpoints that don't require auth)."
+fi
+
+echo "==> NOTE: edit k8s/cluster-config.yaml (model_base_url, model_name) and"
+echo "    ogx/stack_run_config.yaml (model_id/provider_model_id) to point at"
+echo "    your external OpenAI-compatible endpoint before/after this deploy."
+
 echo "==> Building image with OpenShift BuildConfig (binary build)..."
 oc project "${NAMESPACE}" >/dev/null
 if ! oc get imagestream "${IMAGE_NAME}" -n "${NAMESPACE}" >/dev/null 2>&1; then

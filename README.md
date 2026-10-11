@@ -1,14 +1,19 @@
-# Agentic Doc Generation — OpenShift AI Demo
+# Agentic Doc Generation — OpenShift Demo
 
-A GitOps-provisioned demo showing AI agents + a locally-served model on
-**OpenShift AI** automating architecture documentation and diagram
-generation — a simplified, single-agent take on
+A GitOps-provisioned demo showing an AI agent on **OpenShift** automating
+architecture documentation and diagram generation — a simplified,
+single-agent take on
 [opendatahub-io/architecture-context](https://github.com/opendatahub-io/architecture-context).
 
 Give the agent a GitHub repository URL. It explores the repo via a GitHub
-MCP server, then a model served locally by vLLM on OpenShift AI (no
-external LLM API calls) synthesizes an architecture document with
-embedded Mermaid diagrams.
+MCP server, then a model served by **your own external, OpenAI-compatible
+endpoint** (no GPU or in-cluster model serving required) synthesizes an
+architecture document with embedded Mermaid diagrams.
+
+> **Looking for the original, fully in-cluster design?** The
+> [`local-model`](https://github.com/YOUR_ORG/agentic-doc-generation/tree/local-model)
+> branch preserves the version where the model is served in-cluster by
+> vLLM on OpenShift AI (GPU required).
 
 ## How it works
 
@@ -18,16 +23,9 @@ flowchart TB
         Browser
     end
 
-    subgraph ocp [OpenShift 4.22 Cluster]
+    subgraph ocp [OpenShift Cluster]
         subgraph gitops [OpenShift GitOps / ArgoCD]
             AppOfApps["App-of-Apps"]
-        end
-
-        subgraph rhoai [OpenShift AI]
-            RHOAI_Op["RHOAI Operator"]
-            subgraph serving [Model Serving]
-                vLLM["vLLM InferenceService\n(configurable model)"]
-            end
         end
 
         subgraph demo_ns [doc-gen-demo namespace]
@@ -39,13 +37,16 @@ flowchart TB
         end
     end
 
+    subgraph external [External Infrastructure]
+        InferenceEndpoint["OpenAI-compatible\nInference Endpoint\n(configurable base URL)"]
+    end
+
     Browser -->|"repo URL"| Gradio
     Gradio -->|"Responses API"| OGX
     OGX -->|"MCP tools"| GitHubMCP
-    OGX -->|"inference"| vLLM
+    OGX -->|"inference (HTTPS)"| InferenceEndpoint
     GitHubMCP -->|"GitHub API"| GitHub["github.com"]
-    AppOfApps -->|deploys| RHOAI_Op
-    AppOfApps -->|deploys| serving
+    AppOfApps -->|deploys| GitHubMCP
     AppOfApps -->|deploys| demo_ns
 ```
 
@@ -57,19 +58,22 @@ down to one agent turn:
    `get_repo_structure` (filtered file tree) on the GitHub MCP server
 3. Agent reads the ~15-20 most architecturally relevant files (README,
    entry points, manifests, Dockerfiles, k8s/CI configs)
-4. The local model (served via vLLM on OpenShift AI) synthesizes a
-   structured architecture document: overview, tech stack, components,
-   data flow, external dependencies, deployment, security
+4. The configured model (served by an external OpenAI-compatible
+   endpoint — your own vLLM/Ollama deployment, OpenAI, an Azure OpenAI
+   gateway, etc.) synthesizes a structured architecture document:
+   overview, tech stack, components, data flow, external dependencies,
+   deployment, security
 5. The model generates three Mermaid diagrams (component, data flow,
    dependency), embedded directly in the Markdown response
 6. Everything streams back into the chat UI
 
 ## Prerequisites
 
-- An OpenShift **4.22** cluster, logged in as `cluster-admin` (`oc login`)
-- At least one GPU-capable node (the default model needs ~1 GPU, 16-24Gi
-  memory — see [Model configurability](#model-configurability) to pick a
-  smaller model if no GPU is available)
+- An OpenShift cluster, logged in as `cluster-admin` (`oc login`) —
+  no GPU node required
+- An **external OpenAI-compatible inference endpoint** reachable from the
+  cluster: a base URL (e.g. `https://api.openai.com/v1`, or your own
+  vLLM/Ollama/gateway deployment) and, if required, an API key
 - `oc` CLI
 - This repo pushed to a git remote reachable by the cluster (GitHub,
   GitLab, or an internal git server) — ArgoCD needs to clone it
@@ -92,12 +96,8 @@ This single command:
    repo and applies it
 3. ArgoCD then reconciles everything else, in dependency order via
    sync-waves:
-   - **Wave 0** — RHOAI operator (Subscription, OperatorGroup) +
-     DSCInitialization/DataScienceCluster (enabling only KServe +
-     dashboard, in RawDeployment mode — no Service Mesh dependency)
-   - **Wave 1** — `doc-gen-demo` namespace, vLLM `ServingRuntime` +
-     `InferenceService` (Granite 3.1 8B by default), GitHub MCP server
-   - **Wave 2** — the doc-gen agent (Gradio UI + OGX sidecar)
+   - **Wave 0** — `doc-gen-demo` namespace + GitHub MCP server
+   - **Wave 1** — the doc-gen agent (Gradio UI + OGX sidecar)
 
 The script finishes by printing the ArgoCD UI route. Watch progress with:
 
@@ -113,6 +113,10 @@ oc get applications -n openshift-gitops -w
 > git add gitops/apps && git commit -m "gitops: point apps at repo" && git push
 > ```
 
+Before (or right after) the doc-gen agent comes up, point it at your
+external model endpoint — see [Model configuration](#model-configuration)
+below.
+
 Once `doc-gen-agent` is `Synced`/`Healthy`, get the UI route:
 
 ```bash
@@ -121,12 +125,11 @@ oc get route doc-gen-agent -n doc-gen-demo -o jsonpath='https://{.spec.host}{"\n
 
 ## Quick start (without GitOps)
 
-For local iteration on the application components only (assumes the
-RHOAI operator + model serving are already deployed, e.g. via
-`gitops/bootstrap.sh` or `oc apply -k gitops/operators/rhoai && oc apply -k gitops/model-serving`):
+For local iteration on the application components only:
 
 ```bash
-export GITHUB_TOKEN=ghp_xxx   # optional, raises rate limits + enables search_code
+export GITHUB_TOKEN=ghp_xxx                 # optional, raises rate limits + enables search_code
+export EXTERNAL_MODEL_API_KEY=sk-xxx        # optional, depends on your endpoint
 ./build-and-deploy-all.sh
 ```
 
@@ -152,29 +155,32 @@ Or deploy a single component:
 4. Try a few different repos to see how the output adapts — a small CLI
    tool produces a much shorter document than a multi-service platform
 
-## Model configurability
+## Model configuration
 
-The default model is **Granite 3.1 8B Instruct** (smallest GPU footprint
-of the three, Red Hat pedigree). To swap models, edit exactly two files
-and let ArgoCD (self-heal) or `./doc-gen-agent/build-and-deploy.sh`
-pick up the change:
+The agent calls whatever OpenAI-compatible endpoint you point it at —
+your own vLLM/Ollama deployment, a hosted provider like OpenAI, or an
+internal gateway. Configure it in two places:
 
-| File | What to change |
+| File | What to set |
 |---|---|
-| [`gitops/model-serving/inference-service.yaml`](gitops/model-serving/inference-service.yaml) | `spec.predictor.model.storageUri` |
-| [`doc-gen-agent/k8s/cluster-config.yaml`](doc-gen-agent/k8s/cluster-config.yaml) | `data.model_name` |
-| [`doc-gen-agent/ogx/stack_run_config.yaml`](doc-gen-agent/ogx/stack_run_config.yaml) | `registered_resources.models[0].model_id` / `provider_model_id` |
+| [`doc-gen-agent/k8s/cluster-config.yaml`](doc-gen-agent/k8s/cluster-config.yaml) | `data.model_base_url` (the endpoint's OpenAI-compatible `/v1` base URL) and `data.model_name` |
+| [`doc-gen-agent/ogx/stack_run_config.yaml`](doc-gen-agent/ogx/stack_run_config.yaml) | `registered_resources.models[0].model_id` / `provider_model_id` (must match `model_name` above and the identifier your endpoint expects) |
 
-Supported examples (all served by the same `vllm-runtime` ServingRuntime):
+If the endpoint requires an API key, create a Secret (not committed to
+git):
 
-| Model | `storageUri` | `model_name` |
-|---|---|---|
-| Granite 3.1 8B Instruct (default) | `oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.4` | `granite-3.1-8b-instruct` |
-| Mistral 7B Instruct v0.3 | `hf://mistralai/Mistral-7B-Instruct-v0.3` | `mistral-7b-instruct-v0.3` |
-| Llama 3.1 8B Instruct | `hf://meta-llama/Llama-3.1-8B-Instruct` | `llama-3.1-8b-instruct` |
+```bash
+oc create secret generic external-model-credentials \
+  --from-literal=api_key=<your-api-key> -n doc-gen-demo
+```
 
-If using GitOps, commit and push the change — ArgoCD's `selfHeal` will
-roll it out automatically.
+`doc-gen-agent/k8s/deployment.yaml` reads this Secret optionally — leave
+it unset for endpoints that don't require auth.
+
+If using GitOps, commit and push the `cluster-config.yaml` /
+`stack_run_config.yaml` changes — ArgoCD's `selfHeal` will roll them out
+automatically. The Secret itself should never be committed; create it
+directly with `oc` as shown above.
 
 ## Project structure
 
@@ -184,8 +190,6 @@ agentic-doc-generation/
 │   ├── bootstrap.sh                     # Install GitOps operator, apply root app
 │   ├── root-app.yaml                    # ArgoCD App-of-Apps
 │   ├── openshift-gitops-subscription.yaml
-│   ├── operators/rhoai/                 # RHOAI operator + DSCI/DSC (sync-wave 0)
-│   ├── model-serving/                   # Namespace, vLLM ServingRuntime, InferenceService (sync-wave 1)
 │   └── apps/                            # Child ArgoCD Applications (one per component)
 ├── github-mcp-server/                   # FastMCP server: get_repo_info, get_repo_structure, read_file, search_code
 │   ├── server.py
@@ -196,7 +200,7 @@ agentic-doc-generation/
 │   ├── agent.py                         # OGX Responses API agent, architecture-focused system prompt
 │   ├── app.py                           # Gradio chat UI
 │   ├── knowledge.md                     # Documentation style guide injected into the agent prompt
-│   ├── ogx/stack_run_config.yaml        # OGX + vLLM model config
+│   ├── ogx/stack_run_config.yaml        # OGX + external model config
 │   ├── build-and-deploy.sh
 │   └── k8s/
 ├── build-and-deploy-all.sh              # Quick-start (non-GitOps) for app components
@@ -215,7 +219,5 @@ agentic-doc-generation/
   partial-but-useful document rather than exhaustive coverage — this
   mirrors the token-budget tuning notes in the reference
   ocp-troubleshooter-demo.
-- RawDeployment-mode KServe (chosen here to avoid a Service
-  Mesh/Knative dependency) does not create an external Route for the
-  model — it's only reachable in-cluster, which is sufficient since the
-  OGX sidecar is its only consumer.
+- Inference quality and latency depend entirely on the external endpoint
+  you configure — this repo does not provision or manage that endpoint.

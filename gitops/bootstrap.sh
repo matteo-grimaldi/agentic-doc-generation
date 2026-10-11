@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 #
-# Bootstrap the OpenShift AI Agentic Doc Generation demo on a freshly
-# deployed OpenShift 4.22 cluster using GitOps.
+# Bootstrap the Agentic Doc Generation demo on a freshly deployed
+# OpenShift 4.22 cluster using GitOps.
 #
 # What this does:
 #   1. Installs the OpenShift GitOps operator (if not already present)
 #   2. Waits for the default ArgoCD instance to come up
 #   3. Points the root ArgoCD Application at THIS repo (substituting the
 #      repo URL placeholder) and applies it
-#   4. ArgoCD then takes over: it installs the RHOAI operator, the
-#      model-serving stack (vLLM), the GitHub MCP server, and the
-#      doc-gen agent, in dependency order (via sync-waves)
+#   4. ArgoCD then takes over: it installs the GitHub MCP server and the
+#      doc-gen agent, in dependency order (via sync-waves). Model
+#      inference is not provisioned by this branch — the agent calls a
+#      configurable external OpenAI-compatible endpoint (see
+#      doc-gen-agent/k8s/cluster-config.yaml and the
+#      external-model-credentials Secret documented in the README).
 #
 # Usage:
 #   ./gitops/bootstrap.sh [repo-url] [git-ref]

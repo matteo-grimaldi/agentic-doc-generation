@@ -4,14 +4,16 @@ Doc-Gen Agent — OGX edition.
 A simplified, single-agent take on opendatahub-io/architecture-context:
 given a GitHub repository URL, explore its structure and source files via
 the GitHub MCP server, then produce an architecture summary (Markdown)
-plus Mermaid diagrams, synthesized by a locally-served model (vLLM on
-OpenShift AI).
+plus Mermaid diagrams, synthesized by a model served via a configurable
+external OpenAI-compatible endpoint (base URL + API key set via
+doc-gen-agent/k8s/cluster-config.yaml and the external-model-credentials
+Secret — no in-cluster model serving or GPU required).
 
 Uses the OGX Responses API (server-side agentic loop) instead of
 LangChain/LangGraph, matching the pattern from ocp-troubleshooter-demo.
 The OGX server runs as a sidecar container in the same pod and handles:
  - Tool calls to the GitHub MCP server
- - Inference via the local model (vLLM)
+ - Inference via the external OpenAI-compatible endpoint
 """
 
 from __future__ import annotations

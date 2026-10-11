@@ -1,17 +1,22 @@
-# Central place for cluster-specific / model-specific values consumed by
-# the Deployment. Keep MODEL_NAME in sync with:
-#   - gitops/model-serving/inference-service.yaml (served-model-name via the
-#     ServingRuntime's {{.Name}} template == this InferenceService's name
-#     is "doc-gen-llm", but the served *model* name comes from the
-#     ServingRuntime args; for vLLM this is normally the model repo id)
-#   - doc-gen-agent/ogx/stack_run_config.yaml (registered_resources.models.model_id)
+# Central place for the external model endpoint config consumed by the
+# Deployment. This branch serves inference from an external, configurable
+# OpenAI-compatible endpoint (no in-cluster model serving) — point
+# model_base_url at your provider's OpenAI-compatible `/v1` base URL
+# (vLLM, Ollama, Azure OpenAI gateway, OpenAI itself, etc.) and set
+# model_name to the model identifier that endpoint expects.
+#
+# Keep model_name in sync with
+# doc-gen-agent/ogx/stack_run_config.yaml (registered_resources.models.model_id).
+# The API key for the endpoint is supplied separately via the
+# external-model-credentials Secret (see k8s/deployment.yaml and the
+# README) — never put it in this ConfigMap.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: cluster-config
   namespace: doc-gen-demo
 data:
-  model_name: "granite-3.1-8b-instruct"
-  # In-cluster URL of the vLLM InferenceService predictor (RawDeployment
-  # mode creates a plain k8s Service named "<isvc-name>-predictor").
-  vllm_url: "http://doc-gen-llm-predictor.doc-gen-demo.svc.cluster.local:8080/v1"
+  model_name: "REPLACE_WITH_YOUR_MODEL_NAME"
+  # Example: "https://api.openai.com/v1" or your own OpenAI-compatible
+  # gateway's base URL.
+  model_base_url: "REPLACE_WITH_YOUR_OPENAI_COMPATIBLE_ENDPOINT/v1"

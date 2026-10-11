@@ -49,15 +49,25 @@ spec:
               value: "all=INFO"
             - name: SQLITE_STORE_DIR
               value: "/tmp/ogx"
-            - name: VLLM_URL
+            - name: INFERENCE_BASE_URL
               valueFrom:
                 configMapKeyRef:
                   name: cluster-config
-                  key: vllm_url
-            - name: VLLM_MAX_TOKENS
+                  key: model_base_url
+            - name: INFERENCE_MAX_TOKENS
               value: "8192"
-            - name: VLLM_API_TOKEN
-              value: "unused"
+            # API key for the external OpenAI-compatible endpoint. Create
+            # the Secret with:
+            #   oc create secret generic external-model-credentials \
+            #     --from-literal=api_key=<your-api-key> -n doc-gen-demo
+            # Optional — leave the Secret absent for endpoints that don't
+            # require auth; stack_run_config.yaml falls back to "unused".
+            - name: INFERENCE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: external-model-credentials
+                  key: api_key
+                  optional: true
             - name: INFERENCE_MODEL
               valueFrom:
                 configMapKeyRef:
