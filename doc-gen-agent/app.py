@@ -65,30 +65,42 @@ HEADER_HTML = f"""
 """
 
 
-async def chat(message: str, history: list[dict]) -> gr.Chatbot:
+async def chat(message: str, history: list[dict]):
     """
     Gradio streaming chat handler.
 
     The "message" is expected to be a GitHub repo URL (or contain one).
     Streams the agent's architecture-documentation response back chunk
     by chunk.
+
+    Also yields the repo URL and the full generated text into two
+    gr.State outputs (last_repo_url, last_content) so the "Propose as
+    PR" button below can act on the most recent run without re-invoking
+    the agent — this chat path itself never opens a PR (see
+    _propose_architecture_doc's docstring and github-mcp-server's
+    /propose-doc route for why that's opt-in only).
     """
     if not message.strip():
-        yield history + [{"role": "assistant", "content": "Please paste a GitHub repository URL (e.g. https://github.com/owner/repo)."}]
+        yield history + [{"role": "assistant", "content": "Please paste a GitHub repository URL (e.g. https://github.com/owner/repo)."}], "", ""
         return
 
-    logger.info("User repo URL: %s", message.strip()[:200])
+    repo_url = message.strip()
+    logger.info("User repo URL: %s", repo_url[:200])
 
     history = history + [{"role": "user", "content": message}]
-    yield history
+    yield history, "", ""
 
     response_so_far = ""
     history = history + [{"role": "assistant", "content": ""}]
 
-    async for chunk in run_agent(message.strip()):
+    async for chunk in run_agent(repo_url):
         response_so_far += chunk
         history[-1] = {"role": "assistant", "content": response_so_far}
-        yield history
+        yield history, "", ""
+
+    # Final yield: commit the repo URL + full content to state now that
+    # generation has finished, enabling the "Propose as PR" button.
+    yield history, repo_url, response_so_far
 
 
 class InvokeRequest(BaseModel):
@@ -106,7 +118,7 @@ def _extract_repo_url(prompt: str) -> str | None:
     return match.group(0).rstrip(".,)") if match else None
 
 
-async def _propose_architecture_doc(repo_url: str, content: str, job_id: str) -> None:
+async def _propose_architecture_doc(repo_url: str, content: str, job_id: str) -> dict:
     """
     Open a pull request proposing the generated architecture document back
     into its source repo, via the GitHub MCP server's POST /propose-doc
@@ -118,6 +130,11 @@ async def _propose_architecture_doc(repo_url: str, content: str, job_id: str) ->
     a brand-new branch off ARCHITECTURE_DOC_BASE_BRANCH (or the repo's
     default branch), commits the doc there, and opens a PR — safe even if
     the target branch is protected.
+
+    Returns the /propose-doc response body on success, or {"error": ...}
+    on any failure (bad response, network error) — callers (the /invoke
+    background task, and the chat UI's opt-in "Propose as PR" button)
+    decide how to surface that to their respective audiences.
     """
     payload = {
         "repo_url": repo_url,
@@ -143,13 +160,17 @@ async def _propose_architecture_doc(repo_url: str, content: str, job_id: str) ->
                 job_id, data.get("pr_number"), data.get("pr_url"), repo_url,
                 data.get("head_branch"), data.get("base_branch"),
             )
+            return data
         else:
+            error = data.get("error", resp.text[:300])
             logger.warning(
                 "Job %s: failed to propose %s to %s: %s",
-                job_id, ARCHITECTURE_DOC_PATH, repo_url, data.get("error", resp.text[:300]),
+                job_id, ARCHITECTURE_DOC_PATH, repo_url, error,
             )
-    except Exception:
+            return {"error": error}
+    except Exception as exc:
         logger.exception("Job %s: error proposing %s to %s", job_id, ARCHITECTURE_DOC_PATH, repo_url)
+        return {"error": str(exc)}
 
 
 async def _run_agent_in_background(prompt: str, job_id: str) -> None:
@@ -181,6 +202,30 @@ async def _run_agent_in_background(prompt: str, job_id: str) -> None:
         return
 
     await _propose_architecture_doc(repo_url, response_text, job_id)
+
+
+async def propose_pr_clicked(repo_url: str, content: str) -> str:
+    """
+    Click handler for the chat UI's opt-in "📤 Propose as PR" button.
+
+    Reuses the same _propose_architecture_doc helper as the /invoke
+    background path, but is only ever triggered by an explicit user
+    click — never by the model — preserving the guardrail described in
+    _propose_architecture_doc's and /propose-doc's docstrings.
+    """
+    if not repo_url or not content.strip():
+        return "⚠️ Generate an architecture doc for a repository first, then click **Propose as PR**."
+
+    job_id = str(uuid.uuid4())
+    logger.info("UI-triggered PR proposal job %s for %s", job_id, repo_url)
+    result = await _propose_architecture_doc(repo_url, content, job_id)
+
+    if "error" in result:
+        return f"⚠️ Failed to open PR for `{repo_url}`: {result['error']}"
+    return (
+        f"✅ Opened [PR #{result.get('pr_number')}]({result.get('pr_url')}) on `{repo_url}` "
+        f"(`{result.get('head_branch')}` → `{result.get('base_branch')}`)."
+    )
 
 
 def build_ui() -> gr.Blocks:
@@ -219,6 +264,16 @@ def build_ui() -> gr.Blocks:
             )
             send_btn = gr.Button("Generate", variant="primary", scale=1, min_width=100)
 
+        # Populated by chat() once a run completes; empty while a run is
+        # streaming or hasn't produced a repo URL yet. Drives the opt-in
+        # PR button below — the chat path itself never opens a PR.
+        last_repo_url = gr.State("")
+        last_content = gr.State("")
+
+        with gr.Row():
+            propose_btn = gr.Button("📤 Propose as PR", scale=1, min_width=160)
+            propose_status = gr.Markdown("", elem_id="propose-status")
+
         gr.Examples(
             examples=EXAMPLE_PROMPTS,
             inputs=txt,
@@ -245,11 +300,19 @@ def build_ui() -> gr.Blocks:
                 """
             )
 
-        submit_event = txt.submit(fn=chat, inputs=[txt, chatbot], outputs=[chatbot])
-        submit_event.then(lambda: "", outputs=[txt])
+        submit_event = txt.submit(
+            fn=chat, inputs=[txt, chatbot], outputs=[chatbot, last_repo_url, last_content]
+        )
+        submit_event.then(lambda: ("", ""), outputs=[txt, propose_status])
 
-        send_event = send_btn.click(fn=chat, inputs=[txt, chatbot], outputs=[chatbot])
-        send_event.then(lambda: "", outputs=[txt])
+        send_event = send_btn.click(
+            fn=chat, inputs=[txt, chatbot], outputs=[chatbot, last_repo_url, last_content]
+        )
+        send_event.then(lambda: ("", ""), outputs=[txt, propose_status])
+
+        propose_btn.click(
+            fn=propose_pr_clicked, inputs=[last_repo_url, last_content], outputs=[propose_status]
+        )
 
     return demo
 
