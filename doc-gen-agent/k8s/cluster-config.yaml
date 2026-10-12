@@ -16,7 +16,5 @@ metadata:
   name: cluster-config
   namespace: doc-gen-demo
 data:
-  model_name: "REPLACE_WITH_YOUR_MODEL_NAME"
-  # Example: "https://api.openai.com/v1" or your own OpenAI-compatible
-  # gateway's base URL.
-  model_base_url: "REPLACE_WITH_YOUR_OPENAI_COMPATIBLE_ENDPOINT/v1"
+  model_name: "qwen38-27b"
+  model_base_url: "https://maas-rhdp.apps.maas.redhatworkshops.io/v1"

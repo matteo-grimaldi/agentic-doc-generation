@@ -85,9 +85,9 @@ storage:
 registered_resources:
   models:
     - metadata: {}
-      model_id: REPLACE_WITH_YOUR_MODEL_NAME
+      model_id: qwen38-27b
       provider_id: external-model
-      provider_model_id: REPLACE_WITH_YOUR_MODEL_NAME
+      provider_model_id: qwen38-27b
       model_type: llm
 
 server:
