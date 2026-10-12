@@ -20,6 +20,10 @@ if ! oc get imagestream "${IMAGE_NAME}" -n "${NAMESPACE}" >/dev/null 2>&1; then
 fi
 oc start-build "${IMAGE_NAME}" --from-dir="${SCRIPT_DIR}" --follow -n "${NAMESPACE}"
 
+echo "==> Enabling local image lookup on ImageStream ${IMAGE_NAME}..."
+oc patch imagestream "${IMAGE_NAME}" -n "${NAMESPACE}" --type=merge \
+  -p '{"spec":{"lookupPolicy":{"local":true}}}'
+
 if [[ -n "${GITHUB_TOKEN:-}" ]]; then
   echo "==> Creating/updating github-token secret from \$GITHUB_TOKEN..."
   oc create secret generic github-token --from-literal=token="${GITHUB_TOKEN}" \

@@ -46,6 +46,13 @@ if ! oc get imagestream "${IMAGE_NAME}" -n "${NAMESPACE}" >/dev/null 2>&1; then
 fi
 oc start-build "${IMAGE_NAME}" --from-dir="${SCRIPT_DIR}" --follow -n "${NAMESPACE}"
 
+# oc new-build leaves lookupPolicy.local=false, so kubelet always pulls from the
+# internal registry (and needs a valid dockercfg). Local lookup uses the image
+# already on the node from the build push and avoids registry auth failures.
+echo "==> Enabling local image lookup on ImageStream ${IMAGE_NAME}..."
+oc patch imagestream "${IMAGE_NAME}" -n "${NAMESPACE}" --type=merge \
+  -p '{"spec":{"lookupPolicy":{"local":true}}}'
+
 echo "==> Applying Deployment, Service, and Route..."
 oc apply -f "${SCRIPT_DIR}/k8s/deployment.yaml" -n "${NAMESPACE}"
 oc apply -f "${SCRIPT_DIR}/k8s/route.yaml" -n "${NAMESPACE}"
