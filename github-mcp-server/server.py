@@ -1,15 +1,25 @@
 """
 GitHub MCP Server.
 
-A standalone MCP server that exposes read-only GitHub repository browsing
-as MCP tools, so an agent can explore a target repo's structure and source
-files without needing a local git clone or GitHub credentials of its own.
+A standalone MCP server that exposes GitHub repository browsing as MCP
+tools, so an agent can explore a target repo's structure and source files
+without needing a local git clone or GitHub credentials of its own. Also
+exposes a propose-via-PR write path so generated documentation can be
+persisted back into the repo it was generated from, without ever writing
+directly to a (possibly protected) existing branch.
 
 Tools exposed:
     get_repo_info       -- repo metadata (default branch, description, language)
     get_repo_structure   -- recursive file/directory tree
     read_file            -- contents of a single file (size-capped, truncated)
     search_code          -- code search within the repo (requires GITHUB_TOKEN)
+
+Also exposes POST /propose-doc, a plain REST route (not an MCP tool) that
+creates a new branch off the target base branch, commits the given content
+to it, and opens a pull request — for deterministic, non-LLM-mediated
+callers, e.g. doc-gen-agent's /invoke background task, which already has
+the full generated document in hand and shouldn't need to route it through
+a model tool call just to persist it.
 
 Transport: streamable-http at /mcp (same pattern as ticketing-mcp-server
 and prometheus-mcp-server in the ocp-troubleshooter-demo reference repo).
@@ -21,10 +31,13 @@ import base64
 import logging
 import os
 import re
+import uuid
 from typing import Any
 
 import httpx
 from fastmcp import FastMCP
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s — %(message)s")
 logger = logging.getLogger(__name__)
@@ -240,6 +253,162 @@ async def search_code(repo_url: str, query: str) -> dict[str, Any]:
                 for item in data.get("items", [])
             ],
         }
+
+
+async def _commit_file_to_branch(
+    client: httpx.AsyncClient, owner: str, repo: str, path: str, content: str, message: str, branch: str,
+) -> dict[str, Any]:
+    """
+    Create or update a single file on an *existing* branch, in one commit,
+    via the Contents API.
+    """
+    # The Contents API requires the current file's sha to update it, and
+    # rejects a sha on creation — look it up, tolerating a 404 (file
+    # doesn't exist yet on this branch, i.e. this will be a new file).
+    sha = None
+    existing_resp = await _get(client, f"/repos/{owner}/{repo}/contents/{path}", params={"ref": branch})
+    if existing_resp.status_code == 200:
+        existing_data = existing_resp.json()
+        if isinstance(existing_data, dict):
+            sha = existing_data.get("sha")
+    elif existing_resp.status_code != 404:
+        return {"error": f"GitHub API returned {existing_resp.status_code} checking for existing file: {existing_resp.text[:300]}"}
+
+    body: dict[str, Any] = {
+        "message": message,
+        "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+        "branch": branch,
+    }
+    if sha:
+        body["sha"] = sha
+
+    put_resp = await client.put(
+        f"{GITHUB_API_URL}/repos/{owner}/{repo}/contents/{path}",
+        headers=_headers(),
+        json=body,
+        timeout=30.0,
+    )
+    if put_resp.status_code not in (200, 201):
+        return {"error": f"GitHub API returned {put_resp.status_code} committing file: {put_resp.text[:300]}"}
+
+    data = put_resp.json()
+    commit = data.get("commit", {})
+    return {"commit_sha": commit.get("sha"), "commit_url": commit.get("html_url")}
+
+
+async def _propose_doc_pr(
+    owner: str, repo: str, path: str, content: str, commit_message: str,
+    base_branch: str, pr_title: str, pr_body: str,
+) -> dict[str, Any]:
+    """
+    Create a new branch off base_branch, commit `content` to `path` on it,
+    and open a pull request back into base_branch — never writing directly
+    to base_branch itself, so this is safe to point at a protected
+    default/feature branch. Requires GITHUB_TOKEN to be configured with
+    write access — for public repos, the `public_repo` OAuth scope
+    includes write access, not just read.
+    """
+    if not GITHUB_TOKEN:
+        return {"error": "Proposing a doc PR requires a GITHUB_TOKEN with write access to be configured on the MCP server."}
+
+    async with httpx.AsyncClient() as client:
+        if not base_branch:
+            info_resp = await _get(client, f"/repos/{owner}/{repo}")
+            if info_resp.status_code != 200:
+                return {"error": f"GitHub API returned {info_resp.status_code} fetching repo info: {info_resp.text[:300]}"}
+            base_branch = info_resp.json().get("default_branch", "main")
+
+        # 1. Resolve base_branch's current HEAD commit sha, to branch from.
+        ref_resp = await _get(client, f"/repos/{owner}/{repo}/git/ref/heads/{base_branch}")
+        if ref_resp.status_code != 200:
+            return {"error": f"GitHub API returned {ref_resp.status_code} resolving base branch '{base_branch}': {ref_resp.text[:300]}"}
+        base_sha = ref_resp.json().get("object", {}).get("sha")
+
+        # 2. Create a new, uniquely-named branch from that commit.
+        new_branch = f"agentic-docs/{uuid.uuid4().hex[:10]}"
+        create_ref_resp = await client.post(
+            f"{GITHUB_API_URL}/repos/{owner}/{repo}/git/refs",
+            headers=_headers(),
+            json={"ref": f"refs/heads/{new_branch}", "sha": base_sha},
+            timeout=30.0,
+        )
+        if create_ref_resp.status_code != 201:
+            return {"error": f"GitHub API returned {create_ref_resp.status_code} creating branch '{new_branch}': {create_ref_resp.text[:300]}"}
+
+        # 3. Commit the document to the new branch (never to base_branch).
+        commit_result = await _commit_file_to_branch(client, owner, repo, path, content, commit_message, new_branch)
+        if "error" in commit_result:
+            return commit_result
+
+        # 4. Open a pull request from the new branch back into base_branch.
+        pr_resp = await client.post(
+            f"{GITHUB_API_URL}/repos/{owner}/{repo}/pulls",
+            headers=_headers(),
+            json={"title": pr_title, "head": new_branch, "base": base_branch, "body": pr_body},
+            timeout=30.0,
+        )
+        if pr_resp.status_code != 201:
+            return {"error": f"GitHub API returned {pr_resp.status_code} opening PR: {pr_resp.text[:300]}"}
+        pr_data = pr_resp.json()
+
+        return {
+            "owner": owner,
+            "repo": repo,
+            "path": path,
+            "base_branch": base_branch,
+            "head_branch": new_branch,
+            "commit_sha": commit_result.get("commit_sha"),
+            "pr_number": pr_data.get("number"),
+            "pr_url": pr_data.get("html_url"),
+        }
+
+
+# Deliberately NOT an @mcp.tool(): doc-gen-agent's OGX agent loop (used by
+# the interactive Gradio chat UI) is handed every tool on this server via a
+# single generic "type": "mcp" tool definition with require_approval:
+# "never" (see doc-gen-agent/agent.py). Exposing a write capability there
+# would let the model trigger unintended branches/PRs during ordinary
+# read-only chat sessions. Instead, this is reachable only via the plain
+# REST route below, called deterministically by doc-gen-agent's /invoke
+# background task — never by the model itself.
+@mcp.custom_route("/propose-doc", methods=["POST"])
+async def propose_doc_route(request: Request) -> JSONResponse:
+    """
+    Plain REST endpoint wrapping _propose_doc_pr, for deterministic
+    callers that already hold the exact document to write (e.g.
+    doc-gen-agent's /invoke background task) and don't need/want an MCP
+    round-trip or an LLM tool call to relay a potentially large document.
+
+    Body: {"repo_url": ..., "path": ..., "content": ..., "commit_message":
+    ..., "base_branch": ... (optional, defaults to the repo's default
+    branch), "pr_title": ... (optional), "pr_body": ... (optional)}
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+
+    repo_url = body.get("repo_url", "")
+    path = body.get("path", "")
+    content = body.get("content", "")
+    commit_message = body.get("commit_message") or f"docs: update {path}"
+    base_branch = body.get("base_branch", "")
+    pr_title = body.get("pr_title") or f"docs: update {path}"
+    pr_body = body.get("pr_body") or (
+        "Auto-generated by the agentic-doc-generation doc-gen-agent in response to a CI/CD trigger. "
+        "Please review before merging."
+    )
+
+    if not repo_url or not path or not content:
+        return JSONResponse({"error": "repo_url, path, and content are required"}, status_code=400)
+
+    try:
+        owner, repo = _parse_repo_url(repo_url)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    result = await _propose_doc_pr(owner, repo, path, content, commit_message, base_branch, pr_title, pr_body)
+    return JSONResponse(result, status_code=200 if "error" not in result else 502)
 
 
 if __name__ == "__main__":

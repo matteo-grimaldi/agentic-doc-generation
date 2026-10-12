@@ -1,0 +1,44 @@
+# Fire-and-forget call to the doc-gen-agent's POST /invoke endpoint. The
+# endpoint itself returns 202 Accepted within milliseconds (it schedules
+# the actual, potentially multi-minute, agent run as a FastAPI background
+# task — see doc-gen-agent/app.py) and this Task additionally bounds the
+# call with a short curl timeout and never fails the step on error, so a
+# slow or unreachable agent can never block or fail the rest of the
+# pipeline.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: invoke-doc-gen-agent
+  namespace: ci-cd-demo
+spec:
+  description: >-
+    Triggers the doc-gen-agent to generate architecture documentation for
+    the repository being built, without blocking the pipeline on the
+    agent's full run.
+  params:
+    - name: repo-url
+      type: string
+      description: Public git repository URL to generate architecture docs for.
+    - name: agent-url
+      type: string
+      description: doc-gen-agent /invoke endpoint URL.
+      default: "http://doc-gen-agent.doc-gen-demo.svc.cluster.local:7860/invoke"
+  steps:
+    - name: invoke
+      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+      script: |
+        #!/usr/bin/env bash
+        # Deliberately no "-e": a failed or slow call to the agent must
+        # never fail or stall this Task (and therefore the pipeline).
+        set -uo pipefail
+
+        echo "==> Invoking doc-gen-agent at $(params.agent-url) for $(params.repo-url)"
+        # Send the bare repo URL as "prompt" — run_agent() (doc-gen-agent/agent.py)
+        # already wraps it in its own instruction text, and doc-gen-agent's
+        # /invoke handler extracts the github.com URL back out of this same
+        # field to know which repo to commit the result to.
+        curl -sS -m 5 -X POST "$(params.agent-url)" \
+          -H 'Content-Type: application/json' \
+          -d "{\"prompt\": \"$(params.repo-url)\"}" \
+          && echo "" \
+          || echo "==> WARNING: doc-gen-agent invocation failed or timed out — continuing pipeline anyway"

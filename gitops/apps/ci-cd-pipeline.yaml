@@ -1,0 +1,45 @@
+# Child Application: deploys the ci-cd-pipeline demo (OpenShift Pipelines
+# Namespace, RBAC, Tasks, and Pipeline — no PipelineRuns; those are
+# started explicitly, see ci-cd-pipeline/pipelinerun-example.yaml).
+#
+# sync-wave 2 — after doc-gen-agent (wave 1): the invoke-doc-gen-agent Task
+# calls doc-gen-agent's Service at runtime, so it's documented here as
+# depending on that wave, even though ArgoCD sync itself has no hard
+# ordering requirement on it (PipelineRuns aren't started by sync).
+#
+# PREREQUISITE: the Red Hat OpenShift Pipelines operator must already be
+# installed — run ci-cd-pipeline/install-operator.sh once before letting
+# ArgoCD sync this Application. ArgoCD can't apply Pipeline/Task resources
+# before their CRDs exist, the same reason gitops/bootstrap.sh installs
+# the OpenShift GitOps operator itself imperatively.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ci-cd-pipeline
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/YOUR_ORG/agentic-doc-generation.git
+    targetRevision: HEAD
+    path: ci-cd-pipeline/k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ci-cd-demo
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

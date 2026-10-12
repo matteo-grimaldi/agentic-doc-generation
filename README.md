@@ -78,7 +78,10 @@ down to one agent turn:
 - This repo pushed to a git remote reachable by the cluster (GitHub,
   GitLab, or an internal git server) — ArgoCD needs to clone it
 - (Optional) A `GITHUB_TOKEN` with `public_repo` scope, to raise GitHub
-  API rate limits and enable the `search_code` tool
+  API rate limits and enable the `search_code` tool. Required (with its
+  write access, which `public_repo` already includes) if you want the
+  `/invoke` endpoint to propose the generated doc back to its source repo via PR
+  — see [CI/CD pipeline demo](#cicd-pipeline-demo-openshift-pipelines)
 
 ## Quick start (GitOps)
 
@@ -128,7 +131,7 @@ oc get route doc-gen-agent -n doc-gen-demo -o jsonpath='https://{.spec.host}{"\n
 For local iteration on the application components only:
 
 ```bash
-export GITHUB_TOKEN=ghp_xxx                 # optional, raises rate limits + enables search_code
+export GITHUB_TOKEN=ghp_xxx                 # optional, raises rate limits + enables search_code + propose-doc
 export EXTERNAL_MODEL_API_KEY=sk-xxx        # optional, depends on your endpoint
 ./build-and-deploy-all.sh
 ```
@@ -191,7 +194,7 @@ agentic-doc-generation/
 │   ├── root-app.yaml                    # ArgoCD App-of-Apps
 │   ├── openshift-gitops-subscription.yaml
 │   └── apps/                            # Child ArgoCD Applications (one per component)
-├── github-mcp-server/                   # FastMCP server: get_repo_info, get_repo_structure, read_file, search_code
+├── github-mcp-server/                   # FastMCP server: get_repo_info, get_repo_structure, read_file, search_code, POST /propose-doc
 │   ├── server.py
 │   ├── Dockerfile
 │   ├── build-and-deploy.sh
@@ -203,9 +206,76 @@ agentic-doc-generation/
 │   ├── ogx/stack_run_config.yaml        # OGX + external model config
 │   ├── build-and-deploy.sh
 │   └── k8s/
+├── ci-cd-pipeline/                      # OpenShift Pipelines (Tekton) build/deploy demo
+│   ├── install-operator.sh              # One-time: installs the OpenShift Pipelines operator
+│   ├── build-and-deploy.sh
+│   ├── pipelinerun-example.yaml
+│   └── k8s/
 ├── build-and-deploy-all.sh              # Quick-start (non-GitOps) for app components
 └── README.md
 ```
+
+## CI/CD pipeline demo (OpenShift Pipelines)
+
+[`ci-cd-pipeline/`](ci-cd-pipeline/) adds a self-contained Tekton
+`build-deploy-app` Pipeline that demonstrates how an external CI/CD run
+can **trigger the doc-gen agent without blocking** on it: before building
+or deploying anything, the pipeline POSTs to the agent's `/invoke`
+endpoint, which accepts the request (`202 Accepted`) and runs the actual
+documentation generation in the background — so the pipeline's
+build/deploy steps proceed immediately rather than waiting minutes for a
+full agent turn. Once that background run finishes, the agent proposes
+the generated document (`ARCHITECTURE.md` by default) back to the repo it
+analyzed as a **pull request**: it creates a new branch, commits the doc
+there, and opens a PR against the base branch via the GitHub MCP server's
+`POST /propose-doc` route — it never writes directly to an existing
+branch, so this is safe even against a protected `main`.
+
+```mermaid
+flowchart LR
+    invokeAgent["invoke-doc-gen-agent\n(fires & returns in ms)"] --> fetchSource["fetch-source\n(git-clone)"]
+    fetchSource --> buildImage["build-image\n(buildah)"]
+    buildImage --> deploy["deploy\n(oc apply)"]
+    invokeAgent -.->|"background task"| agentRun["doc-gen-agent POST /invoke\nruns full doc generation async"]
+    agentRun -.->|"POST /propose-doc"| mcpPropose["GitHub MCP server"]
+    mcpPropose -.->|"new branch + commit"| sourceRepo["source repo"]
+    mcpPropose -.->|"opens PR"| sourceRepo
+```
+
+The pipeline builds the target repo's `Dockerfile` with Buildah, pushes
+to the internal OpenShift registry, and deploys a generic
+Deployment/Service/Route for it — so it works with **any public repo
+that has a Dockerfile**, not just this one.
+
+Prerequisites: the Red Hat **OpenShift Pipelines** operator (Tekton), and
+a `GITHUB_TOKEN` (`public_repo` scope is sufficient — it includes write
+access) configured on the GitHub MCP server, so it can open a PR against
+the repo you point the pipeline at. Without a token, doc generation still
+runs; the PR step just logs a warning and is skipped.
+
+```bash
+./ci-cd-pipeline/install-operator.sh    # one-time: installs the operator, waits for its CRDs
+./ci-cd-pipeline/build-and-deploy.sh    # applies the Namespace/RBAC/Tasks/Pipeline
+oc create -f ci-cd-pipeline/pipelinerun-example.yaml -n ci-cd-demo
+tkn pipelinerun logs -f -n ci-cd-demo
+```
+
+Or substitute any public repo/app name directly with the `tkn` CLI:
+
+```bash
+tkn pipeline start build-deploy-app -n ci-cd-demo \
+  -p repo-url=https://github.com/<org>/<repo> \
+  -p app-name=<name> \
+  -w name=shared-workspace,claimName=ci-cd-pipeline-workspace \
+  --serviceaccount=ci-cd-pipeline-sa
+```
+
+If using GitOps, `gitops/apps/ci-cd-pipeline.yaml` registers this
+component as an ArgoCD-managed child Application (sync-wave 2) — but the
+operator install step above must still be run manually first, since
+ArgoCD can't apply `Pipeline`/`Task` resources before their CRDs exist
+(the same reason `gitops/bootstrap.sh` installs the OpenShift GitOps
+operator itself imperatively).
 
 ## Known limitations
 
@@ -213,6 +283,14 @@ agentic-doc-generation/
   uses unauthenticated or token-based REST calls, no OAuth flow).
 - `search_code` requires a `GITHUB_TOKEN` (GitHub's code search API does
   not support unauthenticated requests).
+- Proposing the generated doc back to its source repo (via `/invoke` →
+  `POST /propose-doc`) requires a `GITHUB_TOKEN` with write access. It
+  always creates a fresh `agentic-docs/<random>` branch off the base
+  branch (the repo's default branch, or `ARCHITECTURE_DOC_BASE_BRANCH` if
+  set) and opens a PR into it — it never pushes directly to an existing
+  branch, so it's safe against protected branches, but someone still has
+  to review and merge the PR. This only happens for `/invoke` (the CI/CD
+  trigger path); the interactive Gradio chat UI never writes to GitHub.
 - The agent reads file contents one at a time; very large monorepos will
   hit the `MAX_INFER_ITERS` / token-budget guardrails in
   [`doc-gen-agent/agent.py`](doc-gen-agent/agent.py) and produce a

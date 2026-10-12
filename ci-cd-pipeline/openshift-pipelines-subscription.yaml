@@ -1,0 +1,17 @@
+# Installs the Red Hat OpenShift Pipelines operator (Tekton) cluster-wide.
+# Applied once by install-operator.sh before the Pipeline/Task/PipelineRun
+# CRDs (and the `pipelines-scc` SecurityContextConstraints) exist — this
+# can't be delegated to ArgoCD for the same reason gitops/bootstrap.sh
+# installs the OpenShift GitOps operator itself imperatively: ArgoCD can't
+# apply custom resources before their CRDs are registered.
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: openshift-pipelines-operator
+  namespace: openshift-operators
+spec:
+  channel: latest
+  name: openshift-pipelines-operator-rh
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic

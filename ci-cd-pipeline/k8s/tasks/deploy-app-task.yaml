@@ -1,0 +1,114 @@
+# Generates and applies a minimal Deployment + Service + Route for the
+# image just built by the buildah Task. Deliberately generic — it makes no
+# assumptions about the target repo's own Kubernetes manifests (there may
+# not be any), so this works for "any application" as long as it listens
+# on a single HTTP port.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: deploy-app
+  namespace: ci-cd-demo
+spec:
+  description: >-
+    Applies a generic Deployment, Service, and Route for the built
+    container image and waits for the rollout to complete.
+  params:
+    - name: app-name
+      type: string
+    - name: image
+      type: string
+      description: Fully qualified image reference to deploy.
+    - name: namespace
+      type: string
+      description: Namespace to deploy the application into.
+    - name: target-port
+      type: string
+      default: "8080"
+      description: Port the application container listens on.
+  steps:
+    - name: apply-manifests
+      image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        echo "==> Applying Deployment/Service/Route for $(params.app-name) in $(params.namespace)"
+        cat <<EOF | oc apply -n "$(params.namespace)" -f -
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: $(params.app-name)
+          labels:
+            app: $(params.app-name)
+            app.kubernetes.io/part-of: ci-cd-pipeline-demo
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: $(params.app-name)
+          template:
+            metadata:
+              labels:
+                app: $(params.app-name)
+            spec:
+              containers:
+                - name: $(params.app-name)
+                  image: $(params.image)
+                  ports:
+                    - containerPort: $(params.target-port)
+                  resources:
+                    requests:
+                      cpu: "100m"
+                      memory: "128Mi"
+                    limits:
+                      cpu: "500m"
+                      memory: "512Mi"
+                  readinessProbe:
+                    tcpSocket:
+                      port: $(params.target-port)
+                    initialDelaySeconds: 5
+                    periodSeconds: 10
+                  livenessProbe:
+                    tcpSocket:
+                      port: $(params.target-port)
+                    initialDelaySeconds: 15
+                    periodSeconds: 20
+        ---
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: $(params.app-name)
+          labels:
+            app: $(params.app-name)
+        spec:
+          selector:
+            app: $(params.app-name)
+          ports:
+            - name: http
+              port: 8080
+              targetPort: $(params.target-port)
+        ---
+        apiVersion: route.openshift.io/v1
+        kind: Route
+        metadata:
+          name: $(params.app-name)
+          labels:
+            app: $(params.app-name)
+        spec:
+          to:
+            kind: Service
+            name: $(params.app-name)
+          port:
+            targetPort: http
+          tls:
+            termination: edge
+            insecureEdgeTerminationPolicy: Redirect
+        EOF
+
+        echo "==> Waiting for rollout..."
+        oc rollout status "deployment/$(params.app-name)" -n "$(params.namespace)" --timeout=180s
+
+        ROUTE_HOST=$(oc get route "$(params.app-name)" -n "$(params.namespace)" -o jsonpath='https://{.spec.host}' 2>/dev/null || true)
+        if [[ -n "${ROUTE_HOST}" ]]; then
+          echo "==> Deployed. Route: ${ROUTE_HOST}"
+        fi
