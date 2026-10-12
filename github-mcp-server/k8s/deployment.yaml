@@ -31,7 +31,11 @@ spec:
             - name: PYTHONUNBUFFERED
               value: "1"
             # Optional: raises GitHub API rate limits and is required for
-            # search_code. Create with:
+            # search_code and for POST /propose-doc (opening a PR with the
+            # generated architecture doc against its source repo — see
+            # doc-gen-agent/app.py). For public repos the `public_repo`
+            # scope is sufficient; it includes write access, not just
+            # read. Create with:
             #   oc create secret generic github-token \
             #     --from-literal=token=<ghp_...> -n doc-gen-demo
             - name: GITHUB_TOKEN

@@ -33,9 +33,12 @@ spec:
         set -uo pipefail
 
         echo "==> Invoking doc-gen-agent at $(params.agent-url) for $(params.repo-url)"
-        PROMPT="Generate architecture documentation and diagrams for this repository: $(params.repo-url)"
+        # Send the bare repo URL as "prompt" — run_agent() (doc-gen-agent/agent.py)
+        # already wraps it in its own instruction text, and doc-gen-agent's
+        # /invoke handler extracts the github.com URL back out of this same
+        # field to know which repo to commit the result to.
         curl -sS -m 5 -X POST "$(params.agent-url)" \
           -H 'Content-Type: application/json' \
-          -d "{\"prompt\": \"${PROMPT}\"}" \
+          -d "{\"prompt\": \"$(params.repo-url)\"}" \
           && echo "" \
           || echo "==> WARNING: doc-gen-agent invocation failed or timed out — continuing pipeline anyway"

@@ -118,6 +118,12 @@ spec:
               value: "http://localhost:8321"
             - name: GITHUB_MCP_URL
               value: "http://github-mcp-server.doc-gen-demo.svc.cluster.local:8080/mcp"
+            # Base URL (no /mcp suffix) of the same GitHub MCP server, used
+            # only by the /invoke background task to POST the generated
+            # document to its plain REST /propose-doc route (which opens a
+            # PR rather than committing directly) — see app.py.
+            - name: GITHUB_MCP_SERVER_URL
+              value: "http://github-mcp-server.doc-gen-demo.svc.cluster.local:8080"
             - name: MODEL_NAME
               valueFrom:
                 configMapKeyRef:
