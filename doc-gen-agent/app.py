@@ -203,9 +203,7 @@ def build_ui() -> gr.Blocks:
         chatbot = gr.Chatbot(
             label="Architecture Doc Generator",
             height=640,
-            show_copy_button=True,
             render_markdown=True,
-            type="messages",
             avatar_images=(
                 None,
                 "https://www.redhat.com/cms/managed-files/Asset-Red_Hat-Logo_page-Logo-RGB.svg",
