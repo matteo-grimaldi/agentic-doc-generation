@@ -2,11 +2,18 @@
 # Deployment. This branch serves inference from an external, configurable
 # OpenAI-compatible endpoint (no in-cluster model serving) — point
 # model_base_url at your provider's OpenAI-compatible `/v1` base URL
-# (vLLM, Ollama, Azure OpenAI gateway, OpenAI itself, etc.) and set
-# model_name to the model identifier that endpoint expects.
+# (vLLM, Ollama, Azure OpenAI gateway, OpenAI itself, etc.).
 #
-# Keep model_name in sync with
-# doc-gen-agent/ogx/stack_run_config.yaml (registered_resources.models.model_id).
+# model_name must be the FULL id the OGX sidecar publishes at /v1/models —
+# i.e. "<provider_id>/<model_id>" from
+# doc-gen-agent/ogx/stack_run_config.yaml's registered_resources.models
+# entry (provider_id + "/" + model_id/provider_model_id), NOT the bare
+# model_id. agent.py passes this value straight through as the `model`
+# field on responses.create(), and OGX's model router requires either an
+# exact match against a registered model's published id, or (as a
+# fallback) a "<provider_id>/<provider_resource_id>" string it can split
+# on "/" — a bare model_id matches neither and fails with
+# ModelNotFoundError mid-stream.
 # The API key for the endpoint is supplied separately via the
 # external-model-credentials Secret (see k8s/deployment.yaml and the
 # README) — never put it in this ConfigMap.
@@ -16,5 +23,5 @@ metadata:
   name: cluster-config
   namespace: doc-gen-demo
 data:
-  model_name: "qwen38-27b"
+  model_name: "external-model/qwen38-27b"
   model_base_url: "https://maas-rhdp.apps.maas.redhatworkshops.io/v1"
