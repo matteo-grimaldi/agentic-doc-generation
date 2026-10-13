@@ -200,28 +200,71 @@ in Dockerfiles, k8s/deploy manifests, and CI config.
 ## Security Considerations
 Notable auth mechanisms, secrets handling, or RBAC found in the code (only report what you actually observed).
 
-## Diagrams
+## C4 Diagrams
 
-### Component Diagram
+Produce a C4 model (Context, Container, Component) of the repository using plain Mermaid
+`flowchart` syntax — NOT Mermaid's native `C4Context`/`C4Container` diagram types, which render
+unreliably across viewers. Instead, mark each node's C4 role with a `<<Stereotype>>` on a second
+line of its label (e.g. `<<Person>>`, `<<System>>`, `<<External System>>`, `<<Container>>`,
+`<<Database>>`, `<<Component>>`), and label edges with the relationship/protocol.
+
+### System Context Diagram
+One box for the system you are documenting, surrounded by the people and external systems that
+interact with it. Do NOT decompose the system internally here — it is a single box at this level.
 ```mermaid
 flowchart TB
-    %% nodes and edges reflecting the actual components you found
+    User["Customer\n&lt;&lt;Person&gt;&gt;"]
+    System["This Project\n&lt;&lt;System&gt;&gt;"]
+    ExtAPI["Payment Gateway\n&lt;&lt;External System&gt;&gt;"]
+    User -->|"Uses"| System
+    System -->|"Calls"| ExtAPI
 ```
 
-### Data Flow Diagram
+### Container Diagram
+Zoom into the system: one box per separately deployable/runnable unit you actually found
+(web app, API server, database, queue, worker, CLI, etc.) — not a code module. Use a `subgraph`
+for the system boundary and keep external actors/systems from the Context diagram around it for
+reference. If the repo is a single service with no sidecar/DB/queue, it is fine to have just one
+container box.
 ```mermaid
-sequenceDiagram
-    %% key request/data flow you identified
+flowchart TB
+    User["Customer\n&lt;&lt;Person&gt;&gt;"]
+    subgraph SystemBoundary["This Project"]
+        WebApp["Web App\n&lt;&lt;Container: React&gt;&gt;"]
+        ApiServer["API Server\n&lt;&lt;Container: FastAPI&gt;&gt;"]
+        Database[("Database\n&lt;&lt;Database: PostgreSQL&gt;&gt;")]
+    end
+    User -->|"Uses (HTTPS)"| WebApp
+    WebApp -->|"Calls (REST/JSON)"| ApiServer
+    ApiServer -->|"Reads/writes (SQL)"| Database
 ```
 
-### Dependency Diagram
+### Component Diagram
+Zoom into the most architecturally interesting container: one box per major module, package, or
+handler group actually found in the code, with edges showing internal dependencies. Use a
+`subgraph` for the container boundary. If the codebase is small enough that the Container diagram
+already shows everything, it is acceptable for this diagram to repeat it at slightly more detail.
 ```mermaid
-flowchart LR
-    %% this project's dependencies on external services/libraries
+flowchart TB
+    subgraph ApiServer["API Server"]
+        Routes["Routes/Controllers\n&lt;&lt;Component&gt;&gt;"]
+        Service["Business Logic\n&lt;&lt;Component&gt;&gt;"]
+        Repo["Data Access\n&lt;&lt;Component&gt;&gt;"]
+    end
+    Database[("Database\n&lt;&lt;Database&gt;&gt;")]
+    Routes -->|"Calls"| Service
+    Service -->|"Calls"| Repo
+    Repo -->|"Queries"| Database
 ```
+
+If you could not determine the external actors for the Context diagram, or the deployment
+topology for the Container diagram, say so in the surrounding prose rather than inventing boxes,
+and keep that diagram as simple as the evidence supports.
 
 Mermaid syntax rules: no spaces in node IDs (use camelCase/PascalCase/underscores), quote any edge label or
-node label containing parentheses/colons/commas, no explicit colors/styling, no `click` directives.
+node label containing parentheses/colons/commas, no explicit colors/styling, no `click` directives,
+use literal `&lt;&lt;`/`&gt;&gt;` (HTML entities) instead of raw `<<`/`>>` inside quoted labels so Mermaid
+does not misparse them as HTML tags.
 """
 
 
