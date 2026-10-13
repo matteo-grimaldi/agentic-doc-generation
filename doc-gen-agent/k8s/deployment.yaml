@@ -133,6 +133,10 @@ spec:
               value: "/etc/agent-knowledge/knowledge.md"
             - name: PYTHONUNBUFFERED
               value: "1"
+            - name: MAX_INFER_ITERS
+              value: "16"
+            - name: MAX_READ_FILES
+              value: "12"
           livenessProbe:
             httpGet:
               path: /

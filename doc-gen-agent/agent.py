@@ -34,22 +34,68 @@ MODEL_NAME = os.getenv("MODEL_NAME", "granite-3.1-8b-instruct")
 KNOWLEDGE_FILE = os.getenv("KNOWLEDGE_FILE", "/etc/agent-knowledge/knowledge.md")
 
 AGENT_TIMEOUT_SECONDS = int(os.getenv("AGENT_TIMEOUT_SECONDS", "600"))
-MAX_INFER_ITERS = int(os.getenv("MAX_INFER_ITERS", "24"))
+MAX_INFER_ITERS = int(os.getenv("MAX_INFER_ITERS", "16"))
+MAX_READ_FILES = int(os.getenv("MAX_READ_FILES", "12"))
 
 
-def _load_knowledge() -> str:
-    """Load the architecture-documentation knowledge base from the mounted ConfigMap file."""
-    try:
-        with open(KNOWLEDGE_FILE) as f:
-            content = f.read().strip()
-        logger.info("Loaded knowledge base from %s (%d chars)", KNOWLEDGE_FILE, len(content))
-        return content
-    except FileNotFoundError:
-        logger.warning("Knowledge file not found at %s — running without format guidance", KNOWLEDGE_FILE)
-        return ""
+def _response_as_dict(obj: object | None) -> dict:
+    """Best-effort normalize an OGX/Pydantic response object to a dict."""
+    if obj is None:
+        return {}
+    if isinstance(obj, dict):
+        return obj
+    dump = getattr(obj, "model_dump", None)
+    if callable(dump):
+        try:
+            return dump()
+        except Exception:
+            pass
+    to_dict = getattr(obj, "dict", None)
+    if callable(to_dict):
+        try:
+            return to_dict()
+        except Exception:
+            pass
+    return {k: getattr(obj, k) for k in ("status", "error") if hasattr(obj, k)}
 
 
-SYSTEM_PROMPT = """You are an AI architecture-documentation assistant. Given a GitHub repository,
+def _extract_ogx_error(payload: object | None) -> tuple[str, str] | None:
+    """
+    Return (error_code, error_message) from an OGX response or stream error event.
+    Message is truncated for UI safety.
+    """
+    data = _response_as_dict(payload)
+    error = data.get("error")
+    if error is None:
+        return None
+    if not isinstance(error, dict):
+        return ("server_error", str(error)[:500])
+    code = str(error.get("code") or error.get("type") or "server_error")
+    message = str(error.get("message") or error.get("detail") or "Unknown backend error")
+    if len(message) > 500:
+        message = message[:497] + "..."
+    return code, message
+
+
+def _format_ogx_failure_message(code: str, message: str, tool_calls: int) -> str:
+    """User-visible explanation when OGX ends the run with an error."""
+    hint = (
+        "The external model endpoint closed the connection or rejected the request. "
+        "This often happens when the conversation context grows too large after many "
+        f"file reads ({tool_calls} tool steps so far). Try a smaller repository, or ask "
+        "your cluster admin to verify the inference endpoint is healthy."
+    )
+    if code in ("server_error", "api_connection_error", "connection_error"):
+        body = hint
+    elif "disconnect" in message.lower() or "connection" in message.lower():
+        body = hint
+    else:
+        body = message
+    return f"\n\n⚠️ **Error:** Model backend failed (`{code}`). {body}\n"
+
+
+def _build_system_prompt() -> str:
+    return f"""You are an AI architecture-documentation assistant. Given a GitHub repository,
 explore its structure and source files, then produce a clear architecture summary with diagrams —
 a simplified version of the opendatahub-io/architecture-context pipeline, run as a single agent turn.
 
@@ -60,17 +106,20 @@ Tools available (github-mcp-server):
 - search_code(repo_url, query): search for a pattern across the repo (requires a GitHub token; may be unavailable)
 
 Token budget — be deliberate about what you read:
-- Read at most ~15-20 files. Prioritize: README*, main entry points (main.*, app.*, index.*, cmd/),
+- Read at most {MAX_READ_FILES} files total (hard limit). When you reach this limit, stop calling read_file
+  and write the final document from what you already have.
+- Prioritize: README*, main entry points (main.*, app.*, index.*, cmd/),
   package manifests (pom.xml, package.json, go.mod, pyproject.toml, requirements.txt, Cargo.toml),
   Dockerfile*, docker-compose*.yaml, k8s/*.yaml or deploy/*.yaml, CI config (.github/workflows/*).
 - Skip test files, generated code, and vendored dependencies unless nothing else explains the architecture.
 - Do not call read_file on the same path twice. Do not re-fetch get_repo_structure more than once per repo.
 - If a tool call fails twice in a row, stop retrying it and proceed with what you have.
+- After exploration, you MUST produce the final Markdown document; do not keep reading files indefinitely.
 
 Workflow:
 1. Call get_repo_info to learn the default branch and language.
 2. Call get_repo_structure once to map the project layout.
-3. Read the ~15-20 most architecturally relevant files identified from the tree.
+3. Read the most architecturally relevant files from the tree (up to the {MAX_READ_FILES}-file cap).
 4. Synthesize findings into the structured document described below.
 5. Produce the Mermaid diagrams described below, embedded directly in fenced ```mermaid code blocks.
 
@@ -125,6 +174,18 @@ node label containing parentheses/colons/commas, no explicit colors/styling, no 
 """
 
 
+def _load_knowledge() -> str:
+    """Load the architecture-documentation knowledge base from the mounted ConfigMap file."""
+    try:
+        with open(KNOWLEDGE_FILE) as f:
+            content = f.read().strip()
+        logger.info("Loaded knowledge base from %s (%d chars)", KNOWLEDGE_FILE, len(content))
+        return content
+    except FileNotFoundError:
+        logger.warning("Knowledge file not found at %s — running without format guidance", KNOWLEDGE_FILE)
+        return ""
+
+
 async def run_agent(repo_url: str) -> AsyncIterator[str]:
     """
     Stream the agent's architecture-documentation response for a given
@@ -145,10 +206,11 @@ async def run_agent(repo_url: str) -> AsyncIterator[str]:
     )
 
     knowledge = _load_knowledge()
+    system_prompt = _build_system_prompt()
     instructions = (
-        f"{SYSTEM_PROMPT}\n\n---\n## Documentation Style Guide\n\n{knowledge}"
+        f"{system_prompt}\n\n---\n## Documentation Style Guide\n\n{knowledge}"
         if knowledge
-        else SYSTEM_PROMPT
+        else system_prompt
     )
 
     user_message = f"Generate architecture documentation and diagrams for this repository: {repo_url}"
@@ -188,6 +250,17 @@ async def run_agent(repo_url: str) -> AsyncIterator[str]:
     text_bytes = 0
     tool_calls = 0
     tool_failures = 0
+    ogx_error: tuple[str, str] | None = None
+    ogx_error_announced = False
+
+    def _announce_ogx_error() -> str | None:
+        nonlocal ogx_error_announced
+        if ogx_error is None or ogx_error_announced:
+            return None
+        ogx_error_announced = True
+        code, message = ogx_error
+        logger.error("OGX response error — code=%s message=%s", code, message)
+        return _format_ogx_failure_message(code, message, tool_calls)
 
     try:
         async with asyncio.timeout(AGENT_TIMEOUT_SECONDS):
@@ -222,10 +295,32 @@ async def run_agent(repo_url: str) -> AsyncIterator[str]:
                         else:
                             logger.info("Tool call completed: %s → %s", server, tool)
 
+                elif event_type in ("response.failed", "error"):
+                    parsed = _extract_ogx_error(event) or _extract_ogx_error(
+                        getattr(event, "response", None)
+                    )
+                    if parsed:
+                        ogx_error = parsed
+                    msg = _announce_ogx_error()
+                    if msg:
+                        yield msg
+
                 elif event_type == "response.completed":
                     resp = getattr(event, "response", None)
-                    status = getattr(resp, "status", "unknown") if resp else "unknown"
+                    resp_data = _response_as_dict(resp)
+                    status = resp_data.get("status") or getattr(resp, "status", "unknown")
                     logger.info("Stream response.completed — status=%s", status)
+                    parsed = _extract_ogx_error(resp)
+                    if parsed:
+                        ogx_error = parsed
+                    elif status in ("failed", "incomplete", "cancelled"):
+                        ogx_error = (
+                            str(status),
+                            "The agent backend ended the run without completing documentation.",
+                        )
+                    msg = _announce_ogx_error()
+                    if msg:
+                        yield msg
 
     except TimeoutError:
         logger.error("Agent exceeded %ds timeout", AGENT_TIMEOUT_SECONDS)
@@ -243,4 +338,20 @@ async def run_agent(repo_url: str) -> AsyncIterator[str]:
         event_count, text_chunks, text_bytes, tool_calls, tool_failures,
     )
     if text_chunks == 0:
-        logger.warning("Stream produced no text output — the model may have ended on a tool call without generating a final answer")
+        if ogx_error and not ogx_error_announced:
+            code, message = ogx_error
+            yield _format_ogx_failure_message(code, message, tool_calls)
+        elif ogx_error:
+            logger.warning(
+                "Stream produced no text output after OGX error (already reported to user)"
+            )
+        else:
+            logger.warning(
+                "Stream produced no text output — the model may have ended on a tool call "
+                "without generating a final answer"
+            )
+            yield (
+                "\n\n⚠️ **Error:** The agent finished without producing documentation. "
+                f"It ran {tool_calls} tool step(s) but the model never returned a final answer. "
+                "Try again or use a smaller repository.\n"
+            )
