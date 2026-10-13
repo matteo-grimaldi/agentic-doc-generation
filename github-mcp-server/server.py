@@ -11,7 +11,8 @@ directly to a (possibly protected) existing branch.
 Tools exposed:
     get_repo_info       -- repo metadata (default branch, description, language)
     get_repo_structure   -- recursive file/directory tree
-    read_file            -- contents of a single file (size-capped, truncated)
+    get_file_outline     -- regex-extracted imports/signatures for a file (cheap scan, no LLM call)
+    read_file            -- contents of a single file (size-capped, truncated; doc files capped shorter)
     search_code          -- code search within the repo (requires GITHUB_TOKEN)
 
 Also exposes POST /propose-doc, a plain REST route (not an MCP tool) that
@@ -50,6 +51,17 @@ MCP_PORT = int(os.getenv("MCP_PORT", "8080"))
 # the GitHub API fetching a huge monorepo.
 MAX_TREE_ENTRIES = int(os.getenv("MAX_TREE_ENTRIES", "800"))
 MAX_FILE_BYTES = int(os.getenv("MAX_FILE_BYTES", "60000"))
+# Documentation files are mostly prose (install steps, changelogs, API
+# reference) that a budget model tends to parrot back rather than analyze.
+# Cap them much shorter than code files — the purpose/overview section is
+# always near the top — so a full read_file on a README doesn't consume
+# the same context budget as a source file.
+MAX_DOC_FILE_BYTES = int(os.getenv("MAX_DOC_FILE_BYTES", "8000"))
+DOC_FILENAME_PREFIXES = ("readme", "contributing", "changelog", "history", "news")
+DOC_EXTENSIONS = (".md", ".rst", ".txt", ".adoc")
+# Cap for get_file_outline's extracted signatures/imports per file — an
+# outline should always be far smaller than MAX_FILE_BYTES.
+MAX_OUTLINE_BYTES = int(os.getenv("MAX_OUTLINE_BYTES", "4000"))
 EXCLUDED_PATH_PREFIXES = (
     "node_modules/", "vendor/", ".git/", "dist/", "build/", "target/",
     ".venv/", "venv/", "__pycache__/",
@@ -58,7 +70,17 @@ EXCLUDED_EXTENSIONS = (
     ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".woff", ".woff2",
     ".ttf", ".eot", ".pdf", ".zip", ".tar", ".gz", ".jar", ".class",
     ".so", ".dylib", ".dll", ".exe", ".lock",
+    "package-lock.json", "yarn.lock", "pipfile.lock", "poetry.lock",
 )
+
+
+def _is_doc_file(path: str) -> bool:
+    """True for README/CONTRIBUTING/CHANGELOG-style prose files, which get
+    a much shorter truncation cap than code files in read_file."""
+    basename = path.rsplit("/", 1)[-1].lower()
+    if basename.startswith(DOC_FILENAME_PREFIXES):
+        return True
+    return basename.endswith(DOC_EXTENSIONS)
 
 mcp = FastMCP("github-mcp-server")
 
@@ -171,13 +193,160 @@ async def get_repo_structure(repo_url: str, ref: str = "", max_entries: int = MA
         }
 
 
+def _extract_outline(path: str, text: str) -> str | None:
+    """
+    Best-effort structural summary of a source file: imports/package
+    declarations plus top-level class/function/type signatures, extracted
+    via lightweight regex (no LLM call). Returns None for file types with
+    no known outline strategy, so callers fall back to raw content.
+
+    This exists so the agent can "scan" a file's shape — what it declares,
+    what it imports — at a small fraction of the token cost of reading it
+    in full, and only spend a read_file call on files whose outline looks
+    architecturally significant.
+    """
+    lower = path.lower()
+    lines = text.splitlines()
+
+    def _collect(patterns: list[str], max_lines: int = 200) -> list[str]:
+        combined = re.compile("|".join(patterns))
+        out = []
+        for line in lines[:max_lines * 10]:  # cap how far we scan
+            if combined.search(line):
+                out.append(line.strip())
+            if len(out) >= max_lines:
+                break
+        return out
+
+    if lower.endswith(".py"):
+        return "\n".join(_collect([
+            r"^\s*(import|from)\s+\S",
+            r"^\s*(async\s+def|def|class)\s+\w",
+        ]))
+
+    if lower.endswith((".java", ".kt")):
+        return "\n".join(_collect([
+            r"^\s*package\s+\S",
+            r"^\s*import\s+\S",
+            r"^\s*(public|private|protected)?\s*(static\s+)?(class|interface|enum|record)\s+\w",
+            r"^\s*(public|private|protected)\s+[\w<>\[\],\s]+\s+\w+\s*\([^)]*\)\s*\{?\s*$",
+        ]))
+
+    if lower.endswith(".go"):
+        return "\n".join(_collect([
+            r"^\s*package\s+\w",
+            r"^\s*import\s",
+            r"^\s*\"",  # import block lines
+            r"^\s*type\s+\w+\s+(struct|interface)",
+            r"^\s*func\s+(\(\w+\s+\*?\w+\)\s+)?\w+\s*\(",
+        ]))
+
+    if lower.endswith((".js", ".jsx", ".ts", ".tsx")):
+        return "\n".join(_collect([
+            r"^\s*(import|export|const\s+\w+\s*=\s*require)\s",
+            r"^\s*export\s+(default\s+)?(class|function|const|interface|type)\s+\w",
+            r"^\s*(class|function)\s+\w",
+        ]))
+
+    if lower.endswith((".yaml", ".yml")):
+        # Top-level keys only (no leading whitespace), plus Kubernetes kind/name hints.
+        return "\n".join(_collect([
+            r"^[A-Za-z_][\w-]*:",
+            r"^\s*kind:\s*\S",
+            r"^\s*name:\s*\S",
+        ]))
+
+    if path.rsplit("/", 1)[-1].lower().startswith("dockerfile") or lower.endswith(".dockerfile"):
+        return "\n".join(_collect([
+            r"^\s*(FROM|RUN|CMD|EXPOSE|ENTRYPOINT|COPY|ADD|ENV|ARG|WORKDIR|USER|VOLUME|LABEL)\s",
+        ]))
+
+    return None
+
+
+@mcp.tool()
+async def get_file_outline(repo_url: str, path: str, ref: str = "") -> dict[str, Any]:
+    """
+    Return a lightweight structural outline of a single file — imports/package
+    declarations plus top-level class/function/type signatures — instead of
+    its full content. Extracted via simple pattern matching, not an LLM call,
+    so it costs almost nothing in tokens compared to read_file.
+
+    Use this to SCAN candidate files (entry points, configs, manifests) before
+    deciding which ones are architecturally significant enough to read in full
+    with read_file. Prefer this over read_file whenever you just need to know
+    what a file declares/imports, not its implementation details.
+
+    Supported file types: Python, Java, Kotlin, Go, JS/TS, YAML, Dockerfile.
+    For unsupported types (e.g. plain text, Markdown, JSON, shell scripts),
+    this returns an "unsupported" note — use read_file directly for those.
+
+    Args:
+        repo_url: A GitHub URL or "owner/repo" shorthand.
+        path: File path within the repo, as returned by get_repo_structure.
+        ref: Branch, tag, or commit SHA. Defaults to the repo's default branch.
+    """
+    owner, repo = _parse_repo_url(repo_url)
+    async with httpx.AsyncClient() as client:
+        if not ref:
+            info_resp = await _get(client, f"/repos/{owner}/{repo}")
+            if info_resp.status_code != 200:
+                return {"error": f"GitHub API returned {info_resp.status_code}: {info_resp.text[:300]}"}
+            ref = info_resp.json().get("default_branch", "main")
+
+        resp = await _get(client, f"/repos/{owner}/{repo}/contents/{path}", params={"ref": ref})
+        if resp.status_code != 200:
+            return {"error": f"GitHub API returned {resp.status_code}: {resp.text[:300]}"}
+
+        data = resp.json()
+        if isinstance(data, list):
+            return {"error": f"'{path}' is a directory, not a file. Use get_repo_structure to list its contents."}
+        if data.get("encoding") != "base64":
+            return {"error": f"Unsupported encoding '{data.get('encoding')}' for '{path}'."}
+
+        raw = base64.b64decode(data["content"])
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return {"error": f"'{path}' does not appear to be a text file (binary content)."}
+
+        outline = _extract_outline(path, text)
+        if outline is None:
+            return {
+                "path": path,
+                "ref": ref,
+                "outline": "",
+                "note": (
+                    "No outline strategy for this file type — call read_file directly if "
+                    "this file's content is needed."
+                ),
+            }
+
+        truncated = False
+        if len(outline) > MAX_OUTLINE_BYTES:
+            outline = outline[:MAX_OUTLINE_BYTES]
+            truncated = True
+
+        return {
+            "path": path,
+            "ref": ref,
+            "truncated": truncated,
+            "outline": outline or "(no imports or top-level declarations found)",
+        }
+
+
 @mcp.tool()
 async def read_file(repo_url: str, path: str, ref: str = "") -> dict[str, Any]:
     """
     Read the contents of a single file from a GitHub repository.
 
     Files larger than ~60KB are truncated with a note, to protect the
-    agent's context window budget.
+    agent's context window budget. Documentation files (README,
+    CONTRIBUTING, CHANGELOG, and other .md/.rst/.txt/.adoc files) are
+    truncated much more aggressively (~8KB) since their overview/purpose
+    section is always near the top and the rest (install steps, API
+    reference, changelogs) rarely helps architecture analysis — prefer
+    get_file_outline for code files when you only need their structure.
 
     Args:
         repo_url: A GitHub URL or "owner/repo" shorthand.
@@ -204,9 +373,10 @@ async def read_file(repo_url: str, path: str, ref: str = "") -> dict[str, Any]:
             return {"error": f"Unsupported encoding '{data.get('encoding')}' for '{path}'."}
 
         raw = base64.b64decode(data["content"])
+        byte_cap = MAX_DOC_FILE_BYTES if _is_doc_file(path) else MAX_FILE_BYTES
         truncated = False
-        if len(raw) > MAX_FILE_BYTES:
-            raw = raw[:MAX_FILE_BYTES]
+        if len(raw) > byte_cap:
+            raw = raw[:byte_cap]
             truncated = True
 
         try:

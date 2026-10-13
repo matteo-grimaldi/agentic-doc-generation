@@ -4,6 +4,23 @@ This knowledge base is injected into the agent's system prompt (mounted from a
 ConfigMap) to keep generated documents consistent, concise, and genuinely
 useful — rather than a verbose restatement of the file tree.
 
+## Exploration principles (budget-conscious)
+
+- **Scan before you read.** Use `get_file_outline` on candidate files first —
+  it returns imports/signatures almost for free. Only fall back to `read_file`
+  (full content) for the handful of files whose outline shows something that
+  actually needs the implementation to explain (a route table, a data model,
+  a non-obvious config value).
+- **Don't let README content substitute for looking at the code.** It's fine
+  to read a project's README for framing, but a short outdated/aspirational
+  README does not override what the file tree and source files actually show.
+  If the README and the code disagree, trust the code and note the gap rather
+  than silently repeating the README's claims.
+- **One full doc read is usually enough.** Once you have the project's
+  purpose from `get_repo_info`'s description or a quick README skim, don't
+  spend more of the read budget on CONTRIBUTING/CHANGELOG/docs/ prose — that
+  budget is better spent on one more entry point, manifest, or deploy config.
+
 ## Writing principles
 
 - **Be concrete.** Name the actual frameworks, files, and classes you found

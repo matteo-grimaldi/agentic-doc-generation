@@ -134,9 +134,9 @@ spec:
             - name: PYTHONUNBUFFERED
               value: "1"
             - name: MAX_INFER_ITERS
-              value: "16"
+              value: "20"
             - name: MAX_READ_FILES
-              value: "12"
+              value: "10"
           livenessProbe:
             httpGet:
               path: /

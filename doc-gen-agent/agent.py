@@ -35,8 +35,14 @@ MODEL_NAME = os.getenv("MODEL_NAME", "granite-3.1-8b-instruct")
 KNOWLEDGE_FILE = os.getenv("KNOWLEDGE_FILE", "/etc/agent-knowledge/knowledge.md")
 
 AGENT_TIMEOUT_SECONDS = int(os.getenv("AGENT_TIMEOUT_SECONDS", "600"))
-MAX_INFER_ITERS = int(os.getenv("MAX_INFER_ITERS", "16"))
-MAX_READ_FILES = int(os.getenv("MAX_READ_FILES", "12"))
+# Raised from 16: get_file_outline scan calls are cheap (small outputs, no
+# full file content) but each still consumes one inference iteration, so the
+# scan-then-read workflow below needs more iterations than straight reads did.
+MAX_INFER_ITERS = int(os.getenv("MAX_INFER_ITERS", "20"))
+# Lowered from 12: get_file_outline now covers the "what does this file
+# declare" need for many files, so fewer full read_file calls should be
+# necessary to reach the same (or better) understanding of the repo.
+MAX_READ_FILES = int(os.getenv("MAX_READ_FILES", "10"))
 
 # Injected into the Gradio stream for UX; must not appear in committed ARCHITECTURE.md.
 _TOOL_STATUS_LINE_RE = re.compile(
@@ -124,26 +130,45 @@ a simplified version of the opendatahub-io/architecture-context pipeline, run as
 Tools available (github-mcp-server):
 - get_repo_info(repo_url): repo metadata, including default_branch — call this FIRST
 - get_repo_structure(repo_url, ref): recursive file tree (vendor/build dirs and binaries are pre-filtered)
-- read_file(repo_url, path, ref): read one file's contents (large files are truncated)
+- get_file_outline(repo_url, path, ref): a CHEAP scan of one file — imports/package declarations plus
+  top-level class/function/type signatures, extracted without sending you the full file content.
+  Supports Python, Java, Kotlin, Go, JS/TS, YAML, and Dockerfile. Use this FIRST on any code/config
+  file whose role you're unsure about — it costs a fraction of what read_file costs.
+- read_file(repo_url, path, ref): full contents of one file (large files truncated; README/CHANGELOG-style
+  docs are truncated hard, to ~8KB, since their overview is always near the top)
 - search_code(repo_url, query): search for a pattern across the repo (requires a GitHub token; may be unavailable)
 
-Token budget — be deliberate about what you read:
-- Read at most {MAX_READ_FILES} files total (hard limit). When you reach this limit, stop calling read_file
-  and write the final document from what you already have.
-- Prioritize: README*, main entry points (main.*, app.*, index.*, cmd/),
-  package manifests (pom.xml, package.json, go.mod, pyproject.toml, requirements.txt, Cargo.toml),
-  Dockerfile*, docker-compose*.yaml, k8s/*.yaml or deploy/*.yaml, CI config (.github/workflows/*).
-- Skip test files, generated code, and vendored dependencies unless nothing else explains the architecture.
-- Do not call read_file on the same path twice. Do not re-fetch get_repo_structure more than once per repo.
-- If a tool call fails twice in a row, stop retrying it and proceed with what you have.
-- After exploration, you MUST produce the final Markdown document; do not keep reading files indefinitely.
+Token budget — be deliberate and follow this two-phase strategy:
 
-Workflow:
-1. Call get_repo_info to learn the default branch and language.
-2. Call get_repo_structure once to map the project layout.
-3. Read the most architecturally relevant files from the tree (up to the {MAX_READ_FILES}-file cap).
-4. Synthesize findings into the structured document described below.
-5. Produce the Mermaid diagrams described below, embedded directly in fenced ```mermaid code blocks.
+PHASE 1 — Survey (cheap, do this before any read_file call):
+  1. get_repo_info → note language, default branch.
+  2. get_repo_structure (once) → map the project layout.
+  3. get_file_outline on the 6-10 files that look most architecturally relevant (entry points,
+     package manifests, k8s/deploy manifests, Dockerfiles, CI config) — this tells you what each
+     file declares/imports without spending a full read on it.
+
+PHASE 2 — Deep read (expensive, spend this budget deliberately — at most {MAX_READ_FILES} read_file calls):
+  4. Call read_file ONLY on files whose outline (or whose role, for file types get_file_outline
+     doesn't support — plain text/JSON/shell/README) revealed something you actually need the full
+     content for: service/route definitions, data models, config values, deployment specifics.
+  5. Do NOT read_file a file you already scanned with get_file_outline unless the outline showed
+     something architecturally significant that needs the full implementation to explain.
+  6. Read at most one README/CONTRIBUTING/CHANGELOG-style file in full, and only if get_repo_info's
+     description plus the repo structure don't already make the project's purpose clear.
+  7. Skip test files, generated code, lock files, and vendored dependencies unless nothing else
+     explains the architecture.
+  8. Do not call read_file or get_file_outline on the same path twice. Do not re-fetch
+     get_repo_structure more than once per repo.
+  9. If a tool call fails twice in a row, stop retrying it and proceed with what you have.
+
+PHASE 3 — Write:
+  10. Once you've surveyed and selectively deep-read, you MUST produce the final Markdown document —
+      do not keep reading files indefinitely. When you reach the read_file cap, stop calling it and
+      write the document from what you already have.
+
+Workflow summary: Phase 1 (survey with get_repo_info/get_repo_structure/get_file_outline) →
+Phase 2 (read_file on the few files that truly need it) → Phase 3 (synthesize the structured document
+and Mermaid diagrams described below, embedded directly in fenced ```mermaid code blocks).
 
 When you begin writing the final answer, start immediately with the heading below — no
 preamble, narration, or "let me read…" commentary before it. Tool calls happen outside
