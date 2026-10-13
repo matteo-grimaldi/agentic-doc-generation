@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from typing import AsyncIterator
 
 import httpx
@@ -36,6 +37,27 @@ KNOWLEDGE_FILE = os.getenv("KNOWLEDGE_FILE", "/etc/agent-knowledge/knowledge.md"
 AGENT_TIMEOUT_SECONDS = int(os.getenv("AGENT_TIMEOUT_SECONDS", "600"))
 MAX_INFER_ITERS = int(os.getenv("MAX_INFER_ITERS", "16"))
 MAX_READ_FILES = int(os.getenv("MAX_READ_FILES", "12"))
+
+# Injected into the Gradio stream for UX; must not appear in committed ARCHITECTURE.md.
+_TOOL_STATUS_LINE_RE = re.compile(
+    r"\n\n> (?:🔧 Calling \*\*[^*]+\*\* → `[^`]+`…|"
+    r"⚠️ \*\*[^*]+\*\* → `[^`]+` failed: [^\n]+)\n\n"
+)
+_ARCHITECTURE_DOC_START_RE = re.compile(r"^# Architecture:", re.MULTILINE)
+_AGENT_ERROR_FOOTER_RE = re.compile(r"\n\n⚠️ \*\*Error:\*\*[\s\S]*$")
+
+
+def extract_architecture_document(streamed: str) -> str:
+    """
+    Strip Gradio-only artifacts from a full run_agent() stream so PRs and
+    downloads contain only the architecture Markdown document.
+    """
+    text = _TOOL_STATUS_LINE_RE.sub("", streamed)
+    match = _ARCHITECTURE_DOC_START_RE.search(text)
+    if match:
+        text = text[match.start() :]
+    text = _AGENT_ERROR_FOOTER_RE.sub("", text)
+    return text.strip()
 
 
 def _response_as_dict(obj: object | None) -> dict:
@@ -122,6 +144,10 @@ Workflow:
 3. Read the most architecturally relevant files from the tree (up to the {MAX_READ_FILES}-file cap).
 4. Synthesize findings into the structured document described below.
 5. Produce the Mermaid diagrams described below, embedded directly in fenced ```mermaid code blocks.
+
+When you begin writing the final answer, start immediately with the heading below — no
+preamble, narration, or "let me read…" commentary before it. Tool calls happen outside
+your visible reply; the user only wants the finished document in your text output.
 
 Output format (produce ALL sections, in this order):
 

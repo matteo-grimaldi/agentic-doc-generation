@@ -23,7 +23,7 @@ import uvicorn
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel
 
-from agent import MODEL_NAME, run_agent
+from agent import MODEL_NAME, extract_architecture_document, run_agent
 
 # Base URL of the GitHub MCP server's plain REST API (not its /mcp MCP
 # endpoint) — used only by the /invoke background task below to propose the
@@ -98,9 +98,8 @@ async def chat(message: str, history: list[dict]):
         history[-1] = {"role": "assistant", "content": response_so_far}
         yield history, "", ""
 
-    # Final yield: commit the repo URL + full content to state now that
-    # generation has finished, enabling the "Propose as PR" button.
-    yield history, repo_url, response_so_far
+    # Final yield: PR-ready doc only (stream may include tool-status lines).
+    yield history, repo_url, extract_architecture_document(response_so_far)
 
 
 class InvokeRequest(BaseModel):
@@ -192,8 +191,9 @@ async def _run_agent_in_background(prompt: str, job_id: str) -> None:
         logger.exception("Background agent job %s failed", job_id)
         return
 
-    if not response_text.strip():
-        logger.warning("Job %s: agent produced no output — skipping PR", job_id)
+    doc_content = extract_architecture_document(response_text)
+    if not doc_content.strip():
+        logger.warning("Job %s: agent produced no document — skipping PR", job_id)
         return
 
     repo_url = _extract_repo_url(prompt)
@@ -201,7 +201,7 @@ async def _run_agent_in_background(prompt: str, job_id: str) -> None:
         logger.warning("Job %s: could not find a github.com URL in the prompt — skipping PR", job_id)
         return
 
-    await _propose_architecture_doc(repo_url, response_text, job_id)
+    await _propose_architecture_doc(repo_url, doc_content, job_id)
 
 
 async def propose_pr_clicked(repo_url: str, content: str) -> str:
