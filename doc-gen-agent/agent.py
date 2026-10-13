@@ -261,10 +261,24 @@ If you could not determine the external actors for the Context diagram, or the d
 topology for the Container diagram, say so in the surrounding prose rather than inventing boxes,
 and keep that diagram as simple as the evidence supports.
 
-Mermaid syntax rules: no spaces in node IDs (use camelCase/PascalCase/underscores), quote any edge label or
-node label containing parentheses/colons/commas, no explicit colors/styling, no `click` directives,
-use literal `&lt;&lt;`/`&gt;&gt;` (HTML entities) instead of raw `<<`/`>>` inside quoted labels so Mermaid
-does not misparse them as HTML tags.
+The three C4 diagrams above are REQUIRED. Do not add any further diagrams (e.g. a sequenceDiagram
+for Data Flow) — describe flows in prose only, as instructed in that section — unless they strictly
+follow every rule below; an extra diagram that fails to render is worse than no diagram.
+
+Mermaid syntax rules (apply to every Mermaid block you produce, of any diagram type):
+- No spaces in node/participant/actor IDs (use camelCase/PascalCase/underscores).
+- Quote any edge/message label or node label containing parentheses, colons, or commas.
+- No explicit colors/styling, no `click` directives.
+- Use literal `&lt;&lt;`/`&gt;&gt;` (HTML entities) instead of raw `<<`/`>>` inside quoted labels so
+  Mermaid does not misparse them as HTML tags.
+- NEVER put a semicolon (`;`) inside a label or message string — Mermaid treats `;` as a statement
+  separator (it ends the current node/edge/message and starts parsing a new one), so a semicolon
+  buried in text like `"...reverse; findVets() is cached; 404/500 handled..."` breaks the parse
+  with an unexpected-token error. Use a comma, a dash, or separate lines/messages instead.
+- If you do write a `sequenceDiagram`: declare every `participant`/`actor` on its own line before
+  any messages reference it; put exactly ONE message per line in the form
+  `A->>B: text` / `A-->>B: text` (no chaining multiple messages after each other on one line);
+  and quote any message text containing `:`, `(`, `)`, or `;` as `A->>B: "quoted text"`.
 """
 
 

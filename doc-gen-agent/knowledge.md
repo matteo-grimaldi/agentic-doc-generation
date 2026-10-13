@@ -48,6 +48,8 @@ useful — rather than a verbose restatement of the file tree.
   description.
 - If the project is a library (not a running service), describe the main
   call sequence a consumer would trigger instead.
+- This is prose only — do not add a `sequenceDiagram` or any other diagram
+  here. The required Mermaid diagrams are the three C4 `flowchart`s below.
 
 ## C4 Diagrams
 
