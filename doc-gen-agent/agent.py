@@ -39,10 +39,16 @@ AGENT_TIMEOUT_SECONDS = int(os.getenv("AGENT_TIMEOUT_SECONDS", "600"))
 # full file content) but each still consumes one inference iteration, so the
 # scan-then-read workflow below needs more iterations than straight reads did.
 MAX_INFER_ITERS = int(os.getenv("MAX_INFER_ITERS", "20"))
-# Lowered from 12: get_file_outline now covers the "what does this file
-# declare" need for many files, so fewer full read_file calls should be
-# necessary to reach the same (or better) understanding of the repo.
-MAX_READ_FILES = int(os.getenv("MAX_READ_FILES", "10"))
+# Lowered from 12, then from 10: get_file_outline now covers the "what does
+# this file declare" need for many files, so fewer full read_file calls
+# should be necessary to reach the same (or better) understanding of the
+# repo. Also keeps total accumulated prompt size down — a large accumulated
+# context increases the external model's time-to-first-token, which has been
+# observed in production to exceed an upstream timeout and kill the
+# connection (APIConnectionError / "server disconnected") after ~10
+# read_file calls. See MAX_FILE_BYTES in github-mcp-server/server.py for the
+# complementary per-file size guardrail.
+MAX_READ_FILES = int(os.getenv("MAX_READ_FILES", "8"))
 
 # Injected into the Gradio stream for UX; must not appear in committed ARCHITECTURE.md.
 _TOOL_STATUS_LINE_RE = re.compile(

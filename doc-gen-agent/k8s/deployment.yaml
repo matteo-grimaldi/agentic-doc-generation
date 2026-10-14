@@ -136,7 +136,7 @@ spec:
             - name: MAX_INFER_ITERS
               value: "20"
             - name: MAX_READ_FILES
-              value: "10"
+              value: "8"
           livenessProbe:
             httpGet:
               path: /

@@ -50,7 +50,13 @@ MCP_PORT = int(os.getenv("MCP_PORT", "8080"))
 # Guardrails so a single agent run can't blow the token budget or hammer
 # the GitHub API fetching a huge monorepo.
 MAX_TREE_ENTRIES = int(os.getenv("MAX_TREE_ENTRIES", "800"))
-MAX_FILE_BYTES = int(os.getenv("MAX_FILE_BYTES", "60000"))
+# Lowered from 60000: at 60KB/file, up to MAX_READ_FILES (10) full reads could
+# push accumulated prompt size high enough that the external model's
+# time-to-first-token exceeds an upstream gateway's idle-connection timeout,
+# which tears down the request before any response is returned (seen in
+# production as an APIConnectionError / "server disconnected" after ~10
+# read_file calls). Keeping individual files smaller bounds per-call growth.
+MAX_FILE_BYTES = int(os.getenv("MAX_FILE_BYTES", "20000"))
 # Documentation files are mostly prose (install steps, changelogs, API
 # reference) that a budget model tends to parrot back rather than analyze.
 # Cap them much shorter than code files — the purpose/overview section is
