@@ -147,23 +147,17 @@ async def get_repo_info(repo_url: str) -> dict[str, Any]:
         }
 
 
-@mcp.tool()
-async def get_repo_structure(repo_url: str, ref: str = "", max_entries: int = MAX_TREE_ENTRIES) -> dict[str, Any]:
+async def _get_repo_structure_data(
+    owner: str, repo: str, ref: str = "", max_entries: int = MAX_TREE_ENTRIES
+) -> dict[str, Any]:
     """
-    Return the recursive file/directory tree of a GitHub repository.
-
-    Generated/vendor directories (node_modules, vendor, dist, build,
-    target, .venv, __pycache__, .git) and common binary file extensions
-    are filtered out automatically to keep the result focused on source
-    code relevant to architecture analysis.
-
-    Args:
-        repo_url: A GitHub URL or "owner/repo" shorthand.
-        ref: Branch, tag, or commit SHA. Defaults to the repo's default branch
-             (call get_repo_info first if unsure).
-        max_entries: Safety cap on the number of entries returned.
+    Shared implementation behind both the get_repo_structure MCP tool and
+    the plain REST /repo-structure route below — same filtering, same
+    shape — so deterministic, non-LLM-mediated callers (e.g. doc-gen-agent
+    checking whether a repo already has an OpenAPI spec before running its
+    separate OpenAPI agent) get identical results to what the model sees,
+    without going through an MCP round-trip or costing any model tokens.
     """
-    owner, repo = _parse_repo_url(repo_url)
     async with httpx.AsyncClient() as client:
         if not ref:
             info_resp = await _get(client, f"/repos/{owner}/{repo}")
@@ -197,6 +191,26 @@ async def get_repo_structure(repo_url: str, ref: str = "", max_entries: int = MA
             "file_count": len(entries),
             "files": entries,
         }
+
+
+@mcp.tool()
+async def get_repo_structure(repo_url: str, ref: str = "", max_entries: int = MAX_TREE_ENTRIES) -> dict[str, Any]:
+    """
+    Return the recursive file/directory tree of a GitHub repository.
+
+    Generated/vendor directories (node_modules, vendor, dist, build,
+    target, .venv, __pycache__, .git) and common binary file extensions
+    are filtered out automatically to keep the result focused on source
+    code relevant to architecture analysis.
+
+    Args:
+        repo_url: A GitHub URL or "owner/repo" shorthand.
+        ref: Branch, tag, or commit SHA. Defaults to the repo's default branch
+             (call get_repo_info first if unsure).
+        max_entries: Safety cap on the number of entries returned.
+    """
+    owner, repo = _parse_repo_url(repo_url)
+    return await _get_repo_structure_data(owner, repo, ref, max_entries)
 
 
 def _extract_outline(path: str, text: str) -> str | None:
@@ -474,7 +488,7 @@ async def _commit_file_to_branch(
 
 async def _propose_doc_pr(
     owner: str, repo: str, path: str, content: str, commit_message: str,
-    base_branch: str, pr_title: str, pr_body: str,
+    base_branch: str, pr_title: str, pr_body: str, branch_prefix: str = "agentic-docs",
 ) -> dict[str, Any]:
     """
     Create a new branch off base_branch, commit `content` to `path` on it,
@@ -483,6 +497,11 @@ async def _propose_doc_pr(
     default/feature branch. Requires GITHUB_TOKEN to be configured with
     write access — for public repos, the `public_repo` OAuth scope
     includes write access, not just read.
+
+    branch_prefix distinguishes unrelated callers' branches/PRs from each
+    other (e.g. doc-gen-agent's architecture-doc PRs use "agentic-docs",
+    its independent OpenAPI-spec PRs use "agentic-openapi") — each call
+    still gets its own uniquely-suffixed branch regardless.
     """
     if not GITHUB_TOKEN:
         return {"error": "Proposing a doc PR requires a GITHUB_TOKEN with write access to be configured on the MCP server."}
@@ -501,7 +520,7 @@ async def _propose_doc_pr(
         base_sha = ref_resp.json().get("object", {}).get("sha")
 
         # 2. Create a new, uniquely-named branch from that commit.
-        new_branch = f"agentic-docs/{uuid.uuid4().hex[:10]}"
+        new_branch = f"{branch_prefix}/{uuid.uuid4().hex[:10]}"
         create_ref_resp = await client.post(
             f"{GITHUB_API_URL}/repos/{owner}/{repo}/git/refs",
             headers=_headers(),
@@ -539,6 +558,41 @@ async def _propose_doc_pr(
         }
 
 
+@mcp.custom_route("/repo-structure", methods=["GET"])
+async def repo_structure_route(request: Request) -> JSONResponse:
+    """
+    Plain, read-only REST wrapper around _get_repo_structure_data, for
+    deterministic callers that need the file tree without spending any
+    model/tool-call budget — notably doc-gen-agent's OpenAPI-generation
+    gate (detect_needs_openapi), which must stay free so it never eats
+    into either agent's own token/iteration budget.
+
+    Query params: repo_url (required), ref (optional, defaults to the
+    repo's default branch), max_entries (optional).
+    """
+    repo_url = request.query_params.get("repo_url", "")
+    ref = request.query_params.get("ref", "")
+    max_entries_param = request.query_params.get("max_entries", "")
+
+    if not repo_url:
+        return JSONResponse({"error": "repo_url query param is required"}, status_code=400)
+
+    try:
+        owner, repo = _parse_repo_url(repo_url)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    max_entries = MAX_TREE_ENTRIES
+    if max_entries_param:
+        try:
+            max_entries = int(max_entries_param)
+        except ValueError:
+            return JSONResponse({"error": "max_entries must be an integer"}, status_code=400)
+
+    result = await _get_repo_structure_data(owner, repo, ref, max_entries)
+    return JSONResponse(result, status_code=200 if "error" not in result else 502)
+
+
 # Deliberately NOT an @mcp.tool(): doc-gen-agent's OGX agent loop (used by
 # the interactive Gradio chat UI) is handed every tool on this server via a
 # single generic "type": "mcp" tool definition with require_approval:
@@ -557,7 +611,10 @@ async def propose_doc_route(request: Request) -> JSONResponse:
 
     Body: {"repo_url": ..., "path": ..., "content": ..., "commit_message":
     ..., "base_branch": ... (optional, defaults to the repo's default
-    branch), "pr_title": ... (optional), "pr_body": ... (optional)}
+    branch), "pr_title": ... (optional), "pr_body": ... (optional),
+    "branch_prefix": ... (optional, default "agentic-docs" — pass a
+    distinct value, e.g. "agentic-openapi", so unrelated proposals from
+    the same caller don't share a branch-name prefix)}
     """
     try:
         body = await request.json()
@@ -574,6 +631,7 @@ async def propose_doc_route(request: Request) -> JSONResponse:
         "Auto-generated by the agentic-doc-generation doc-gen-agent in response to a CI/CD trigger. "
         "Please review before merging."
     )
+    branch_prefix = body.get("branch_prefix") or "agentic-docs"
 
     if not repo_url or not path or not content:
         return JSONResponse({"error": "repo_url, path, and content are required"}, status_code=400)
@@ -583,7 +641,9 @@ async def propose_doc_route(request: Request) -> JSONResponse:
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
 
-    result = await _propose_doc_pr(owner, repo, path, content, commit_message, base_branch, pr_title, pr_body)
+    result = await _propose_doc_pr(
+        owner, repo, path, content, commit_message, base_branch, pr_title, pr_body, branch_prefix
+    )
     return JSONResponse(result, status_code=200 if "error" not in result else 502)
 
 
