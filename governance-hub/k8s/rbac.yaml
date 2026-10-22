@@ -1,0 +1,9 @@
+# The Governance Hub only talks to the GitHub MCP server and the two
+# agents' /invoke endpoints over plain HTTP — it does not need any
+# Kubernetes/OpenShift API access, so this is a plain ServiceAccount with
+# no role bindings (same pattern as doc-gen-agent-sa).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: governance-hub-sa
+  namespace: doc-gen-demo

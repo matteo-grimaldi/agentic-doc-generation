@@ -18,6 +18,15 @@ synthesizes its output:
 The two agents are fully independent components: separate pods, separate
 UIs/routes, separate budgets, separate PRs. Neither triggers the other.
 
+A third, optional component, **governance-hub**, is a single pane of
+glass for architectural governance teams: a compliance dashboard that
+tracks, for every repo either agent has run against, whether it has an
+architecture document and/or an OpenAPI spec, surfaces violations, and
+lets a human trigger "Fix it" remediation (re-running the appropriate
+agent) with one click. It also embeds a read-only **Compliance MCP
+server**, so other AI agents can query the same compliance state. See
+[Governance dashboard](#governance-dashboard-governance-hub) below.
+
 > **Looking for the original, fully in-cluster design?** The
 > [`local-model`](https://github.com/YOUR_ORG/agentic-doc-generation/tree/local-model)
 > branch preserves the version where the model is served in-cluster by
@@ -46,6 +55,7 @@ flowchart TB
                 ApiOGX["OGX Sidecar\n:8321"]
             end
             GitHubMCP["GitHub MCP Server\n:8080"]
+            GovHub["Governance Hub\nDashboard + Compliance MCP\n:7860"]
         end
     end
 
@@ -62,6 +72,12 @@ flowchart TB
     DocOGX -->|"inference (HTTPS)"| InferenceEndpoint
     ApiOGX -->|"inference (HTTPS)"| InferenceEndpoint
     GitHubMCP -->|"GitHub API"| GitHub["github.com"]
+    Browser -->|"view compliance"| GovHub
+    DocGradio -.->|"POST /api/runs\n(run report)"| GovHub
+    ApiGradio -.->|"POST /api/runs\n(run report)"| GovHub
+    GovHub -->|"POST /invoke\n(Fix-it button)"| DocGradio
+    GovHub -->|"POST /invoke\n(Fix-it button)"| ApiGradio
+    GovHub -->|"GET /repo-structure\n(compliance check)"| GitHubMCP
     AppOfApps -->|deploys| GitHubMCP
     AppOfApps -->|deploys| demo_ns
 ```
@@ -132,9 +148,10 @@ This single command:
 3. ArgoCD then reconciles everything else, in dependency order via
    sync-waves:
    - **Wave 0** — `doc-gen-demo` namespace + GitHub MCP server
-   - **Wave 1** — doc-gen-agent and openapi-gen-agent (each its own
-     Gradio UI + OGX sidecar pod), applied concurrently — both depend
-     only on wave 0's GitHub MCP server Service DNS name
+   - **Wave 1** — doc-gen-agent, openapi-gen-agent (each its own Gradio UI
+     + OGX sidecar pod), and governance-hub (dashboard + Compliance MCP),
+     applied concurrently — all three depend only on wave 0's GitHub MCP
+     server Service DNS name
 
 The script finishes by printing the ArgoCD UI route. Watch progress with:
 
@@ -154,12 +171,13 @@ Before (or right after) the agents come up, point them at your external
 model endpoint — see [Model configuration](#model-configuration) below
 (both agents share the same `cluster-config` ConfigMap).
 
-Once `doc-gen-agent` and `openapi-gen-agent` are `Synced`/`Healthy`, get
-their UI routes:
+Once `doc-gen-agent`, `openapi-gen-agent`, and `governance-hub` are
+`Synced`/`Healthy`, get their routes:
 
 ```bash
 oc get route doc-gen-agent -n doc-gen-demo -o jsonpath='https://{.spec.host}{"\n"}'
 oc get route openapi-gen-agent -n doc-gen-demo -o jsonpath='https://{.spec.host}{"\n"}'
+oc get route governance-hub -n doc-gen-demo -o jsonpath='https://{.spec.host}{"\n"}'
 ```
 
 ## Quick start (without GitOps)
@@ -178,6 +196,7 @@ Or deploy a single component:
 ./build-and-deploy-all.sh github-mcp-server
 ./build-and-deploy-all.sh doc-gen-agent
 ./build-and-deploy-all.sh openapi-gen-agent
+./build-and-deploy-all.sh governance-hub
 ```
 
 ## Demo walkthrough
@@ -211,6 +230,59 @@ Or deploy a single component:
    service, the agent reports that and stops — no spec is generated
 5. Click **"Propose as PR"** to open a pull request with the generated
    spec, independent of any doc-gen-agent PR for the same repo
+
+## Governance dashboard (`governance-hub`)
+
+A single pane of glass for architectural governance teams: it tracks
+which repos have an architecture document and/or an OpenAPI spec, flags
+violations, and lets a human trigger remediation without opening either
+agent's own UI. It never discovers repos on its own (no background
+GitHub-org scan) — a repo appears here the moment doc-gen-agent or
+openapi-gen-agent reports a completed run against it, or the moment a
+governance-team member triggers one directly from this dashboard.
+
+**Open the dashboard:**
+
+```bash
+oc get route governance-hub -n doc-gen-demo -o jsonpath='https://{.spec.host}{"\n"}'
+```
+
+**What you'll see:**
+- A summary bar: total tracked repos, % compliant, active violation count
+- A table of tracked repos with ✅/❌ badges for architecture doc and
+  OpenAPI spec presence (checked via the GitHub MCP server's
+  `GET /repo-structure` route — a zero-LLM-cost file-tree scan, not model
+  inference)
+- Click into a repo for its full run history (every doc-gen-agent /
+  openapi-gen-agent invocation, its outcome, and any resulting PR link),
+  a **"🔄 Refresh compliance check"** button, and two **"🛠️ Fix it"**
+  buttons that call the corresponding agent's `POST /invoke` — the same
+  endpoint the [CI/CD pipeline](#cicd-pipeline-demo-openshift-pipelines)
+  uses. Remediation is always an explicit click; the Hub never
+  auto-triggers either agent.
+
+**How repos get tracked:** both agents optionally report every background
+run's outcome to the Hub's `POST /api/runs` callback (controlled by each
+agent's `GOVERNANCE_HUB_URL` env var — leave it empty to opt out). A
+freshly opened PR does **not** immediately flip a repo to "compliant": the
+Hub only trusts what's actually on the default branch, re-checked via
+`GET /repo-structure` after each reported run.
+
+**Compliance MCP server:** the Hub also exposes a read-only MCP server at
+`/mcp` (same `streamable-http` transport as `github-mcp-server`), so other
+AI agents — not just the two in this repo — can query compliance state
+programmatically instead of scraping the dashboard:
+
+| Tool | Purpose |
+|------|---------|
+| `get_compliance_status(repo_url)` | Is this specific repo compliant? What's missing? |
+| `list_violations()` | Every tracked repo with at least one missing artifact |
+| `list_tracked_repos()` | Every repo the Hub knows about, with its current status |
+| `get_repo_history(repo_url)` | Full run history (jobs, outcomes, PR links) for a repo |
+
+See [`governance-hub/app.py`](governance-hub/app.py) for the tool
+docstrings and [`governance-hub/compliance.py`](governance-hub/compliance.py)
+for the underlying check logic.
 
 ## Model configuration
 
@@ -271,6 +343,13 @@ agentic-doc-generation/
 │   ├── ogx/stack_run_config.yaml        # OGX + external model config
 │   ├── build-and-deploy.sh
 │   └── k8s/
+├── governance-hub/                      # Compliance dashboard + embedded Compliance MCP server
+│   ├── app.py                           # FastAPI dashboard, REST API, POST /api/runs callback, MCP at /mcp
+│   ├── models.py                        # SQLAlchemy models (TrackedRepo, AgentRun) — SQLite on a PVC
+│   ├── compliance.py                    # Compliance-check logic (GitHub MCP /repo-structure scan)
+│   ├── templates/, static/              # Server-rendered Jinja2 dashboard UI
+│   ├── build-and-deploy.sh
+│   └── k8s/                             # includes pvc.yaml for the SQLite database
 ├── ci-cd-pipeline/                      # OpenShift Pipelines (Tekton) build/deploy demo
 │   ├── install-operator.sh              # One-time: installs the OpenShift Pipelines operator
 │   ├── build-and-deploy.sh
@@ -446,3 +525,11 @@ server(s) already deployed in `doc-gen-demo`.
   heuristic trigger costs one extra bounded agent run, never a bogus PR.
 - Inference quality and latency depend entirely on the external endpoint
   you configure — this repo does not provision or manage that endpoint.
+- `governance-hub` discovers repos purely by agent activity — it never
+  scans a GitHub org on its own, so a repo with an undetected compliance
+  gap simply won't appear until an agent runs against it at least once
+  (via its chat UI, `/invoke`, or the Hub's own "Fix it" button).
+  Compliance checks are existence-only (does `ARCHITECTURE.md` /
+  `openapi.yaml` exist on the default branch?), not a quality or
+  freshness check, and a PR the Hub reports as opened doesn't flip a repo
+  to "compliant" until that PR is actually merged.

@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Governance Hub{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="gh-header">
+    <a class="gh-brand" href="/">📐 Governance Hub</a>
+    <span class="gh-subtitle">Architectural compliance for agentic-doc-generation</span>
+  </header>
+  <main class="gh-main">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="gh-footer">
+    Compliance MCP server available at <code>/mcp</code> for other agents.
+  </footer>
+</body>
+</html>
