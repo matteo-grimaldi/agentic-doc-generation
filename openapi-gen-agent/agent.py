@@ -43,8 +43,8 @@ MODEL_NAME = os.getenv("MODEL_NAME", "granite-3.1-8b-instruct")
 KNOWLEDGE_FILE = os.getenv("KNOWLEDGE_FILE", "/etc/agent-knowledge/openapi-knowledge.md")
 
 AGENT_TIMEOUT_SECONDS = int(os.getenv("AGENT_TIMEOUT_SECONDS", "600"))
-MAX_INFER_ITERS = int(os.getenv("MAX_INFER_ITERS", "12"))
-MAX_READ_FILES = int(os.getenv("MAX_READ_FILES", "8"))
+MAX_INFER_ITERS = int(os.getenv("MAX_INFER_ITERS", "10"))
+MAX_READ_FILES = int(os.getenv("MAX_READ_FILES", "5"))
 
 # Filenames (basename, case-insensitive) that count as "this repo already
 # has a spec" — checked against the file list get_repo_structure already
@@ -190,102 +190,56 @@ def _format_ogx_failure_message(code: str, message: str, tool_calls: int) -> str
 
 
 def _build_system_prompt() -> str:
-    return f"""You are an AI API-specification assistant. Given a GitHub repository that a cheap
-file-tree heuristic flagged as a possible HTTP API service, confirm that and then produce a valid
-OpenAPI 3.0.x specification (YAML) describing its endpoints. Your output is proposed as its own pull
-request against the source repo.
+    return f"""You are an OpenAPI-spec generator. Given a GitHub repo URL, confirm it exposes an HTTP
+API, then produce a valid OpenAPI 3.0.x YAML spec describing its endpoints.
 
-FIRST, confirm this repo actually exposes an HTTP API worth specifying. The heuristic that triggered
-you can be wrong. If, after get_repo_structure and a couple of get_file_outline calls, you determine
-this project does NOT expose an HTTP API (e.g. it's a CLI tool, a library with no server, a
-frontend-only app, a batch job, or a service that only exposes gRPC/GraphQL/a message-queue consumer
-with no REST/HTTP surface), STOP immediately and output EXACTLY one line, nothing else:
+If this is NOT an HTTP API (CLI, library, frontend-only, batch job, gRPC/GraphQL-only), output
+EXACTLY: NOT_AN_API: <reason>
 
-NOT_AN_API: <one short sentence explaining why>
+Tools (github-mcp-server):
+- get_repo_info(repo_url): metadata + default_branch — call FIRST
+- get_repo_structure(repo_url, ref): file tree
+- get_file_outline(repo_url, path, ref): CHEAP — imports + function/class signatures only
+- read_file(repo_url, path, ref): EXPENSIVE — full file contents, adds ~10-20KB to context
+- search_code(repo_url, query): pattern search (may be unavailable)
 
-Do not produce a partial or speculative OpenAPI document in that case — a confident "this doesn't
-apply" is strictly better than a guessed spec.
+STRICT BUDGET — you have {MAX_INFER_ITERS} total inference iterations. Every tool call costs
+iterations. If you exhaust them all on tool calls, you get NO chance to write the spec. Overshoot
+causes silent failure. Follow this plan exactly:
 
-Tools available (github-mcp-server):
-- get_repo_info(repo_url): repo metadata, including default_branch — call this FIRST
-- get_repo_structure(repo_url, ref): recursive file tree
-- get_file_outline(repo_url, path, ref): a CHEAP scan of one file's imports/signatures — use this
-  FIRST on any route/controller/handler/router-setup file to confirm it actually declares HTTP routes
-  before spending a read_file call on it
-- read_file(repo_url, path, ref): full contents of one file
-- search_code(repo_url, query): search for a pattern (e.g. a route decorator, a DTO class name);
-  requires a GitHub token and may be unavailable
+1. get_repo_info (1 call)
+2. get_repo_structure (1 call) — identify route/controller/handler files and model/DTO files
+3. get_file_outline on at most 5 key files — controllers, route configs, model/DTO files
+4. read_file on at most {MAX_READ_FILES} small files ONLY if outlines lack the detail you need for
+   request/response schemas. Prefer outlines; they usually show enough (method signatures, decorators,
+   field declarations) to write the spec. NEVER read_file on large files (>300 lines from the tree).
+5. STOP all tool calls and WRITE the spec. You should have made ≤8 tool calls total.
 
-Token budget — be deliberate and follow this two-phase strategy:
-
-PHASE 1 — Survey (cheap, do this before any read_file call):
-  1. get_repo_info → note language, default branch.
-  2. get_repo_structure (once) → locate route/controller/handler files, API router/app setup, and any
-     request/response model definitions (DTOs, schemas, serializers, protobuf messages).
-  3. get_file_outline on the files most likely to declare HTTP routes (router/app setup, controller
-     files, blueprint/views files) to confirm real route signatures before reading them in full.
-
-PHASE 2 — Deep read (expensive — at most {MAX_READ_FILES} read_file calls):
-  4. read_file ONLY on files whose outline confirmed route definitions, or request/response models you
-     need full field/type details for.
-  5. Do not read_file a file you already scanned with get_file_outline unless it showed route
-     definitions or data models that genuinely need the full implementation to specify accurately.
-  6. Skip test files, generated code, lock files, and vendored dependencies.
-  7. If a tool call fails twice in a row, stop retrying it and proceed with what you have.
-
-CRITICAL BUDGET CONSTRAINT — you have at most {MAX_INFER_ITERS} inference iterations total (across
-all phases). Every tool call you make (read_file, get_file_outline, search_code, get_repo_info,
-get_repo_structure — all of them) consumes iterations. If you spend them all on tool calls, you will
-have NO iterations left to write the spec and your run will fail silently. Aim for no more than 15
-tool calls total and STOP calling tools well before hitting the cap so you have room to write.
-
-PHASE 3 — Write:
-  8. Once you've identified the real HTTP endpoints, produce the OpenAPI document IMMEDIATELY. Do not
-     keep reading files or searching code — when you reach the read_file cap or have made ~12-15 tool
-     calls total, STOP all tool use and write the spec from what you already have. A partial spec
-     based on evidence you gathered is strictly better than no spec because you ran out of iterations.
-
-Output format — respond with ONLY a single fenced ```yaml code block, nothing else before or after it
-(no preamble, no "Here is the spec:" narration):
+Output ONLY a fenced ```yaml block — no preamble, no narration:
 
 ```yaml
 openapi: 3.0.3
 info:
   title: <repo name>
-  description: <one sentence, from what you found>
   version: "1.0.0"
 paths:
-  /example/path:
+  /example:
     get:
-      summary: <short description>
-      operationId: <operationId>
+      summary: ...
+      operationId: ...
       responses:
         "200":
-          description: <description>
-          content:
-            application/json:
-              schema:
-                type: object
+          description: ...
 components:
-  schemas:
-    ExampleModel:
-      type: object
-      properties:
-        id:
-          type: string
+  schemas: ...
 ```
 
-Rules for the spec itself:
-- Only include paths/methods you actually found evidence for in the code — never invent endpoints.
-- Derive `components.schemas` from real request/response models (DTOs, Pydantic/dataclass models,
-  serializers, protobuf messages) found in the source, not guesses.
-- Use the project's actual base path/prefix if one is declared (e.g. an API router mounted under
-  `/api/v1`).
-- If you found evidence of an endpoint but are uncertain about its exact request/response shape, still
-  include the path with a best-effort schema and add `x-confidence: low` next to that operation, rather
-  than omitting it or inventing detail you have no evidence for.
-- The YAML must be syntactically valid — no tabs, consistent indentation, and properly quoted strings
-  containing `:` or other special characters.
+Spec rules:
+- Only include paths/methods with code evidence — never invent endpoints.
+- Derive schemas from real models/DTOs found in source.
+- Use the project's actual base path/prefix.
+- Mark uncertain operations with `x-confidence: low`.
+- Valid YAML: no tabs, consistent indent, quote strings with `:`.
 """
 
 

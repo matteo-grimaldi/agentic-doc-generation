@@ -78,6 +78,12 @@ spec:
                   key: model_name
             - name: OPENAI_MAX_RETRIES
               value: "8"
+            # Read timeout for inference calls to the external endpoint.
+            # Large accumulated contexts (many tool-call results) can push
+            # time-to-first-token well beyond the default ~100s, causing
+            # "Server disconnected without sending a response" errors.
+            - name: OPENAI_TIMEOUT
+              value: "300"
           volumeMounts:
             - name: ogx-config
               mountPath: /etc/ogx
@@ -138,9 +144,9 @@ spec:
             - name: PYTHONUNBUFFERED
               value: "1"
             - name: MAX_INFER_ITERS
-              value: "12"
+              value: "10"
             - name: MAX_READ_FILES
-              value: "8"
+              value: "5"
             - name: OPENAPI_SPEC_PATH
               value: "openapi.yaml"
           livenessProbe:
