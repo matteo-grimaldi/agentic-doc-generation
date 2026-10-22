@@ -45,6 +45,15 @@ KNOWLEDGE_FILE = os.getenv("KNOWLEDGE_FILE", "/etc/agent-knowledge/openapi-knowl
 AGENT_TIMEOUT_SECONDS = int(os.getenv("AGENT_TIMEOUT_SECONDS", "600"))
 MAX_INFER_ITERS = int(os.getenv("MAX_INFER_ITERS", "10"))
 MAX_READ_FILES = int(os.getenv("MAX_READ_FILES", "5"))
+# The external endpoint enforces a fixed ~100s request timeout and this
+# model has Qwen3-style "thinking" always on by default, which can burn
+# the entire token budget on hidden reasoning before any visible content
+# is produced. Disabling it at the vLLM level (OGX's own reasoning_effort
+# param is a no-op for this adapter) is required for the model to ever
+# emit visible text within the wall-clock budget — combined with a
+# right-sized INFERENCE_MAX_TOKENS (see deployment.yaml) and a tight
+# inference-iteration/tool-call budget (see _build_system_prompt below).
+CHAT_TEMPLATE_KWARGS = {"enable_thinking": False}
 
 # Filenames (basename, case-insensitive) that count as "this repo already
 # has a spec" — checked against the file list get_repo_structure already
@@ -95,6 +104,77 @@ def _looks_like_api_service(file_paths: list[str]) -> bool:
     has_api_signal = any(signal in path for path in lowered for signal in API_PATH_SIGNALS)
     has_manifest = any(path.rsplit("/", 1)[-1] in API_FRAMEWORK_MANIFESTS for path in lowered)
     return has_api_signal and has_manifest
+
+
+# Path/filename substrings that identify Java HTTP-entry-point files by
+# naming convention alone — no file content needs to be read to find
+# these, which is the whole point: build the model's reading list in
+# Python (zero model/tool-call budget) instead of letting it spend
+# inference iterations scanning get_repo_structure's full file list
+# (which can be hundreds of entries) to find them itself.
+_JAVA_CONTROLLER_DIR_SIGNALS = ("controller/", "controllers/", "resource/", "resources/", "endpoint/", "endpoints/", "rest/", "web/")
+_JAVA_CONTROLLER_NAME_SUFFIXES = ("controller.java", "resource.java", "endpoint.java", "restapi.java")
+_JAVA_MODEL_DIR_SIGNALS = ("dto/", "dtos/", "model/", "models/", "entity/", "entities/", "domain/", "payload/", "vo/")
+_JAVA_MODEL_NAME_SUFFIXES = ("dto.java", "entity.java", "request.java", "response.java", "requestdto.java", "responsedto.java")
+_JAVA_BUILD_FILENAMES = ("pom.xml", "build.gradle", "build.gradle.kts")
+# How many of each category to hand the model — kept small and fixed so
+# the system prompt's tool-call budget (a handful of get_file_outline
+# calls) is never exceeded regardless of repo size.
+MAX_CLASSIFIED_CONTROLLERS = 4
+MAX_CLASSIFIED_MODELS = 3
+
+
+def _classify_api_files(file_paths: list[str]) -> dict:
+    """
+    Java-aware, zero-model-budget pass over the file list already
+    returned by get_repo_structure: identifies the small set of files the
+    agent actually needs to look at (controllers/resources and their
+    DTOs/entities) by path/filename convention alone, so the model's own
+    tool-call budget is spent outlining exactly those files instead of
+    first discovering them.
+
+    This assumes a Java project (Spring MVC/Spring Boot or JAX-RS style
+    naming conventions) — the dominant case for this agent's budget. Repos
+    that don't match (no controller/resource-named files found) fall back
+    to the model doing its own (bounded) discovery per the system prompt.
+
+    Returns:
+        {
+            "is_java": bool,
+            "build_file": str | None,
+            "controllers": [path, ...]  (at most MAX_CLASSIFIED_CONTROLLERS),
+            "models": [path, ...]       (at most MAX_CLASSIFIED_MODELS),
+        }
+    """
+    build_file = next(
+        (p for p in file_paths if p.rsplit("/", 1)[-1] in _JAVA_BUILD_FILENAMES), None
+    )
+    is_java = build_file is not None or any(p.lower().endswith(".java") for p in file_paths)
+
+    def _matches(path: str, dir_signals: tuple[str, ...], name_suffixes: tuple[str, ...]) -> bool:
+        lowered = path.lower()
+        if not lowered.endswith(".java"):
+            return False
+        if any(signal in lowered for signal in dir_signals):
+            return True
+        basename = lowered.rsplit("/", 1)[-1]
+        return any(basename.endswith(suffix) for suffix in name_suffixes)
+
+    controllers = [
+        p for p in file_paths
+        if _matches(p, _JAVA_CONTROLLER_DIR_SIGNALS, _JAVA_CONTROLLER_NAME_SUFFIXES)
+    ][:MAX_CLASSIFIED_CONTROLLERS]
+    models = [
+        p for p in file_paths
+        if _matches(p, _JAVA_MODEL_DIR_SIGNALS, _JAVA_MODEL_NAME_SUFFIXES)
+    ][:MAX_CLASSIFIED_MODELS]
+
+    return {
+        "is_java": is_java,
+        "build_file": build_file,
+        "controllers": controllers,
+        "models": models,
+    }
 
 
 def detect_needs_openapi(repo_structure: dict) -> bool:
@@ -190,57 +270,93 @@ def _format_ogx_failure_message(code: str, message: str, tool_calls: int) -> str
 
 
 def _build_system_prompt() -> str:
-    return f"""You are an OpenAPI-spec generator. Given a GitHub repo URL, confirm it exposes an HTTP
-API, then produce a valid OpenAPI 3.0.x YAML spec describing its endpoints.
+    return f"""You are an OpenAPI-spec generator. The repo's default branch and a short list of
+likely controller/DTO files (found by path convention, mostly assuming a Java project) are already
+given to you in the user message below — do NOT call get_repo_info or get_repo_structure; that
+work is already done.
 
-If this is NOT an HTTP API (CLI, library, frontend-only, batch job, gRPC/GraphQL-only), output
-EXACTLY: NOT_AN_API: <reason>
+If the user message says no candidate files were found, or after a quick look these files don't
+expose an HTTP API (CLI, library, frontend-only, batch job, gRPC/GraphQL-only), output EXACTLY:
+NOT_AN_API: <reason>
 
-Tools (github-mcp-server):
-- get_repo_info(repo_url): metadata + default_branch — call FIRST
-- get_repo_structure(repo_url, ref): file tree
-- get_file_outline(repo_url, path, ref): CHEAP — imports + function/class signatures only
-- read_file(repo_url, path, ref): EXPENSIVE — full file contents, adds ~10-20KB to context
-- search_code(repo_url, query): pattern search (may be unavailable)
+Tools (github-mcp-server) — use ONLY these two, on ONLY the files you were given:
+- get_file_outline(repo_url, path, ref): CHEAP — imports + function/class signatures + annotations
+  (Java: @RestController/@RequestMapping/@GetMapping/@PostMapping/@Path/@GET/@POST etc. are all
+  captured). Always try this first for every candidate file.
+- read_file(repo_url, path, ref): EXPENSIVE — full content. Only call this on a model/DTO file, and
+  only if its outline didn't already show field names/types clearly. Never call it on a controller
+  — outlines always show enough (method signatures + annotations) to derive paths.
 
-STRICT BUDGET — you have {MAX_INFER_ITERS} total inference iterations. Every tool call costs
-iterations. If you exhaust them all on tool calls, you get NO chance to write the spec. Overshoot
-causes silent failure. Follow this plan exactly:
+STRICT BUDGET — {MAX_INFER_ITERS} total inference iterations, shared across tool calls AND your
+final write. Process files ONE AT A TIME and keep a running mental note of the paths you've found
+(method + route + params) as you go — do not wait until every file is scanned to start forming the
+spec. Stop calling tools well before the budget runs out: write the spec from what you have rather
+than risk having zero iterations left to produce it.
 
-1. get_repo_info (1 call)
-2. get_repo_structure (1 call) — identify route/controller/handler files and model/DTO files
-3. get_file_outline on at most 5 key files — controllers, route configs, model/DTO files
-4. read_file on at most {MAX_READ_FILES} small files ONLY if outlines lack the detail you need for
-   request/response schemas. Prefer outlines; they usually show enough (method signatures, decorators,
-   field declarations) to write the spec. NEVER read_file on large files (>300 lines from the tree).
-5. STOP all tool calls and WRITE the spec. You should have made ≤8 tool calls total.
-
-Output ONLY a fenced ```yaml block — no preamble, no narration:
-
-```yaml
-openapi: 3.0.3
-info:
-  title: <repo name>
-  version: "1.0.0"
-paths:
-  /example:
-    get:
-      summary: ...
-      operationId: ...
-      responses:
-        "200":
-          description: ...
-components:
-  schemas: ...
-```
+Output ONLY a fenced ```yaml block — no preamble, no narration. Required top-level keys: openapi,
+info (title, version), paths, components.schemas (omit components if no models were found).
 
 Spec rules:
-- Only include paths/methods with code evidence — never invent endpoints.
-- Derive schemas from real models/DTOs found in source.
-- Use the project's actual base path/prefix.
+- Only include paths/methods you found annotation/signature evidence for — never invent endpoints.
+- Derive schema field types from real models/DTOs; use a minimal `type: object` if a field's type
+  wasn't confirmed rather than guessing.
+- Use the project's actual base path/prefix (e.g. a class-level @RequestMapping/@Path).
 - Mark uncertain operations with `x-confidence: low`.
-- Valid YAML: no tabs, consistent indent, quote strings with `:`.
+- Valid YAML: no tabs, consistent indent, quote strings containing `:`.
 """
+
+
+def _build_user_message(repo_url: str, repo_structure: dict | None) -> str:
+    """
+    Build the user-turn message. When repo_structure is available (the
+    caller's zero-model-budget get_repo_structure/\\/repo-structure call —
+    see app.py's _fetch_repo_structure), embed a pre-classified reading
+    list (see _classify_api_files) so the model never spends its own
+    inference-iteration budget on get_repo_info or get_repo_structure, or
+    on scanning a potentially hundreds-of-entries file list itself. That
+    pre-work used to cost 2+ of the agent's 10 total iterations before any
+    real exploration even started.
+    """
+    if not repo_structure or "error" in repo_structure:
+        return (
+            f"Generate an OpenAPI specification for this repository if it exposes an HTTP API: "
+            f"{repo_url}\n\nNo pre-fetched file list is available — call get_repo_structure "
+            f"yourself first, then proceed as instructed."
+        )
+
+    ref = repo_structure.get("ref") or ""
+    files = repo_structure.get("files") or []
+    file_paths = [f.get("path", "") for f in files if isinstance(f, dict) and f.get("path")]
+    classified = _classify_api_files(file_paths)
+
+    ref_suffix = f" (ref: {ref})" if ref else ""
+    lines = [f"Generate an OpenAPI 3.0.x YAML spec for: {repo_url}{ref_suffix}"]
+
+    if not classified["controllers"] and not classified["models"]:
+        lines.append(
+            "\nNo controller/DTO files were found by naming convention (this may not be a Java "
+            "project, or it uses unconventional names). Call get_repo_structure yourself to look "
+            "for route/handler files in another language, or output NOT_AN_API if nothing "
+            "suggests an HTTP API."
+        )
+        return "\n".join(lines)
+
+    if classified["is_java"] and classified["build_file"]:
+        lines.append(f"\nJava project detected ({classified['build_file']}).")
+
+    if classified["controllers"]:
+        lines.append("\nLikely controller/resource files (get_file_outline each):")
+        lines.extend(f"- {p}" for p in classified["controllers"])
+    if classified["models"]:
+        lines.append("\nLikely DTO/model files (outline first; read_file only if needed):")
+        lines.extend(f"- {p}" for p in classified["models"])
+
+    lines.append(
+        f'\nUse these exact paths with repo_url "{repo_url}"'
+        + (f' and ref "{ref}"' if ref else "")
+        + " — do not call get_repo_info or get_repo_structure."
+    )
+    return "\n".join(lines)
 
 
 def _load_knowledge(path: str = KNOWLEDGE_FILE) -> str:
@@ -255,7 +371,7 @@ def _load_knowledge(path: str = KNOWLEDGE_FILE) -> str:
         return ""
 
 
-async def run_agent(repo_url: str) -> AsyncIterator[str]:
+async def run_agent(repo_url: str, repo_structure: dict | None = None) -> AsyncIterator[str]:
     """
     Stream the OpenAPI-specification agent's response for a given GitHub
     repository URL.
@@ -263,6 +379,17 @@ async def run_agent(repo_url: str) -> AsyncIterator[str]:
     The OGX server handles the full ReAct loop server-side: it calls the
     GitHub MCP tools, feeds results back to the model, and streams the
     final answer.
+
+    Args:
+        repo_url: The target GitHub repository.
+        repo_structure: The dict the caller already fetched via the
+            GitHub MCP server's zero-model-budget get_repo_structure /
+            /repo-structure route (app.py's _fetch_repo_structure) —
+            typically already on hand since callers use it for
+            detect_needs_openapi() right before calling run_agent().
+            Passing it here lets _build_user_message hand the model a
+            pre-classified reading list instead of making it spend its
+            own tool-call budget on get_repo_info/get_repo_structure.
 
     Yields:
         Text chunks from the agent — either a fenced ```yaml OpenAPI
@@ -285,11 +412,13 @@ async def run_agent(repo_url: str) -> AsyncIterator[str]:
         else system_prompt
     )
 
-    user_message = (
-        f"Generate an OpenAPI specification for this repository if it exposes an HTTP API: {repo_url}"
-    )
+    user_message = _build_user_message(repo_url, repo_structure)
 
     logger.info("Sending request to OGX at %s for repo %s", OGX_BASE_URL, repo_url)
+    logger.info(
+        "run_agent request — max_infer_iters=%s max_read_files=%s instructions_chars=%d user_message_chars=%d",
+        MAX_INFER_ITERS, MAX_READ_FILES, len(instructions), len(user_message),
+    )
 
     try:
         stream = await asyncio.wait_for(
@@ -305,8 +434,28 @@ async def run_agent(repo_url: str) -> AsyncIterator[str]:
                         "require_approval": "never",
                     },
                 ],
+                # max_infer_iters is a first-class field on responses.create()
+                # (confirmed in ogx_client's ResponseCreateParamsBase) — pass
+                # it directly, not through extra_body.
+                max_infer_iters=MAX_INFER_ITERS,
                 stream=True,
-                extra_body={"max_infer_iters": MAX_INFER_ITERS},
+                # OGX's server-side forwarding code does
+                # `request.model_extra.get("extra_body")`: it only forwards
+                # params nested one level deeper under a literal key named
+                # "extra_body" inside the unrecognized top-level fields —
+                # NOT the top-level fields themselves. The SDK's own
+                # extra_body= kwarg merges its dict as top-level JSON
+                # siblings, so to actually reach the inner chat-completion
+                # call we must nest our payload under that exact key here.
+                extra_body={
+                    "extra_body": {
+                        # Disable Qwen3 "thinking" at the vLLM level — see
+                        # CHAT_TEMPLATE_KWARGS's definition above. OGX's own
+                        # reasoning_effort param does not reach the backend
+                        # for this adapter.
+                        "chat_template_kwargs": CHAT_TEMPLATE_KWARGS,
+                    },
+                },
             ),
             timeout=60,
         )
@@ -326,10 +475,6 @@ async def run_agent(repo_url: str) -> AsyncIterator[str]:
     tool_failures = 0
     ogx_error: tuple[str, str] | None = None
     ogx_error_announced = False
-    # #region agent log — debug instrumentation (session e627b5)
-    infer_iters_seen = 0  # approximate inference iterations (incremented on each tool-call batch or text delta)
-    logger.info("[debug:e627b5] run_agent starting — MAX_INFER_ITERS=%s, MAX_READ_FILES=%s, model=%s", MAX_INFER_ITERS, MAX_READ_FILES, MODEL_NAME)
-    # #endregion
 
     def _announce_ogx_error() -> str | None:
         nonlocal ogx_error_announced
@@ -349,10 +494,8 @@ async def run_agent(repo_url: str) -> AsyncIterator[str]:
                 if event_type == "response.output_text.delta":
                     text_chunks += 1
                     text_bytes += len(event.delta)
-                    # #region agent log — debug instrumentation (session e627b5)
                     if text_chunks == 1:
-                        logger.info("[debug:e627b5] first text delta received after %d tool_calls, %d events", tool_calls, event_count)
-                    # #endregion
+                        logger.info("First text delta received after %d tool_calls, %d events", tool_calls, event_count)
                     yield event.delta
 
                 elif event_type == "response.output_item.added":
@@ -361,10 +504,7 @@ async def run_agent(repo_url: str) -> AsyncIterator[str]:
                         tool_calls += 1
                         server = getattr(item, "server_label", "unknown")
                         tool = getattr(item, "name", "unknown")
-                        logger.info("Tool call started: %s → %s", server, tool)
-                        # #region agent log — debug instrumentation (session e627b5)
-                        logger.info("[debug:e627b5] tool_calls=%d so far (tool=%s)", tool_calls, tool)
-                        # #endregion
+                        logger.info("Tool call started: %s → %s (tool_calls=%d so far)", server, tool, tool_calls)
 
                 elif event_type == "response.output_item.done":
                     item = getattr(event, "item", None)
@@ -392,13 +532,10 @@ async def run_agent(repo_url: str) -> AsyncIterator[str]:
                     resp = getattr(event, "response", None)
                     resp_data = _response_as_dict(resp)
                     status = resp_data.get("status") or getattr(resp, "status", "unknown")
-                    logger.info("Stream response.completed — status=%s", status)
-                    # #region agent log — debug instrumentation (session e627b5)
                     logger.info(
-                        "[debug:e627b5] completed — status=%s, text_chunks=%d, text_bytes=%d, tool_calls=%d, events=%d",
+                        "Stream response.completed — status=%s, text_chunks=%d, text_bytes=%d, tool_calls=%d, events=%d",
                         status, text_chunks, text_bytes, tool_calls, event_count,
                     )
-                    # #endregion
                     parsed = _extract_ogx_error(resp)
                     if parsed:
                         ogx_error = parsed

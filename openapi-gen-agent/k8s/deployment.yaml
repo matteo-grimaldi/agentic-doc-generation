@@ -57,8 +57,19 @@ spec:
                 configMapKeyRef:
                   name: cluster-config
                   key: model_base_url
+            # Sized to finish within the external endpoint's own fixed
+            # ~100s request timeout (confirmed with direct curl tests
+            # against the endpoint, independent of this app's code —
+            # TOTAL_TIME:100.019217s then connection killed, every time,
+            # regardless of content/context size). Measured throughput is
+            # ~25 completion_tokens/sec, so 2048 tokens ≈ 82s, leaving
+            # headroom. This only matters once "thinking" is disabled via
+            # chat_template_kwargs in agent.py — with thinking on, this
+            # model can burn the entire token budget on hidden reasoning
+            # and never reach visible content (observed: max_tokens=900
+            # test → 900/900 reasoning tokens, zero content).
             - name: INFERENCE_MAX_TOKENS
-              value: "8192"
+              value: "2048"
             # API key for the external OpenAI-compatible endpoint. Create
             # the Secret with:
             #   oc create secret generic external-model-credentials \
@@ -76,14 +87,15 @@ spec:
                 configMapKeyRef:
                   name: cluster-config
                   key: model_name
-            - name: OPENAI_MAX_RETRIES
-              value: "8"
-            # Read timeout for inference calls to the external endpoint.
-            # Large accumulated contexts (many tool-call results) can push
-            # time-to-first-token well beyond the default ~100s, causing
-            # "Server disconnected without sending a response" errors.
-            - name: OPENAI_TIMEOUT
-              value: "300"
+            # NOTE: OPENAI_MAX_RETRIES/OPENAI_TIMEOUT previously set here did
+            # NOT do anything useful — VLLMInferenceAdapterConfig has no such
+            # fields (verified by reading the OGX sidecar source in-pod), so
+            # they were silently ignored. The actual client timeout comes
+            # from config.network.timeout in ogx/stack_run_config.yaml
+            # (unset = SDK default ~600s). The real failure was the external
+            # endpoint's own fixed ~100s request timeout combined with this
+            # model's uncontrolled "thinking" — see agent.py's ROOT CAUSE
+            # comment and INFERENCE_MAX_TOKENS above for the actual fix.
           volumeMounts:
             - name: ogx-config
               mountPath: /etc/ogx

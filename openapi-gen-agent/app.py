@@ -207,7 +207,7 @@ async def chat(message: str, history: list[dict]):
     history[-1] = {"role": "assistant", "content": ""}
     response_so_far = ""
 
-    async for chunk in run_agent(repo_url):
+    async for chunk in run_agent(repo_url, repo_structure=structure):
         response_so_far += chunk
         history[-1] = {"role": "assistant", "content": response_so_far}
         yield history, "", ""
@@ -259,7 +259,7 @@ async def _run_agent_in_background(prompt: str, job_id: str) -> None:
             return
 
         response_text = ""
-        async for chunk in run_agent(repo_url):
+        async for chunk in run_agent(repo_url, repo_structure=structure):
             response_text += chunk
         logger.info("Background agent job %s completed (%d chars generated)", job_id, len(response_text))
 

@@ -7,31 +7,6 @@ runs independently of, and with a smaller budget than, the
 architecture-documentation agent; keep that in mind when adding guidance here
 — don't add steps that assume the larger budget is available.
 
-## Confirming the project is an API (before spending any read budget)
-
-- Trust the code over naming conventions. A directory named `api/` does not
-  guarantee an HTTP surface — confirm with `get_file_outline` that it actually
-  declares routes/handlers before treating it as evidence.
-- If, after a quick survey, the strongest signal you found is a single
-  ambiguous file, prefer bailing out with `NOT_AN_API` over guessing. A wrong
-  `NOT_AN_API` costs nothing (no PR is opened); a wrong, invented spec is
-  actively misleading to whoever reviews the resulting PR.
-- Libraries, CLIs, data pipelines, and frontend-only apps are NOT APIs for
-  this purpose, even if they happen to use an HTTP client internally.
-
-## Exploration principles (smaller budget than the doc agent)
-
-- Go straight for route/controller/handler files and the app/router bootstrap
-  file (wherever routes are registered) — that is almost always where the
-  real endpoint list lives, not the README.
-- Use `get_file_outline` to confirm a file's declared functions/decorators
-  before spending a `read_file` call on it.
-- Spend read calls on files that define request/response shapes (DTOs,
-  Pydantic/dataclass models, serializers, protobuf messages) only if the
-  outline didn't already make the field types obvious.
-- Do not re-read a file you already scanned with `get_file_outline` unless it
-  showed something that needs full content to specify accurately.
-
 ## Writing principles
 
 - One path per actually-found route; one operation (method) per actually-found
