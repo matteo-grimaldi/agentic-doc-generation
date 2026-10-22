@@ -1,0 +1,41 @@
+# Child Application: deploys the Compliance MCP server, a standalone,
+# read-only MCP server that proxies compliance queries through the
+# Governance Hub's REST API (GET /api/repos, GET /api/repos/{owner}/{repo}/status).
+#
+# sync-wave 1 — applied concurrently with governance-hub (also wave 1).
+# This server holds no state of its own and tolerates governance-hub
+# being briefly unavailable (each tool returns an "error" key until it's
+# reachable), matching how governance-hub itself tolerates doc-gen-agent /
+# openapi-gen-agent being briefly unavailable — no stricter ordering
+# dependency is needed.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: compliance-mcp-server
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/YOUR_ORG/agentic-doc-generation.git
+    targetRevision: HEAD
+    path: compliance-mcp-server/k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: doc-gen-demo
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
