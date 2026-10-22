@@ -43,8 +43,8 @@ MODEL_NAME = os.getenv("MODEL_NAME", "granite-3.1-8b-instruct")
 KNOWLEDGE_FILE = os.getenv("KNOWLEDGE_FILE", "/etc/agent-knowledge/openapi-knowledge.md")
 
 AGENT_TIMEOUT_SECONDS = int(os.getenv("AGENT_TIMEOUT_SECONDS", "600"))
-MAX_INFER_ITERS = int(os.getenv("MAX_INFER_ITERS", "15"))
-MAX_READ_FILES = int(os.getenv("MAX_READ_FILES", "10"))
+MAX_INFER_ITERS = int(os.getenv("MAX_INFER_ITERS", "12"))
+MAX_READ_FILES = int(os.getenv("MAX_READ_FILES", "8"))
 
 # Filenames (basename, case-insensitive) that count as "this repo already
 # has a spec" — checked against the file list get_repo_structure already
@@ -233,10 +233,17 @@ PHASE 2 — Deep read (expensive — at most {MAX_READ_FILES} read_file calls):
   6. Skip test files, generated code, lock files, and vendored dependencies.
   7. If a tool call fails twice in a row, stop retrying it and proceed with what you have.
 
+CRITICAL BUDGET CONSTRAINT — you have at most {MAX_INFER_ITERS} inference iterations total (across
+all phases). Every tool call you make (read_file, get_file_outline, search_code, get_repo_info,
+get_repo_structure — all of them) consumes iterations. If you spend them all on tool calls, you will
+have NO iterations left to write the spec and your run will fail silently. Aim for no more than 15
+tool calls total and STOP calling tools well before hitting the cap so you have room to write.
+
 PHASE 3 — Write:
-  8. Once you've identified the real HTTP endpoints, produce the OpenAPI document. Do not keep reading
-     files indefinitely — when you reach the read_file cap, stop and write the spec from what you
-     already have.
+  8. Once you've identified the real HTTP endpoints, produce the OpenAPI document IMMEDIATELY. Do not
+     keep reading files or searching code — when you reach the read_file cap or have made ~12-15 tool
+     calls total, STOP all tool use and write the spec from what you already have. A partial spec
+     based on evidence you gathered is strictly better than no spec because you ran out of iterations.
 
 Output format — respond with ONLY a single fenced ```yaml code block, nothing else before or after it
 (no preamble, no "Here is the spec:" narration):
@@ -365,6 +372,10 @@ async def run_agent(repo_url: str) -> AsyncIterator[str]:
     tool_failures = 0
     ogx_error: tuple[str, str] | None = None
     ogx_error_announced = False
+    # #region agent log — debug instrumentation (session e627b5)
+    infer_iters_seen = 0  # approximate inference iterations (incremented on each tool-call batch or text delta)
+    logger.info("[debug:e627b5] run_agent starting — MAX_INFER_ITERS=%s, MAX_READ_FILES=%s, model=%s", MAX_INFER_ITERS, MAX_READ_FILES, MODEL_NAME)
+    # #endregion
 
     def _announce_ogx_error() -> str | None:
         nonlocal ogx_error_announced
@@ -384,6 +395,10 @@ async def run_agent(repo_url: str) -> AsyncIterator[str]:
                 if event_type == "response.output_text.delta":
                     text_chunks += 1
                     text_bytes += len(event.delta)
+                    # #region agent log — debug instrumentation (session e627b5)
+                    if text_chunks == 1:
+                        logger.info("[debug:e627b5] first text delta received after %d tool_calls, %d events", tool_calls, event_count)
+                    # #endregion
                     yield event.delta
 
                 elif event_type == "response.output_item.added":
@@ -393,6 +408,9 @@ async def run_agent(repo_url: str) -> AsyncIterator[str]:
                         server = getattr(item, "server_label", "unknown")
                         tool = getattr(item, "name", "unknown")
                         logger.info("Tool call started: %s → %s", server, tool)
+                        # #region agent log — debug instrumentation (session e627b5)
+                        logger.info("[debug:e627b5] tool_calls=%d so far (tool=%s)", tool_calls, tool)
+                        # #endregion
 
                 elif event_type == "response.output_item.done":
                     item = getattr(event, "item", None)
@@ -421,6 +439,12 @@ async def run_agent(repo_url: str) -> AsyncIterator[str]:
                     resp_data = _response_as_dict(resp)
                     status = resp_data.get("status") or getattr(resp, "status", "unknown")
                     logger.info("Stream response.completed — status=%s", status)
+                    # #region agent log — debug instrumentation (session e627b5)
+                    logger.info(
+                        "[debug:e627b5] completed — status=%s, text_chunks=%d, text_bytes=%d, tool_calls=%d, events=%d",
+                        status, text_chunks, text_bytes, tool_calls, event_count,
+                    )
+                    # #endregion
                     parsed = _extract_ogx_error(resp)
                     if parsed:
                         ogx_error = parsed

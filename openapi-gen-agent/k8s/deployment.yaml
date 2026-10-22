@@ -138,9 +138,9 @@ spec:
             - name: PYTHONUNBUFFERED
               value: "1"
             - name: MAX_INFER_ITERS
-              value: "15"
+              value: "12"
             - name: MAX_READ_FILES
-              value: "10"
+              value: "8"
             - name: OPENAPI_SPEC_PATH
               value: "openapi.yaml"
           livenessProbe:
