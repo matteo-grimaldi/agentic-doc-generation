@@ -161,6 +161,14 @@ spec:
               value: "5"
             - name: OPENAPI_SPEC_PATH
               value: "openapi.yaml"
+            # Optional: the Governance Hub component's callback endpoint
+            # (see governance-hub/app.py's POST /api/runs) — leave this
+            # empty (or remove the Deployment entirely) to run
+            # openapi-gen-agent with no governance tracking at all;
+            # reporting failures never affect this agent's own run (see
+            # app.py's _report_to_governance).
+            - name: GOVERNANCE_HUB_URL
+              value: "http://governance-hub.doc-gen-demo.svc.cluster.local:7860"
           livenessProbe:
             httpGet:
               path: /

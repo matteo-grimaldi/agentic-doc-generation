@@ -41,6 +41,13 @@ GITHUB_MCP_SERVER_URL = os.getenv("GITHUB_MCP_SERVER_URL", "http://github-mcp-se
 ARCHITECTURE_DOC_PATH = os.getenv("ARCHITECTURE_DOC_PATH", "ARCHITECTURE.md")
 ARCHITECTURE_DOC_BASE_BRANCH = os.getenv("ARCHITECTURE_DOC_BASE_BRANCH", "")
 
+# Base URL of the governance-hub component's POST /api/runs callback (see
+# governance-hub/app.py) — reporting here is entirely optional: leave this
+# empty to run doc-gen-agent standalone with no governance tracking at
+# all. Never affects this agent's own run outcome (see
+# _report_to_governance's docstring).
+GOVERNANCE_HUB_URL = os.getenv("GOVERNANCE_HUB_URL", "http://governance-hub.doc-gen-demo.svc.cluster.local:7860")
+
 _REPO_URL_RE = re.compile(r"https?://github\.com/[^\s)\]]+")
 
 logging.basicConfig(
@@ -172,14 +179,50 @@ async def _propose_architecture_doc(repo_url: str, content: str, job_id: str) ->
         return {"error": str(exc)}
 
 
+async def _report_to_governance(
+    job_id: str,
+    repo_url: str,
+    status: str,
+    pr_url: str | None = None,
+    pr_number: int | None = None,
+    error: str | None = None,
+) -> None:
+    """
+    Fire-and-forget report of this run's outcome to the Governance Hub's
+    POST /api/runs callback (see governance-hub/app.py), so its dashboard
+    can track whether this repo now has an architecture document and show
+    this run in its history. Optional: if GOVERNANCE_HUB_URL is empty or
+    the Hub is unreachable, this logs a warning and never raises, so a
+    Governance Hub outage can never affect doc-gen-agent's own run.
+    """
+    if not GOVERNANCE_HUB_URL:
+        return
+    payload = {
+        "job_id": job_id,
+        "repo_url": repo_url,
+        "agent_type": "doc-gen",
+        "status": status,
+        "pr_url": pr_url,
+        "pr_number": pr_number,
+        "error": error,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+            await client.post(f"{GOVERNANCE_HUB_URL}/api/runs", json=payload)
+    except Exception as exc:
+        logger.warning("Job %s: failed to report run to governance hub: %s", job_id, exc)
+
+
 async def _run_agent_in_background(prompt: str, job_id: str) -> None:
     """
     Drain run_agent() to completion outside of any HTTP request/response
     cycle, then propose the result back to its source repo as a PR. This is
     the CI/CD trigger path (no UI session to stream into), so the only
-    observable outcomes are: the log lines below, and (if a repo URL could
-    be extracted and GITHUB_TOKEN is configured with write access) a pull
-    request against the source repo containing ARCHITECTURE_DOC_PATH.
+    observable outcomes are: the log lines below, (if a repo URL could be
+    extracted and GITHUB_TOKEN is configured with write access) a pull
+    request against the source repo containing ARCHITECTURE_DOC_PATH, and
+    (if GOVERNANCE_HUB_URL is configured) a run report sent to the
+    Governance Hub for its compliance dashboard.
     """
     logger.info("Background agent job %s started for prompt=%s", job_id, prompt[:200])
 
@@ -194,12 +237,23 @@ async def _run_agent_in_background(prompt: str, job_id: str) -> None:
         doc_content = extract_architecture_document(response_text)
         if not doc_content.strip():
             logger.warning("Job %s: agent produced no document — skipping PR", job_id)
+            if repo_url:
+                await _report_to_governance(job_id, repo_url, "failed", error="agent produced no document")
         elif not repo_url:
             logger.warning("Job %s: could not find a github.com URL in the prompt — skipping PR", job_id)
         else:
-            await _propose_architecture_doc(repo_url, doc_content, job_id)
-    except Exception:
+            result = await _propose_architecture_doc(repo_url, doc_content, job_id)
+            if "error" in result:
+                await _report_to_governance(job_id, repo_url, "failed", error=result["error"])
+            else:
+                await _report_to_governance(
+                    job_id, repo_url, "completed",
+                    pr_url=result.get("pr_url"), pr_number=result.get("pr_number"),
+                )
+    except Exception as exc:
         logger.exception("Background agent job %s failed", job_id)
+        if repo_url:
+            await _report_to_governance(job_id, repo_url, "failed", error=str(exc))
 
 
 async def propose_pr_clicked(repo_url: str, content: str) -> str:

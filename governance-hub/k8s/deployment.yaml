@@ -1,0 +1,86 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: governance-hub
+  namespace: doc-gen-demo
+  labels:
+    app: governance-hub
+    app.kubernetes.io/name: governance-hub
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: governance-hub
+  template:
+    metadata:
+      labels:
+        app: governance-hub
+    spec:
+      serviceAccountName: governance-hub-sa
+      containers:
+        - name: governance-hub
+          image: image-registry.openshift-image-registry.svc:5000/doc-gen-demo/governance-hub:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 7860
+              name: http
+              protocol: TCP
+          env:
+            - name: GOVERNANCE_PORT
+              value: "7860"
+            - name: DATABASE_PATH
+              value: "/data/governance.db"
+            - name: GITHUB_MCP_SERVER_URL
+              value: "http://github-mcp-server.doc-gen-demo.svc.cluster.local:8080"
+            - name: DOC_GEN_AGENT_URL
+              value: "http://doc-gen-agent.doc-gen-demo.svc.cluster.local:7860"
+            - name: OPENAPI_GEN_AGENT_URL
+              value: "http://openapi-gen-agent.doc-gen-demo.svc.cluster.local:7860"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          volumeMounts:
+            - name: governance-hub-data
+              mountPath: /data
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 7860
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            failureThreshold: 4
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 7860
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: governance-hub-data
+          persistentVolumeClaim:
+            claimName: governance-hub-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: governance-hub
+  namespace: doc-gen-demo
+  labels:
+    app: governance-hub
+spec:
+  selector:
+    app: governance-hub
+  ports:
+    - name: http
+      port: 7860
+      targetPort: 7860
+      protocol: TCP

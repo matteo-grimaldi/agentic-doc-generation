@@ -1,0 +1,15 @@
+# Persists the Governance Hub's SQLite compliance database
+# (tracked repos + agent run history) across pod restarts/rollouts.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: governance-hub-data
+  namespace: doc-gen-demo
+  labels:
+    app: governance-hub
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
