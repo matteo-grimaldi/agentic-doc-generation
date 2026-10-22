@@ -1,0 +1,195 @@
+# Note: the ogx-stack-config and openapi-agent-knowledge ConfigMaps are
+# managed by build-and-deploy.sh via:
+#   oc create configmap ogx-stack-config --from-file=stack_run_config.yaml=ogx/stack_run_config.yaml
+#   oc create configmap openapi-agent-knowledge --from-file=openapi-knowledge.md=openapi-knowledge.md
+# Do NOT inline them here to avoid YAML-within-YAML parsing issues.
+#
+# Shares the cluster-config ConfigMap and external-model-credentials
+# Secret with doc-gen-agent (doc-gen-agent/k8s/cluster-config.yaml) — both
+# components point at the same external OpenAI-compatible endpoint.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openapi-gen-agent
+  namespace: doc-gen-demo
+  labels:
+    app: openapi-gen-agent
+    app.kubernetes.io/name: openapi-gen-agent
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openapi-gen-agent
+  template:
+    metadata:
+      labels:
+        app: openapi-gen-agent
+    spec:
+      serviceAccountName: openapi-gen-agent-sa
+      containers:
+        # ── OGX sidecar ──────────────────────────────────────────────────────
+        - name: ogx-server
+          image: ogxai/distribution-starter:latest
+          imagePullPolicy: Always
+          command:
+            - uvicorn
+            - ogx.core.server.server:create_app
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "8321"
+            - --factory
+          ports:
+            - containerPort: 8321
+              name: ogx-http
+              protocol: TCP
+          env:
+            - name: OGX_CONFIG
+              value: "/etc/ogx/stack_run_config.yaml"
+            - name: OGX_LOGGING
+              value: "all=INFO"
+            - name: SQLITE_STORE_DIR
+              value: "/tmp/ogx"
+            - name: INFERENCE_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: cluster-config
+                  key: model_base_url
+            - name: INFERENCE_MAX_TOKENS
+              value: "8192"
+            # API key for the external OpenAI-compatible endpoint. Create
+            # the Secret with:
+            #   oc create secret generic external-model-credentials \
+            #     --from-literal=api_key=<your-api-key> -n doc-gen-demo
+            # Optional — leave the Secret absent for endpoints that don't
+            # require auth; stack_run_config.yaml falls back to "unused".
+            - name: INFERENCE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: external-model-credentials
+                  key: api_key
+                  optional: true
+            - name: INFERENCE_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: cluster-config
+                  key: model_name
+            - name: OPENAI_MAX_RETRIES
+              value: "8"
+          volumeMounts:
+            - name: ogx-config
+              mountPath: /etc/ogx
+            - name: ogx-data
+              mountPath: /tmp/ogx
+          livenessProbe:
+            httpGet:
+              path: /v1/models
+              port: 8321
+            initialDelaySeconds: 45
+            periodSeconds: 20
+            failureThreshold: 4
+          readinessProbe:
+            httpGet:
+              path: /v1/models
+              port: 8321
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+        # ── Gradio UI ────────────────────────────────────────────────────────
+        - name: openapi-gen-agent
+          image: image-registry.openshift-image-registry.svc:5000/doc-gen-demo/openapi-gen-agent:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 7860
+              name: http
+              protocol: TCP
+          env:
+            - name: GRADIO_PORT
+              value: "7860"
+            - name: GRADIO_ANALYTICS_ENABLED
+              value: "False"
+            - name: OGX_BASE_URL
+              value: "http://localhost:8321"
+            - name: GITHUB_MCP_URL
+              value: "http://github-mcp-server.doc-gen-demo.svc.cluster.local:8080/mcp"
+            # Base URL (no /mcp suffix) of the same GitHub MCP server, used
+            # both for the zero-model-budget repo-structure detection check
+            # and by the /invoke background task to POST the generated spec
+            # to its plain REST /propose-doc route (which opens a PR rather
+            # than committing directly) — see app.py.
+            - name: GITHUB_MCP_SERVER_URL
+              value: "http://github-mcp-server.doc-gen-demo.svc.cluster.local:8080"
+            - name: MODEL_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: cluster-config
+                  key: model_name
+            - name: KNOWLEDGE_FILE
+              value: "/etc/agent-knowledge/openapi-knowledge.md"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: MAX_INFER_ITERS
+              value: "15"
+            - name: MAX_READ_FILES
+              value: "10"
+            - name: OPENAPI_SPEC_PATH
+              value: "openapi.yaml"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 7860
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 4
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 7860
+            initialDelaySeconds: 45
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "200m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          volumeMounts:
+            - name: agent-knowledge
+              mountPath: /etc/agent-knowledge
+              readOnly: true
+      volumes:
+        - name: ogx-config
+          configMap:
+            name: ogx-stack-config
+        - name: ogx-data
+          emptyDir: {}
+        - name: agent-knowledge
+          configMap:
+            name: openapi-agent-knowledge
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openapi-gen-agent
+  namespace: doc-gen-demo
+  labels:
+    app: openapi-gen-agent
+spec:
+  selector:
+    app: openapi-gen-agent
+  ports:
+    - name: http
+      port: 7860
+      targetPort: 7860
+      protocol: TCP

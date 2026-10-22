@@ -27,11 +27,6 @@ oc create configmap agent-knowledge \
   --from-file=knowledge.md="${SCRIPT_DIR}/knowledge.md" \
   -n "${NAMESPACE}" --dry-run=client -o yaml | oc apply -f -
 
-echo "==> Creating/updating openapi-agent-knowledge ConfigMap from openapi-knowledge.md..."
-oc create configmap openapi-agent-knowledge \
-  --from-file=openapi-knowledge.md="${SCRIPT_DIR}/openapi-knowledge.md" \
-  -n "${NAMESPACE}" --dry-run=client -o yaml | oc apply -f -
-
 if [[ -n "${EXTERNAL_MODEL_API_KEY:-}" ]]; then
   echo "==> Creating/updating external-model-credentials secret from \$EXTERNAL_MODEL_API_KEY..."
   oc create secret generic external-model-credentials --from-literal=api_key="${EXTERNAL_MODEL_API_KEY}" \

@@ -1,9 +1,8 @@
 ---
-# Note: the ogx-stack-config, agent-knowledge, and openapi-agent-knowledge
-# ConfigMaps are managed by build-and-deploy.sh via:
+# Note: the ogx-stack-config and agent-knowledge ConfigMaps are managed by
+# build-and-deploy.sh via:
 #   oc create configmap ogx-stack-config --from-file=stack_run_config.yaml=ogx/stack_run_config.yaml
 #   oc create configmap agent-knowledge --from-file=knowledge.md=knowledge.md
-#   oc create configmap openapi-agent-knowledge --from-file=openapi-knowledge.md=openapi-knowledge.md
 # Do NOT inline them here to avoid YAML-within-YAML parsing issues.
 ---
 apiVersion: apps/v1
@@ -138,20 +137,6 @@ spec:
               value: "20"
             - name: MAX_READ_FILES
               value: "8"
-            # ── Independent OpenAPI-generation agent — own budget, own
-            # knowledge file, kept deliberately separate from the
-            # architecture-doc settings above so tuning one never
-            # silently affects the other. See agent.py's
-            # detect_needs_openapi()/run_openapi_agent() and app.py's
-            # _run_openapi_job()/generate_openapi_if_needed().
-            - name: MAX_INFER_ITERS_OPENAPI
-              value: "15"
-            - name: MAX_READ_FILES_OPENAPI
-              value: "10"
-            - name: OPENAPI_KNOWLEDGE_FILE
-              value: "/etc/openapi-agent-knowledge/openapi-knowledge.md"
-            - name: OPENAPI_SPEC_PATH
-              value: "openapi.yaml"
           livenessProbe:
             httpGet:
               path: /
@@ -177,9 +162,6 @@ spec:
             - name: agent-knowledge
               mountPath: /etc/agent-knowledge
               readOnly: true
-            - name: openapi-agent-knowledge
-              mountPath: /etc/openapi-agent-knowledge
-              readOnly: true
       volumes:
         - name: ogx-config
           configMap:
@@ -189,9 +171,6 @@ spec:
         - name: agent-knowledge
           configMap:
             name: agent-knowledge
-        - name: openapi-agent-knowledge
-          configMap:
-            name: openapi-agent-knowledge
 ---
 apiVersion: v1
 kind: Service

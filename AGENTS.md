@@ -4,13 +4,17 @@ Guidance for AI coding agents working in this repository.
 
 ## What this repo is
 
-A GitOps-provisioned OpenShift demo: an AI agent (Gradio UI + OGX
-sidecar) that generates architecture documentation and Mermaid diagrams
-for a given GitHub repo, using a model served by an external, configurable
-OpenAI-compatible endpoint (no GPU or in-cluster model serving on this
-branch) and a GitHub MCP server for code exploration. It is a simplified,
-single-agent take on
+A GitOps-provisioned OpenShift demo: two independent AI agents (each its
+own Gradio UI + OGX sidecar pod) that generate repo documentation for a
+given GitHub repo — `doc-gen-agent` produces architecture documentation
+with Mermaid C4 diagrams, and `openapi-gen-agent` produces an OpenAPI
+specification for repos that look like HTTP API services. Both use a
+model served by an external, configurable OpenAI-compatible endpoint (no
+GPU or in-cluster model serving on this branch) and a shared GitHub MCP
+server for code exploration. It is a simplified take on
 [opendatahub-io/architecture-context](https://github.com/opendatahub-io/architecture-context).
+The two agents are fully independent — separate pods, UIs, budgets, and
+PRs; neither triggers the other.
 
 > This is the `main` branch. The [`local-model`](../../tree/local-model)
 > branch preserves the original design where the model is served
@@ -27,13 +31,18 @@ component breakdown before making changes.
 gitops/                 # ArgoCD App-of-Apps: bootstrap.sh is the entry point
   apps/                  # Child ArgoCD Application manifests (one per component)
 github-mcp-server/       # FastMCP server exposing GitHub repo browsing as MCP tools
-doc-gen-agent/           # OGX sidecar (agentic loop) + Gradio UI (agent.py / app.py)
-build-and-deploy-all.sh  # Non-GitOps quick-start for the two app components
+doc-gen-agent/           # OGX sidecar (agentic loop) + Gradio UI — architecture docs & diagrams
+openapi-gen-agent/       # OGX sidecar (agentic loop) + Gradio UI — OpenAPI spec generation (independent)
+build-and-deploy-all.sh  # Non-GitOps quick-start for the app components
 ```
 
-Each deployable component (`github-mcp-server/`, `doc-gen-agent/`) is
-self-contained: source, `Dockerfile`, `requirements.txt`,
-`build-and-deploy.sh`, and a `k8s/` directory with its manifests.
+Each deployable component (`github-mcp-server/`, `doc-gen-agent/`,
+`openapi-gen-agent/`) is self-contained: source, `Dockerfile`,
+`requirements.txt`, `build-and-deploy.sh`, and a `k8s/` directory with
+its manifests. `doc-gen-agent` and `openapi-gen-agent` are two separate
+agents, not two halves of one component — don't reintroduce
+cross-calls between them (e.g. one triggering the other's generation or
+budget) without the user explicitly asking for that coupling back.
 
 ## Core conventions
 
@@ -46,27 +55,38 @@ self-contained: source, `Dockerfile`, `requirements.txt`,
   hardcode a real URL in a manifest — `gitops/bootstrap.sh` substitutes it
   at bootstrap time via `sed`.
 - **Sync-wave ordering matters.** `github-mcp-server` (wave 0) must land
-  before `doc-gen-agent` (wave 1), because of the Service DNS dependency.
-  Preserve the `argocd.argoproj.io/sync-wave` annotations when adding
-  resources.
+  before `doc-gen-agent` and `openapi-gen-agent` (both wave 1, applied
+  concurrently), because of the Service DNS dependency. Preserve the
+  `argocd.argoproj.io/sync-wave` annotations when adding resources.
 - **ConfigMaps generated from files are not committed as inline YAML.**
-  `ogx-stack-config` and `agent-knowledge` are created by
-  `build-and-deploy.sh` via `oc create configmap --from-file=...` to avoid
-  YAML-in-YAML. If you add a new file-backed ConfigMap, follow the same
-  pattern and document it with a comment at the top of the Deployment
-  manifest that references it.
-- **Model identity must stay in sync across two files** when pointing at
-  a different model or endpoint: `doc-gen-agent/k8s/cluster-config.yaml`
-  (`model_base_url`, `model_name`) and
-  `doc-gen-agent/ogx/stack_run_config.yaml`
-  (`registered_resources.models[0].model_id`/`provider_model_id`). The
-  endpoint's API key goes in the `external-model-credentials` Secret
-  (created out-of-band, never committed), not in either of those files.
+  `ogx-stack-config` and `agent-knowledge` (per component) are created by
+  each component's `build-and-deploy.sh` via
+  `oc create configmap --from-file=...` to avoid YAML-in-YAML. If you add
+  a new file-backed ConfigMap, follow the same pattern and document it
+  with a comment at the top of the Deployment manifest that references
+  it.
+- **`doc-gen-agent` and `openapi-gen-agent` share the `cluster-config`
+  ConfigMap and `external-model-credentials` Secret** (both in the
+  `doc-gen-demo` namespace) — only `doc-gen-agent/k8s/cluster-config.yaml`
+  is committed; `openapi-gen-agent`'s Deployment references the same
+  ConfigMap name rather than duplicating it. Don't create a second
+  `cluster-config.yaml` under `openapi-gen-agent/k8s/` — that would create
+  a resource ArgoCD-ownership conflict between the two Applications.
+- **Model identity must stay in sync across three files** when pointing
+  at a different model or endpoint: `doc-gen-agent/k8s/cluster-config.yaml`
+  (`model_base_url`, `model_name` — shared by both agents), and **each**
+  agent's own `ogx/stack_run_config.yaml`
+  (`registered_resources.models[0].model_id`/`provider_model_id` in
+  `doc-gen-agent/ogx/stack_run_config.yaml` AND
+  `openapi-gen-agent/ogx/stack_run_config.yaml`). The endpoint's API key
+  goes in the `external-model-credentials` Secret (created out-of-band,
+  never committed), not in any of those files.
 
 ## Making changes
 
 - **Python services** (`github-mcp-server/server.py`,
-  `doc-gen-agent/agent.py`, `doc-gen-agent/app.py`): run
+  `doc-gen-agent/agent.py`, `doc-gen-agent/app.py`,
+  `openapi-gen-agent/agent.py`, `openapi-gen-agent/app.py`): run
   `python3 -m py_compile <file>` after edits; there is no test suite yet.
 - **YAML manifests**: validate with
   `python3 -c "import yaml,sys; yaml.safe_load_all(open(sys.argv[1]))" <file>`

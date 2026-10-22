@@ -1,0 +1,39 @@
+# Child Application: deploys the openapi-gen agent (Gradio UI + OGX sidecar).
+#
+# sync-wave 1 — depends on github-mcp-server (needs its Service DNS name)
+# from wave 0, and shares the cluster-config ConfigMap applied by the
+# doc-gen-agent Application (also wave 1) — see
+# doc-gen-agent/k8s/cluster-config.yaml. Inference goes to an external
+# OpenAI-compatible endpoint (the same one doc-gen-agent uses), so this
+# Application has no in-cluster model-serving dependency of its own.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: openapi-gen-agent
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/YOUR_ORG/agentic-doc-generation.git
+    targetRevision: HEAD
+    path: openapi-gen-agent/k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: doc-gen-demo
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

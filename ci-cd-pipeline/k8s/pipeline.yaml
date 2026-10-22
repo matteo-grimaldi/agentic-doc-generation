@@ -1,10 +1,11 @@
 # Generic "build and deploy any public repo" CI/CD pipeline, demonstrating
-# how a pipeline run can trigger the doc-gen-agent (doc-gen-agent/app.py's
-# POST /invoke endpoint) *before* building/deploying, without blocking on
-# it: the invoke-doc-gen-agent Task fires the request and returns almost
-# immediately (the endpoint itself responds 202 and runs the actual agent
-# loop as a background task), so the rest of the pipeline proceeds without
-# waiting for architecture-doc generation to finish.
+# how a pipeline run can trigger doc-gen-agent and openapi-gen-agent (their
+# respective POST /invoke endpoints) *before* building/deploying, without
+# blocking on either: the invoke-doc-gen-agent and invoke-openapi-gen-agent
+# Tasks fire their requests in parallel and return almost immediately (each
+# endpoint responds 202 and runs its actual agent loop as a background
+# task), so the rest of the pipeline proceeds without waiting for either
+# generation to finish.
 #
 # The git-clone and buildah Tasks are resolved from the Tekton Hub catalog
 # at run time (no local copies to keep in sync) — this requires the `hub`
@@ -17,8 +18,9 @@ metadata:
 spec:
   description: >-
     Builds a container image (via Buildah, from a Dockerfile in the given
-    public repo) and deploys it, after kicking off a non-blocking
-    doc-gen-agent architecture-documentation run for the same repo.
+    public repo) and deploys it, after kicking off non-blocking
+    doc-gen-agent (architecture documentation) and openapi-gen-agent
+    (OpenAPI spec) runs for the same repo.
   params:
     - name: repo-url
       type: string
@@ -49,13 +51,18 @@ spec:
       type: string
       description: doc-gen-agent /invoke endpoint URL.
       default: "http://doc-gen-agent.doc-gen-demo.svc.cluster.local:7860/invoke"
+    - name: openapi-gen-agent-url
+      type: string
+      description: openapi-gen-agent /invoke endpoint URL.
+      default: "http://openapi-gen-agent.doc-gen-demo.svc.cluster.local:7860/invoke"
   workspaces:
     - name: shared-workspace
       description: Holds the cloned repo between the fetch-source and build-image Tasks.
   tasks:
-    # 1. Fire the doc-gen-agent request first — but non-blocking: the
-    #    endpoint returns almost instantly, and this Task tolerates
-    #    failures/timeouts without stopping the pipeline, so it never
+    # 1a/1b. Fire the doc-gen-agent and openapi-gen-agent requests first,
+    #    in parallel (neither runAfter the other) — but non-blocking: each
+    #    endpoint returns almost instantly, and both Tasks tolerate
+    #    failures/timeouts without stopping the pipeline, so neither
     #    meaningfully delays fetch-source below.
     - name: invoke-doc-gen-agent
       taskRef:
@@ -66,9 +73,19 @@ spec:
         - name: agent-url
           value: $(params.doc-gen-agent-url)
 
+    - name: invoke-openapi-gen-agent
+      taskRef:
+        name: invoke-openapi-gen-agent
+      params:
+        - name: repo-url
+          value: $(params.repo-url)
+        - name: agent-url
+          value: $(params.openapi-gen-agent-url)
+
     - name: fetch-source
       runAfter:
         - invoke-doc-gen-agent
+        - invoke-openapi-gen-agent
       taskRef:
         resolver: hub
         params:

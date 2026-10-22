@@ -1,0 +1,99 @@
+version: '2'
+distro_name: doc-gen-agent
+
+apis:
+  - inference
+  - responses
+  - tool_runtime
+  - vector_io
+  - files
+
+providers:
+  inference:
+    # remote::vllm speaks the OpenAI-compatible chat-completions protocol,
+    # which is why it works against any OpenAI-compatible endpoint, not
+    # just vLLM — point it at whatever external provider cluster-config
+    # specifies (vLLM elsewhere, OpenAI, Azure OpenAI gateway, etc.).
+    - provider_id: external-model
+      provider_type: remote::vllm
+      config:
+        base_url: ${env.INFERENCE_BASE_URL}
+        max_tokens: ${env.INFERENCE_MAX_TOKENS:=4096}
+        api_token: ${env.INFERENCE_API_KEY:=unused}
+        network:
+          tls:
+            verify: false
+
+  responses:
+    - provider_id: builtin
+      provider_type: inline::builtin
+      config:
+        persistence:
+          responses:
+            table_name: responses
+            backend: sql_default
+
+  vector_io:
+    - provider_id: faiss
+      provider_type: inline::faiss
+      config:
+        persistence:
+          namespace: vector_io::faiss
+          backend: kv_default
+
+  tool_runtime:
+    - provider_id: model-context-protocol
+      provider_type: remote::model-context-protocol
+      config: {}
+
+  files:
+    - provider_id: builtin-files
+      provider_type: inline::localfs
+      config:
+        storage_dir: /tmp/ogx/files
+        metadata_store:
+          table_name: files_metadata
+          backend: sql_default
+
+storage:
+  backends:
+    kv_default:
+      type: kv_sqlite
+      db_path: /tmp/ogx/kvstore.db
+    sql_default:
+      type: sql_sqlite
+      db_path: /tmp/ogx/sql_store.db
+  stores:
+    metadata:
+      namespace: registry
+      backend: kv_default
+    inference:
+      table_name: inference_store
+      backend: sql_default
+    conversations:
+      table_name: openai_conversations
+      backend: sql_default
+    prompts:
+      table_name: prompts
+      backend: sql_default
+
+# NOTE: provider_model_id below must be the exact model identifier your
+# external OpenAI-compatible endpoint expects (e.g. "gpt-4o-mini" for
+# OpenAI, or a served-model-name for a self-hosted vLLM/Ollama/etc.).
+# OGX publishes this registered model at /v1/models under the id
+# "<provider_id>/<model_id>" (here "external-model/qwen38-27b") — that
+# FULL prefixed id is what must go in model_name in
+# doc-gen-agent/k8s/cluster-config.yaml, since it's passed verbatim as
+# the `model` field to OGX's responses.create() in agent.py. Switching
+# endpoints or models: update provider_model_id/model_id here AND the
+# prefixed model_name in cluster-config.yaml in lockstep.
+registered_resources:
+  models:
+    - metadata: {}
+      model_id: qwen38-27b
+      provider_id: external-model
+      provider_model_id: qwen38-27b
+      model_type: llm
+
+server:
+  port: 8321

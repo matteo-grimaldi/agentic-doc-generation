@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 #
-# Quick-start, non-GitOps deploy of the two application components
-# (github-mcp-server, doc-gen-agent) directly with `oc`.
+# Quick-start, non-GitOps deploy of the application components
+# (github-mcp-server, doc-gen-agent, openapi-gen-agent) directly with `oc`.
 #
 # Inference is served by an external, configurable OpenAI-compatible
 # endpoint (no in-cluster model serving) — set it via
-# doc-gen-agent/k8s/cluster-config.yaml (and, if your endpoint requires
-# auth, $EXTERNAL_MODEL_API_KEY — see doc-gen-agent/build-and-deploy.sh).
+# doc-gen-agent/k8s/cluster-config.yaml (shared by both agent components,
+# and, if your endpoint requires auth, $EXTERNAL_MODEL_API_KEY — see
+# doc-gen-agent/build-and-deploy.sh and openapi-gen-agent/build-and-deploy.sh).
 # For a single command that provisions the whole stack via GitOps, use
 # gitops/bootstrap.sh instead.
 #
@@ -14,6 +15,7 @@
 #   ./build-and-deploy-all.sh                  # deploy everything
 #   ./build-and-deploy-all.sh github-mcp-server # deploy a single component
 #   ./build-and-deploy-all.sh doc-gen-agent
+#   ./build-and-deploy-all.sh openapi-gen-agent
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,7 +34,7 @@ if [[ -z "${MODEL_BASE_URL_SET}" || "${MODEL_BASE_URL_SET}" == REPLACE_WITH_* ]]
   echo ""
 fi
 
-COMPONENTS=("github-mcp-server" "doc-gen-agent")
+COMPONENTS=("github-mcp-server" "doc-gen-agent" "openapi-gen-agent")
 if [[ $# -gt 0 ]]; then
   COMPONENTS=("$@")
 fi
@@ -47,7 +49,11 @@ done
 
 echo ""
 echo "==> All requested components deployed."
-ROUTE_HOST=$(oc get route doc-gen-agent -n "${NAMESPACE}" -o jsonpath='https://{.spec.host}' 2>/dev/null || true)
-if [[ -n "${ROUTE_HOST}" ]]; then
-  echo "    Open the demo UI at: ${ROUTE_HOST}"
+DOC_ROUTE_HOST=$(oc get route doc-gen-agent -n "${NAMESPACE}" -o jsonpath='https://{.spec.host}' 2>/dev/null || true)
+if [[ -n "${DOC_ROUTE_HOST}" ]]; then
+  echo "    Doc-gen agent UI: ${DOC_ROUTE_HOST}"
+fi
+OPENAPI_ROUTE_HOST=$(oc get route openapi-gen-agent -n "${NAMESPACE}" -o jsonpath='https://{.spec.host}' 2>/dev/null || true)
+if [[ -n "${OPENAPI_ROUTE_HOST}" ]]; then
+  echo "    OpenAPI-gen agent UI: ${OPENAPI_ROUTE_HOST}"
 fi
