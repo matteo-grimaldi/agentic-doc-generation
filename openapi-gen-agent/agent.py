@@ -209,8 +209,32 @@ def detect_needs_openapi(repo_structure: dict) -> bool:
     return True
 
 
-_OPENAPI_YAML_BLOCK_RE = re.compile(r"```(?:ya?ml)?\s*\n(openapi\s*:\s*[\s\S]*?)\n```", re.IGNORECASE)
+_OPENAPI_YAML_BLOCK_RE = re.compile(r"```(?:ya?ml)?\s*\n([\s\S]*?)\n```", re.IGNORECASE)
+_OPENAPI_KEY_RE = re.compile(r"^\s*openapi\s*:", re.IGNORECASE | re.MULTILINE)
 _NOT_AN_API_RE = re.compile(r"^\s*NOT_AN_API\s*:", re.IGNORECASE)
+
+
+def _split_leading_comments(block: str) -> tuple[str, str]:
+    """
+    Split a YAML block into (leading_comments_or_narration, spec_from_openapi_key_onward).
+
+    The model sometimes prefixes the fenced ```yaml block with `# ...`
+    comment lines (or stray narration) before the actual `openapi:` key —
+    harmless for a human reading the chat, but previously fatal for PR
+    creation because extract_openapi_spec's regex required the block to
+    start with `openapi:` and silently returned "" otherwise (looking,
+    from the UI, like the "Propose as PR" button was broken). Keeping the
+    preamble out of the PR content (callers log it instead) while still
+    locating and returning the real spec fixes that without discarding
+    the information.
+
+    Returns ("", block) unchanged if no `openapi:` key is found at all —
+    callers decide how to handle that (e.g. the raw-YAML fallback below).
+    """
+    match = _OPENAPI_KEY_RE.search(block)
+    if not match:
+        return "", block
+    return block[: match.start()].strip(), block[match.start():].strip()
 
 
 def _response_as_dict(obj: object | None) -> dict:
@@ -582,6 +606,11 @@ def extract_openapi_spec(streamed: str) -> str:
     or "" if the agent bailed out with NOT_AN_API, hit an error, or
     produced no recognizable spec — callers (app.py) treat "" as "do not
     open a PR for this repo."
+
+    Any narration/comment lines the model places before the `openapi:`
+    key — inside the fenced block, or instead of a fence at all — are
+    logged, not included in the returned content, so they never end up
+    in the PR but stay visible for debugging (see _split_leading_comments).
     """
     text = streamed.strip()
     if not text:
@@ -591,9 +620,27 @@ def extract_openapi_spec(streamed: str) -> str:
         return ""
     match = _OPENAPI_YAML_BLOCK_RE.search(text)
     if match:
-        return match.group(1).strip() + "\n"
-    # Fallback: the model occasionally replies with raw YAML, no fence.
-    if re.match(r"^\s*openapi\s*:", text, re.IGNORECASE):
-        return text.strip() + "\n"
+        preamble, spec = _split_leading_comments(match.group(1).strip())
+        if preamble:
+            logger.info(
+                "extract_openapi_spec: dropped %d char(s) of preamble/comments before "
+                "'openapi:' inside the fenced block (kept out of the PR): %r",
+                len(preamble), preamble[:300],
+            )
+        if spec:
+            return spec + "\n"
+        logger.warning("extract_openapi_spec: fenced block had no 'openapi:' key found")
+        return ""
+    # Fallback: the model occasionally replies with raw YAML, no fence —
+    # possibly also preceded by comment lines.
+    preamble, spec = _split_leading_comments(text)
+    if spec:
+        if preamble:
+            logger.info(
+                "extract_openapi_spec: dropped %d char(s) of unfenced preamble/comments "
+                "before 'openapi:' (kept out of the PR): %r",
+                len(preamble), preamble[:300],
+            )
+        return spec + "\n"
     logger.warning("extract_openapi_spec: no recognizable OpenAPI YAML found in agent output")
     return ""
