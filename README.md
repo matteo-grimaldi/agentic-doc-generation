@@ -23,9 +23,12 @@ glass for architectural governance teams: a compliance dashboard that
 tracks, for every repo either agent has run against, whether it has an
 architecture document and/or an OpenAPI spec, surfaces violations, and
 lets a human trigger "Fix it" remediation (re-running the appropriate
-agent) with one click. It also embeds a read-only **Compliance MCP
-server**, so other AI agents can query the same compliance state. See
-[Governance dashboard](#governance-dashboard-governance-hub) below.
+agent) with one click. A fourth, independent component,
+**compliance-mcp-server**, is a standalone, read-only **Compliance MCP
+server** that lets other AI agents query that same compliance state — it
+holds no data of its own, proxying every query through governance-hub's
+REST API. See [Governance dashboard](#governance-dashboard-governance-hub)
+below.
 
 > **Looking for the original, fully in-cluster design?** The
 > [`local-model`](https://github.com/YOUR_ORG/agentic-doc-generation/tree/local-model)
@@ -55,7 +58,8 @@ flowchart TB
                 ApiOGX["OGX Sidecar\n:8321"]
             end
             GitHubMCP["GitHub MCP Server\n:8080"]
-            GovHub["Governance Hub\nDashboard + Compliance MCP\n:7860"]
+            GovHub["Governance Hub\nDashboard + REST API\n:7860"]
+            ComplianceMCP["Compliance MCP Server\n:8080"]
         end
     end
 
@@ -78,6 +82,7 @@ flowchart TB
     GovHub -->|"POST /invoke\n(Fix-it button)"| DocGradio
     GovHub -->|"POST /invoke\n(Fix-it button)"| ApiGradio
     GovHub -->|"GET /repo-structure\n(compliance check)"| GitHubMCP
+    ComplianceMCP -->|"GET /api/repos*\n(REST proxy)"| GovHub
     AppOfApps -->|deploys| GitHubMCP
     AppOfApps -->|deploys| demo_ns
 ```
@@ -149,9 +154,12 @@ This single command:
    sync-waves:
    - **Wave 0** — `doc-gen-demo` namespace + GitHub MCP server
    - **Wave 1** — doc-gen-agent, openapi-gen-agent (each its own Gradio UI
-     + OGX sidecar pod), and governance-hub (dashboard + Compliance MCP),
-     applied concurrently — all three depend only on wave 0's GitHub MCP
-     server Service DNS name
+     + OGX sidecar pod), governance-hub (dashboard + REST API), and
+     compliance-mcp-server (standalone Compliance MCP server), all
+     applied concurrently — each depends only on another wave 0/1
+     component's Service DNS name (compliance-mcp-server on
+     governance-hub's), and tolerates that dependency being briefly
+     unavailable at startup
 
 The script finishes by printing the ArgoCD UI route. Watch progress with:
 
@@ -171,13 +179,14 @@ Before (or right after) the agents come up, point them at your external
 model endpoint — see [Model configuration](#model-configuration) below
 (both agents share the same `cluster-config` ConfigMap).
 
-Once `doc-gen-agent`, `openapi-gen-agent`, and `governance-hub` are
-`Synced`/`Healthy`, get their routes:
+Once `doc-gen-agent`, `openapi-gen-agent`, `governance-hub`, and
+`compliance-mcp-server` are `Synced`/`Healthy`, get their routes:
 
 ```bash
 oc get route doc-gen-agent -n doc-gen-demo -o jsonpath='https://{.spec.host}{"\n"}'
 oc get route openapi-gen-agent -n doc-gen-demo -o jsonpath='https://{.spec.host}{"\n"}'
 oc get route governance-hub -n doc-gen-demo -o jsonpath='https://{.spec.host}{"\n"}'
+oc get route compliance-mcp-server -n doc-gen-demo -o jsonpath='https://{.spec.host}{"\n"}'
 ```
 
 ## Quick start (without GitOps)
@@ -197,6 +206,7 @@ Or deploy a single component:
 ./build-and-deploy-all.sh doc-gen-agent
 ./build-and-deploy-all.sh openapi-gen-agent
 ./build-and-deploy-all.sh governance-hub
+./build-and-deploy-all.sh compliance-mcp-server
 ```
 
 ## Demo walkthrough
@@ -268,10 +278,19 @@ freshly opened PR does **not** immediately flip a repo to "compliant": the
 Hub only trusts what's actually on the default branch, re-checked via
 `GET /repo-structure` after each reported run.
 
-**Compliance MCP server:** the Hub also exposes a read-only MCP server at
-`/mcp` (same `streamable-http` transport as `github-mcp-server`), so other
-AI agents — not just the two in this repo — can query compliance state
-programmatically instead of scraping the dashboard:
+**Compliance MCP server:** a separate, standalone component,
+[`compliance-mcp-server`](compliance-mcp-server/), exposes a read-only
+MCP server at `/mcp` (same `streamable-http` transport as
+`github-mcp-server`), so other AI agents — not just the two in this
+repo — can query compliance state programmatically instead of scraping
+the dashboard. It holds no data of its own: every tool is a thin proxy
+over governance-hub's REST API (`GET /api/repos`,
+`GET /api/repos/{owner}/{repo}/status`), configured via its
+`GOVERNANCE_HUB_URL` env var.
+
+```bash
+oc get route compliance-mcp-server -n doc-gen-demo -o jsonpath='https://{.spec.host}{"\n"}'
+```
 
 | Tool | Purpose |
 |------|---------|
@@ -280,9 +299,11 @@ programmatically instead of scraping the dashboard:
 | `list_tracked_repos()` | Every repo the Hub knows about, with its current status |
 | `get_repo_history(repo_url)` | Full run history (jobs, outcomes, PR links) for a repo |
 
-See [`governance-hub/app.py`](governance-hub/app.py) for the tool
-docstrings and [`governance-hub/compliance.py`](governance-hub/compliance.py)
-for the underlying check logic.
+See [`compliance-mcp-server/server.py`](compliance-mcp-server/server.py)
+for the tool docstrings, and
+[`governance-hub/compliance.py`](governance-hub/compliance.py) for the
+underlying compliance-check logic that feeds the REST API this server
+proxies.
 
 ## Model configuration
 
@@ -343,13 +364,17 @@ agentic-doc-generation/
 │   ├── ogx/stack_run_config.yaml        # OGX + external model config
 │   ├── build-and-deploy.sh
 │   └── k8s/
-├── governance-hub/                      # Compliance dashboard + embedded Compliance MCP server
-│   ├── app.py                           # FastAPI dashboard, REST API, POST /api/runs callback, MCP at /mcp
+├── governance-hub/                      # Compliance dashboard + REST API
+│   ├── app.py                           # FastAPI dashboard, REST API, POST /api/runs callback
 │   ├── models.py                        # SQLAlchemy models (TrackedRepo, AgentRun) — SQLite on a PVC
 │   ├── compliance.py                    # Compliance-check logic (GitHub MCP /repo-structure scan)
 │   ├── templates/, static/              # Server-rendered Jinja2 dashboard UI
 │   ├── build-and-deploy.sh
 │   └── k8s/                             # includes pvc.yaml for the SQLite database
+├── compliance-mcp-server/               # Standalone, read-only Compliance MCP server (independent)
+│   ├── server.py                        # FastMCP tools that proxy governance-hub's REST API, MCP at /mcp
+│   ├── build-and-deploy.sh
+│   └── k8s/
 ├── ci-cd-pipeline/                      # OpenShift Pipelines (Tekton) build/deploy demo
 │   ├── install-operator.sh              # One-time: installs the OpenShift Pipelines operator
 │   ├── build-and-deploy.sh

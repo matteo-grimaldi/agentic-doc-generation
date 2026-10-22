@@ -33,23 +33,32 @@ gitops/                 # ArgoCD App-of-Apps: bootstrap.sh is the entry point
 github-mcp-server/       # FastMCP server exposing GitHub repo browsing as MCP tools
 doc-gen-agent/           # OGX sidecar (agentic loop) + Gradio UI — architecture docs & diagrams
 openapi-gen-agent/       # OGX sidecar (agentic loop) + Gradio UI — OpenAPI spec generation (independent)
-governance-hub/          # FastAPI compliance dashboard + embedded Compliance MCP server
+governance-hub/          # FastAPI compliance dashboard + REST API
+compliance-mcp-server/   # Standalone, read-only Compliance MCP server (proxies governance-hub's REST API)
 build-and-deploy-all.sh  # Non-GitOps quick-start for the app components
 ```
 
 Each deployable component (`github-mcp-server/`, `doc-gen-agent/`,
-`openapi-gen-agent/`, `governance-hub/`) is self-contained: source,
-`Dockerfile`, `requirements.txt`, `build-and-deploy.sh`, and a `k8s/`
-directory with its manifests. `doc-gen-agent` and `openapi-gen-agent` are
-two separate agents, not two halves of one component — don't reintroduce
-cross-calls between them (e.g. one triggering the other's generation or
-budget) without the user explicitly asking for that coupling back.
-`governance-hub` is a third, independent component: it only *observes*
-both agents (via their optional `POST /api/runs` callback, controlled by
-each agent's `GOVERNANCE_HUB_URL` env var) and *triggers* them (via their
-existing `POST /invoke`, exactly like the CI/CD pipeline does) — it never
-reads either agent's internals, and neither agent depends on
-`governance-hub` being present or healthy.
+`openapi-gen-agent/`, `governance-hub/`, `compliance-mcp-server/`) is
+self-contained: source, `Dockerfile`, `requirements.txt`,
+`build-and-deploy.sh`, and a `k8s/` directory with its manifests.
+`doc-gen-agent` and `openapi-gen-agent` are two separate agents, not two
+halves of one component — don't reintroduce cross-calls between them
+(e.g. one triggering the other's generation or budget) without the user
+explicitly asking for that coupling back. `governance-hub` is a third,
+independent component: it only *observes* both agents (via their
+optional `POST /api/runs` callback, controlled by each agent's
+`GOVERNANCE_HUB_URL` env var) and *triggers* them (via their existing
+`POST /invoke`, exactly like the CI/CD pipeline does) — it never reads
+either agent's internals, and neither agent depends on `governance-hub`
+being present or healthy. `compliance-mcp-server` is a fourth,
+independent component: a standalone MCP server that lets other AI agents
+query governance-hub's compliance state. It holds no state and no
+database of its own — every tool it exposes is a thin read-only proxy
+over governance-hub's existing REST API (`GET /api/repos`,
+`GET /api/repos/{owner}/{repo}/status`). Don't give it direct database
+access (e.g. a shared PVC mount) — that would couple it to
+governance-hub's storage layer instead of its public API.
 
 ## Core conventions
 
@@ -62,10 +71,14 @@ reads either agent's internals, and neither agent depends on
   hardcode a real URL in a manifest — `gitops/bootstrap.sh` substitutes it
   at bootstrap time via `sed`.
 - **Sync-wave ordering matters.** `github-mcp-server` (wave 0) must land
-  before `doc-gen-agent`, `openapi-gen-agent`, and `governance-hub` (all
-  three wave 1, applied concurrently), because of the Service DNS
-  dependency. Preserve the `argocd.argoproj.io/sync-wave` annotations when
-  adding resources.
+  before `doc-gen-agent`, `openapi-gen-agent`, `governance-hub`, and
+  `compliance-mcp-server` (all four wave 1, applied concurrently), because
+  of the Service DNS dependency. `compliance-mcp-server` depends on
+  `governance-hub`'s Service DNS name too but stays wave 1 rather than a
+  stricter wave 2 — it tolerates governance-hub being briefly unavailable
+  (each tool returns an `"error"` key until reachable), the same tolerance
+  governance-hub itself has for the two agents. Preserve the
+  `argocd.argoproj.io/sync-wave` annotations when adding resources.
 - **ConfigMaps generated from files are not committed as inline YAML.**
   `ogx-stack-config` and `agent-knowledge` (per component) are created by
   each component's `build-and-deploy.sh` via
@@ -101,8 +114,8 @@ reads either agent's internals, and neither agent depends on
   `doc-gen-agent/agent.py`, `doc-gen-agent/app.py`,
   `openapi-gen-agent/agent.py`, `openapi-gen-agent/app.py`,
   `governance-hub/app.py`, `governance-hub/models.py`,
-  `governance-hub/compliance.py`): run `python3 -m py_compile <file>`
-  after edits; there is no test suite yet.
+  `governance-hub/compliance.py`, `compliance-mcp-server/server.py`): run
+  `python3 -m py_compile <file>` after edits; there is no test suite yet.
 - **YAML manifests**: validate with
   `python3 -c "import yaml,sys; yaml.safe_load_all(open(sys.argv[1]))" <file>`
   (or run it across all files with glob) before committing — this repo has

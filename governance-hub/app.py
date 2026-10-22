@@ -1,7 +1,6 @@
 """
 Governance Hub -- single-pane-of-glass compliance dashboard for
-architectural governance teams, plus an embedded Compliance MCP server so
-other AI agents can query the same compliance state programmatically.
+architectural governance teams.
 
 Repos are discovered purely by agent activity: a repo first appears here
 the moment doc-gen-agent or openapi-gen-agent reports a completed run
@@ -14,14 +13,16 @@ spec") is checked on demand via the GitHub MCP server's zero-LLM-cost
 GET /repo-structure route (see compliance.py) -- never by invoking either
 agent's model.
 
-This process serves three things on one port (GOVERNANCE_PORT, default
+This process serves two things on one port (GOVERNANCE_PORT, default
 7860):
     - A server-rendered (Jinja2) dashboard UI at "/"
     - A plain REST API under "/api/*" for both the UI's own forms and any
       external scripting (CI/CD, other tooling)
-    - A read-only Compliance MCP server mounted at "/mcp", for other AI
-      agents to ask "is repo X compliant?" and act on the answer (see the
-      @mcp.tool() functions below)
+
+Other AI agents that want to query this compliance state programmatically
+should use the separate compliance-mcp-server component, which proxies
+read-only MCP tool calls through this process's REST API above -- it does
+NOT talk to this process's database directly.
 """
 from __future__ import annotations
 
@@ -35,7 +36,6 @@ from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastmcp import FastMCP
 from pydantic import BaseModel
 
 import compliance
@@ -152,112 +152,14 @@ async def _remediate(tracked_repo_id: int, repo_url: str, agent_type: str) -> di
     return {"job_id": job_id}
 
 
-# ── Compliance MCP server (read-only tools for other AI agents) ────────────
+# ── FastAPI app ─────────────────────────────────────────────────────────
+#
+# init_db() runs eagerly below, at import time, rather than in an
+# @app.on_event("startup") handler, simply to keep startup ordering
+# obvious and match this file's style elsewhere -- no custom `lifespan=`
+# is set here, so on_event handlers would work fine too if ever added.
 
-mcp = FastMCP("governance-compliance")
-
-
-@mcp.tool()
-async def get_compliance_status(repo_url: str) -> dict:
-    """
-    Report whether a specific repository is compliant with this org's
-    documentation governance policy: does it have an architecture
-    document, and (if applicable) an OpenAPI specification.
-
-    Call this before deciding whether a repo needs remediation. If the
-    repo has never been tracked by the Governance Hub (no agent has run
-    against it yet), `tracked` is false and all compliance fields are
-    null -- that is NOT the same as "non-compliant".
-
-    Args:
-        repo_url: A GitHub URL, e.g. "https://github.com/owner/repo".
-    """
-    session = get_session()
-    try:
-        try:
-            owner, repo = compliance.parse_repo_url(repo_url)
-        except ValueError as exc:
-            return {"error": str(exc)}
-        tracked = session.query(TrackedRepo).filter_by(owner=owner, repo=repo).one_or_none()
-        if tracked is None:
-            return {"repo_url": repo_url, "tracked": False}
-        result = _repo_to_dict(tracked)
-        result["tracked"] = True
-        return result
-    finally:
-        session.close()
-
-
-@mcp.tool()
-async def list_violations() -> dict:
-    """
-    List every tracked repository that currently has at least one
-    compliance violation (missing architecture document, or -- for repos
-    openapi-gen-agent has confirmed need one -- a missing OpenAPI spec).
-
-    Use this to get a governance team's current worklist without having to
-    call get_compliance_status for every repo individually.
-    """
-    session = get_session()
-    try:
-        repos = session.query(TrackedRepo).all()
-        violators = [_repo_to_dict(r) for r in repos if r.violations]
-        return {"total": len(violators), "repos": violators}
-    finally:
-        session.close()
-
-
-@mcp.tool()
-async def list_tracked_repos() -> dict:
-    """
-    List every repository currently tracked by the Governance Hub, with
-    its current compliance status. A repo appears here once an agent
-    (doc-gen-agent or openapi-gen-agent) has run against it at least once.
-    """
-    session = get_session()
-    try:
-        repos = session.query(TrackedRepo).all()
-        return {"total": len(repos), "repos": [_repo_to_dict(r) for r in repos]}
-    finally:
-        session.close()
-
-
-@mcp.tool()
-async def get_repo_history(repo_url: str) -> dict:
-    """
-    Return the full history of doc-gen-agent / openapi-gen-agent runs
-    recorded for a given repository, most recent first, including any
-    resulting pull request URLs.
-
-    Args:
-        repo_url: A GitHub URL, e.g. "https://github.com/owner/repo".
-    """
-    session = get_session()
-    try:
-        try:
-            owner, repo = compliance.parse_repo_url(repo_url)
-        except ValueError as exc:
-            return {"error": str(exc)}
-        tracked = session.query(TrackedRepo).filter_by(owner=owner, repo=repo).one_or_none()
-        if tracked is None:
-            return {"repo_url": repo_url, "tracked": False, "runs": []}
-        return {"repo_url": repo_url, "tracked": True, "runs": [_run_to_dict(r) for r in tracked.runs]}
-    finally:
-        session.close()
-
-
-# http_app() returns a mountable Starlette ASGI app; its lifespan must be
-# wired into the parent FastAPI app (below) so the MCP session manager
-# actually starts up -- same pattern FastMCP recommends for "mounting a
-# FastMCP server within a FastAPI app". NOTE: passing a custom `lifespan=`
-# to FastAPI replaces its default lifespan implementation entirely, which
-# is what @app.on_event("startup")/"shutdown" handlers are normally wired
-# through -- those handlers silently never fire once `lifespan=` is set.
-# So init_db() runs eagerly below, at import time, instead of in an
-# on_event handler.
-mcp_app = mcp.http_app(path="/mcp")
-
-app = FastAPI(title="Governance Hub", lifespan=mcp_app.lifespan)
+app = FastAPI(title="Governance Hub")
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 
 init_db()
@@ -477,13 +379,6 @@ async def api_repo_remediate(owner: str, repo: str, body: RemediateRequest) -> d
     if "error" in result:
         raise HTTPException(status_code=502, detail=result["error"])
     return {"status": "accepted", **result}
-
-
-# Mounted last so explicit routes above (including /static) are matched
-# first -- Starlette tries routes in registration order, and a Mount at
-# "/" would otherwise shadow everything after it (same reasoning as
-# gr.mount_gradio_app(fastapi_app, demo, path="/") in doc-gen-agent/app.py).
-app.mount("/", mcp_app)
 
 
 if __name__ == "__main__":

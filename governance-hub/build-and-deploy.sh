@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 #
-# Build and deploy the Governance Hub (compliance dashboard + embedded
-# Compliance MCP server) directly with `oc` (no GitOps). Useful for local
-# iteration; the GitOps path (gitops/bootstrap.sh) is the recommended way
-# to deploy the full demo.
+# Build and deploy the Governance Hub (compliance dashboard + REST API)
+# directly with `oc` (no GitOps). The standalone Compliance MCP server is
+# a separate component — see ../compliance-mcp-server/build-and-deploy.sh.
+# Useful for local iteration; the GitOps path (gitops/bootstrap.sh) is the
+# recommended way to deploy the full demo.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,5 +44,5 @@ ROUTE_HOST=$(oc get route governance-hub -n "${NAMESPACE}" -o jsonpath='https://
 echo "==> Done. governance-hub is running in namespace ${NAMESPACE}."
 if [[ -n "${ROUTE_HOST}" ]]; then
   echo "    Dashboard UI: ${ROUTE_HOST}"
-  echo "    Compliance MCP endpoint: ${ROUTE_HOST}/mcp"
+  echo "    REST API: ${ROUTE_HOST}/api/repos"
 fi
