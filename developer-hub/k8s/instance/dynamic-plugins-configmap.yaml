@@ -1,0 +1,99 @@
+# RHDH 1.10 dynamic plugins configuration.
+# Adapted from rhoai3-coding-demo:
+#   - Removed: GitLab catalog/scaffolder modules (no GitLab in this stack)
+#   - Kept: Kubernetes, topology, ArgoCD (OCI-digest-pinned), Tekton (OCI-digest-pinned), RBAC
+#   - Telemetry to Red Hat (Segment) is disabled.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dynamic-plugins-rhdh
+  namespace: rhdh
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+data:
+  dynamic-plugins.yaml: |
+    includes:
+      - dynamic-plugins.default.yaml
+    plugins:
+      # Telemetry to Red Hat (Segment) is on by default; disable for the demo.
+      - package: ./dynamic-plugins/dist/backstage-community-plugin-analytics-provider-segment
+        disabled: true
+
+      # RBAC management UI
+      - package: ./dynamic-plugins/dist/backstage-community-plugin-rbac
+        disabled: false
+
+      # Kubernetes plugin — backend + frontend for pod/deployment/route views
+      - package: ./dynamic-plugins/dist/backstage-plugin-kubernetes-backend-dynamic
+        disabled: false
+      - package: ./dynamic-plugins/dist/backstage-plugin-kubernetes
+        disabled: false
+
+      # Topology view (visual workload graph per component)
+      - package: ./dynamic-plugins/dist/backstage-community-plugin-topology
+        disabled: false
+
+      # Tekton CI tab — OCI-digest-pinned community plugin
+      - package: oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/backstage-community-plugin-tekton@sha256:a26ed788824fbd29e65b02f956dad8f35275a8ccd1110b23fc17957104d38a01
+        disabled: false
+        pluginConfig:
+          dynamicPlugins:
+            frontend:
+              backstage-community.plugin-tekton:
+                translationResources:
+                  - importName: tektonTranslations
+                    ref: tektonTranslationRef
+                mountPoints:
+                  - mountPoint: entity.page.ci/cards
+                    importName: TektonCI
+                    config:
+                      layout:
+                        gridColumn: 1 / -1
+                      if:
+                        allOf:
+                          - isTektonCIAvailable
+
+      # ArgoCD CD tab — OCI-digest-pinned community backend + frontend
+      - package: oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/backstage-community-plugin-argocd-backend@sha256:de3a311dafb2a853354f30434451fc04c56b5ee53f085f38471410c695f16e46
+        disabled: false
+      - package: oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/backstage-community-plugin-argocd@sha256:a359632458c901e6b22019b161c45ec3d45398f74ad0c4dccfdf46974b9152a7
+        disabled: false
+        pluginConfig:
+          dynamicPlugins:
+            frontend:
+              backstage-community.plugin-argocd:
+                mountPoints:
+                  - mountPoint: entity.page.overview/cards
+                    importName: ArgocdDeploymentSummary
+                    config:
+                      layout:
+                        gridColumnEnd:
+                          lg: span 8
+                          xs: span 12
+                      if:
+                        allOf:
+                          - isArgocdConfigured
+                  - mountPoint: entity.page.cd/cards
+                    importName: ArgocdDeploymentLifecycle
+                    config:
+                      layout:
+                        gridColumn: 1 / -1
+                      if:
+                        allOf:
+                          - isArgocdConfigured
+
+      # Governance Hub — custom plugin embedding the governance-hub service.
+      # Visible only to members of role:default/architects (see rbac-policy.yaml).
+      # Source: governance-hub-plugin/ — build with build-and-push.sh.
+      - package: oci://quay.io/mcombi/rhdh-gov-hub:latest
+        disabled: false
+        pluginConfig:
+          dynamicPlugins:
+            frontend:
+              mcombi.backstage-plugin-governance-hub:
+                dynamicRoutes:
+                  - path: /governance-hub
+                    importName: GovHubPage
+                    menuItem:
+                      icon: security
+                      text: Governance Hub

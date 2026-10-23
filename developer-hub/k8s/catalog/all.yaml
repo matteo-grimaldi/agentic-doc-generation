@@ -1,0 +1,197 @@
+---
+# Users — must match the Keycloak usernames created by configure-rhdh Job
+# so RHDH's preferredUsernameMatchingUserEntityName sign-in resolver works.
+apiVersion: backstage.io/v1alpha1
+kind: User
+metadata:
+  name: admin
+  description: Platform administrator
+spec:
+  memberOf: [demo-team]
+---
+apiVersion: backstage.io/v1alpha1
+kind: User
+metadata:
+  name: developer
+  description: Application developer
+spec:
+  memberOf: [demo-team]
+---
+apiVersion: backstage.io/v1alpha1
+kind: User
+metadata:
+  name: architect
+  description: Platform architect — member of the architects group, has Governance Hub access
+spec:
+  memberOf: [architects]
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: demo-team
+  description: Agentic doc generation demo team
+spec:
+  type: team
+  children: []
+---
+# Architects group — members have access to the Governance Hub plugin.
+# RBAC: role:default/architects grants governance-hub.view permission (rbac-policy.yaml).
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: architects
+  description: Platform architects with access to the Governance Hub
+spec:
+  type: team
+  children: []
+  members:
+    - architect
+---
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: agentic-doc-generation
+  description: AI-powered documentation generation system using OGX agents and a shared GitHub MCP server.
+  tags:
+    - ai
+    - documentation
+    - agents
+    - openshift
+spec:
+  owner: demo-team
+---
+# GitHub MCP server — provides repository browsing tools to both AI agents.
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: github-mcp-server
+  title: GitHub MCP Server
+  description: |
+    FastMCP server that exposes GitHub repository browsing as MCP tools:
+    get_repo_info, get_repo_structure, read_file, search_code, and propose-doc.
+    Used by both doc-gen-agent and openapi-gen-agent as their code exploration backend.
+  annotations:
+    backstage.io/source-location: url:https://github.com/matteo-grimaldi/agentic-doc-generation/tree/main/github-mcp-server
+    backstage.io/kubernetes-id: github-mcp-server
+    argocd/app-name: github-mcp-server
+  tags:
+    - python
+    - mcp
+    - fastmcp
+    - github
+spec:
+  type: service
+  lifecycle: production
+  owner: demo-team
+  system: agentic-doc-generation
+  providesApis:
+    - github-mcp-api
+---
+# Doc gen agent — generates architecture documentation with Mermaid C4 diagrams.
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: doc-gen-agent
+  title: Documentation Generation Agent
+  description: |
+    OGX agentic loop + Gradio UI that generates architecture documentation
+    (with Mermaid C4 diagrams) for a given GitHub repository.
+    Calls the GitHub MCP server for code exploration and an external
+    OpenAI-compatible LLM endpoint via the OGX sidecar.
+  annotations:
+    backstage.io/source-location: url:https://github.com/matteo-grimaldi/agentic-doc-generation/tree/main/doc-gen-agent
+    backstage.io/kubernetes-id: doc-gen-agent
+    argocd/app-name: doc-gen-agent
+  tags:
+    - python
+    - gradio
+    - ogx
+    - ai
+    - documentation
+spec:
+  type: service
+  lifecycle: production
+  owner: demo-team
+  system: agentic-doc-generation
+  consumesApis:
+    - github-mcp-api
+---
+# OpenAPI gen agent — generates OpenAPI 3.0 specifications for HTTP API repositories.
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: openapi-gen-agent
+  title: OpenAPI Generation Agent
+  description: |
+    OGX agentic loop + Gradio UI that generates OpenAPI 3.0 specifications
+    for repositories that look like HTTP API services.
+    Independent of doc-gen-agent — separate pod, UI, and ArgoCD Application.
+  annotations:
+    backstage.io/source-location: url:https://github.com/matteo-grimaldi/agentic-doc-generation/tree/main/openapi-gen-agent
+    backstage.io/kubernetes-id: openapi-gen-agent
+    argocd/app-name: openapi-gen-agent
+  tags:
+    - python
+    - gradio
+    - ogx
+    - ai
+    - openapi
+spec:
+  type: service
+  lifecycle: production
+  owner: demo-team
+  system: agentic-doc-generation
+  consumesApis:
+    - github-mcp-api
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: github-mcp-api
+  title: GitHub MCP API
+  description: |
+    MCP (Model Context Protocol) tools exposed by the GitHub MCP server.
+    Tools: get_repo_info, get_repo_structure, read_file, search_code.
+    HTTP endpoint: POST /propose-doc (triggers async doc generation).
+  tags:
+    - mcp
+    - github
+    - rest
+spec:
+  type: openapi
+  lifecycle: production
+  owner: demo-team
+  system: agentic-doc-generation
+  definition: |
+    openapi: "3.0.0"
+    info:
+      title: GitHub MCP Server API
+      version: "1.0"
+      description: |
+        HTTP surface of the GitHub MCP server. The MCP tools themselves are
+        accessed over the MCP protocol at /mcp; this OpenAPI spec covers the
+        REST endpoint used by the CI/CD pipeline.
+    paths:
+      /propose-doc:
+        post:
+          summary: Trigger async documentation generation for a repository
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    repo:
+                      type: string
+                      description: GitHub repo in owner/name format
+                  required: [repo]
+          responses:
+            '202':
+              description: Generation accepted (async)
+      /health:
+        get:
+          summary: Health check
+          responses:
+            '200':
+              description: Server is healthy

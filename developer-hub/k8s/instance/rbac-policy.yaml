@@ -1,0 +1,45 @@
+# RHDH RBAC policy — CSV format consumed by the backstage-community-plugin-rbac.
+# admin has full access to all plugins.
+# developer has read-only access to catalog, can use scaffolder templates,
+# and can view Kubernetes/ArgoCD data for their components.
+# Ref: https://docs.redhat.com/en/documentation/red_hat_developer_hub/1.10/html/authorization/
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rhdh-rbac-policies
+  namespace: rhdh
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+data:
+  rbac-policies.csv: |
+    # ── developer role ─────────────────────────────────────────────────────
+    p, role:default/developer, catalog-entity, read, allow
+    p, role:default/developer, catalog.entity.read, read, allow
+    p, role:default/developer, catalog.entity.create, create, deny
+    p, role:default/developer, catalog.entity.delete, delete, deny
+    p, role:default/developer, catalog.location.read, read, allow
+    p, role:default/developer, catalog.location.create, create, deny
+    p, role:default/developer, catalog.location.delete, delete, deny
+    p, role:default/developer, scaffolder-template, read, allow
+    p, role:default/developer, scaffolder-template, use, allow
+    p, role:default/developer, scaffolder-action, use, allow
+    p, role:default/developer, kubernetes.proxy, use, allow
+    p, role:default/developer, argocd.application.get, read, allow
+    # Governance Hub is restricted to architects — deny developer role explicitly
+    p, role:default/developer, governance-hub.view, read, deny
+
+    # ── architects role ─────────────────────────────────────────────────────
+    # Architects inherit developer permissions and additionally get Governance Hub access.
+    p, role:default/architects, catalog-entity, read, allow
+    p, role:default/architects, catalog.entity.read, read, allow
+    p, role:default/architects, catalog.location.read, read, allow
+    p, role:default/architects, scaffolder-template, read, allow
+    p, role:default/architects, scaffolder-template, use, allow
+    p, role:default/architects, scaffolder-action, use, allow
+    p, role:default/architects, kubernetes.proxy, use, allow
+    p, role:default/architects, argocd.application.get, read, allow
+    p, role:default/architects, governance-hub.view, read, allow
+
+    # ── User → role assignments ─────────────────────────────────────────────
+    g, user:default/developer, role:default/developer
+    g, user:default/architect, role:default/architects

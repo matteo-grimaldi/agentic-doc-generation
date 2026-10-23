@@ -1,0 +1,86 @@
+# Approve the RHDH InstallPlan for exactly rhdh-operator.v1.10.6.
+# The Subscription above uses Manual approval; this Job watches for the
+# pending InstallPlan and approves it only when it installs the pinned CSV.
+# Converted from rhoai3-coding-demo Kustomize to plain YAML.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: approve-installplan-rhdh
+  namespace: rhdh-operator
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: approve-installplan-rhdh
+  namespace: rhdh-operator
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+rules:
+  - apiGroups: [operators.coreos.com]
+    resources: [installplans]
+    verbs: [get, list, patch, update]
+  - apiGroups: [operators.coreos.com]
+    resources: [subscriptions]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: approve-installplan-rhdh
+  namespace: rhdh-operator
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+subjects:
+  - kind: ServiceAccount
+    name: approve-installplan-rhdh
+    namespace: rhdh-operator
+roleRef:
+  kind: Role
+  name: approve-installplan-rhdh
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: approve-installplan-rhdh
+  namespace: rhdh-operator
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  backoffLimit: 10
+  activeDeadlineSeconds: 900
+  template:
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: approve-installplan-rhdh
+      containers:
+        - name: approve
+          image: registry.redhat.io/openshift4/ose-cli@sha256:69762925e16053d77685ff3a08b3b45dd2bfa5d68277851bc6969b368bbd0cb9
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              ALLOWED_CSV="rhdh-operator.v1.10.6"
+              NAMESPACE="rhdh-operator"
+              echo "Waiting for InstallPlan for ${ALLOWED_CSV}..."
+              for i in {1..60}; do
+                IP=$(oc get installplan -n "${NAMESPACE}" -o json 2>/dev/null \
+                  | python3 -c "import sys,json,os; d=json.load(sys.stdin); csv=os.environ.get('ALLOWED_CSV',''); [print(ip['metadata']['name']) for ip in d.get('items',[]) if csv in ip.get('spec',{}).get('clusterServiceVersionNames',[]) and ip.get('status',{}).get('phase','')=='RequiresApproval']" 2>/dev/null || true)
+                if [[ -n "${IP}" ]]; then
+                  echo "Approving InstallPlan ${IP} for ${ALLOWED_CSV}..."
+                  oc patch installplan "${IP}" -n "${NAMESPACE}" \
+                    --type=merge -p '{"spec":{"approved":true}}'
+                  echo "InstallPlan approved."
+                  exit 0
+                fi
+                echo "  Waiting... (${i}/60)"
+                sleep 10
+              done
+              echo "ERROR: InstallPlan for ${ALLOWED_CSV} not found within timeout"
+              exit 1

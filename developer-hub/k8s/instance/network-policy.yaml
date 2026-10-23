@@ -1,0 +1,18 @@
+# Allow inbound traffic to RHDH from the OpenShift router (Route access) and
+# from within the cluster (plugins calling the Backstage backend).
+# The RHDH operator manages the Deployment in the rhdh namespace; the Route
+# is created automatically and terminates at the router, so traffic enters
+# from the hostNetwork (router pods run in openshift-ingress).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: platform-ingress
+  namespace: rhdh
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  podSelector: {}
+  ingress:
+    - {}
+  policyTypes:
+    - Ingress

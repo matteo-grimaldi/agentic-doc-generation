@@ -1,0 +1,217 @@
+# RHDH app-config — environment variable substitution for cluster-specific values.
+# The configure-rhdh Sync hook (wave 18) patches rhdh-secrets with real URLs;
+# the Backstage CR injects them as env vars via extraEnvs.secrets.
+# Adapted from rhoai3-coding-demo for the agentic-doc-generation context:
+#   - Auth: OIDC via RHBK (realm: platform, client: rhdh)
+#   - No GitLab integration — GitHub via the github-mcp-server component
+#   - App launcher tiles: doc-gen-agent and openapi-gen-agent
+#   - Catalog: static file (all.yaml in this repo)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config-rhdh
+  namespace: rhdh
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+data:
+  app-config-rhdh.yaml: |
+    app:
+      title: "Agentic Doc Generation Portal"
+      baseUrl: ${RHDH_BASE_URL}
+    backend:
+      baseUrl: ${RHDH_BASE_URL}
+      cors:
+        origin: ${RHDH_BASE_URL}
+      # Allow the governance-hub iframe (and other agent UIs on the same
+      # cluster apps domain) to load inside RHDH pages. Without this,
+      # Backstage's default helmet CSP (default-src 'self') blocks all
+      # cross-origin iframes, causing Chrome to show
+      # "This content is blocked. Contact the site owner to fix the issue."
+      csp:
+        frame-src:
+          - "'self'"
+          - "${GOVERNANCE_HUB_URL}"
+      reading:
+        allow:
+          - host: raw.githubusercontent.com
+          - host: github.com
+
+    auth:
+      environment: production
+      session:
+        secret: ${SESSION_SECRET}
+      providers:
+        oidc:
+          production:
+            metadataUrl: ${RHBK_METADATA_URL}
+            clientId: rhdh
+            clientSecret: ${RHDH_OIDC_CLIENT_SECRET}
+            prompt: auto
+            signIn:
+              resolvers:
+                - resolver: preferredUsernameMatchingUserEntityName
+
+    signInPage: oidc
+
+    permission:
+      enabled: true
+      rbac:
+        admin:
+          users:
+            - name: user:default/admin
+        pluginsWithPermission: [catalog, scaffolder, permission, kubernetes, argocd, governance-hub]
+        policies-csv-file: /opt/app-root/src/rbac/rbac-policies.csv
+
+    kubernetes:
+      serviceLocatorMethod:
+        type: multiTenant
+      clusterLocatorMethods:
+        - type: config
+          clusters:
+            - name: local-cluster
+              url: https://kubernetes.default.svc
+              authProvider: serviceAccount
+              caFile: /opt/app-root/src/k8s-ca/ca.crt
+              serviceAccountToken: ${RHDH_KUBERNETES_SA_TOKEN}
+              customResources:
+                - group: tekton.dev
+                  apiVersion: v1
+                  plural: pipelineruns
+                - group: tekton.dev
+                  apiVersion: v1
+                  plural: taskruns
+                - group: route.openshift.io
+                  apiVersion: v1
+                  plural: routes
+
+    argocd:
+      appLocatorMethods:
+        - type: config
+          instances:
+            - name: main
+              url: ${RHDH_ARGOCD_URL}
+              token: ${RHDH_ARGOCD_TOKEN}
+
+    catalog:
+      orphanStrategy: delete
+      rules:
+        - allow: [Component, System, API, Resource, Location, User, Group, Domain]
+      locations:
+        - type: file
+          target: /opt/app-root/src/catalog/all.yaml
+          rules:
+            - allow: [Component, System, API, Resource, Location, Template, User, Group, Domain]
+
+    techdocs:
+      builder: local
+      generator:
+        runIn: local
+      publisher:
+        type: local
+
+    # Governance Hub plugin configuration.
+    # The URL is discovered from the governance-hub Route in doc-gen-demo by
+    # the configure-rhdh Job and injected via the GOVERNANCE_HUB_URL env var.
+    govHub:
+      url: ${GOVERNANCE_HUB_URL}
+
+    dynamicPlugins:
+      frontend:
+        red-hat-developer-hub.backstage-plugin-global-header:
+          mountPoints:
+            - mountPoint: application/header
+              importName: GlobalHeader
+              config:
+                position: above-sidebar
+            - mountPoint: global.header/component
+              importName: CompanyLogo
+              config:
+                priority: 200
+                props:
+                  to: /
+            - mountPoint: global.header/component
+              importName: SearchComponent
+              config:
+                priority: 100
+            - mountPoint: global.header/component
+              importName: Spacer
+              config:
+                priority: 99
+                props:
+                  growFactor: 0
+            - mountPoint: global.header/component
+              importName: HeaderIconButton
+              config:
+                priority: 90
+                props:
+                  icon: add
+                  title: Self-service
+                  titleKey: create.title
+                  to: create
+            - mountPoint: global.header/component
+              importName: StarredDropdown
+              config:
+                priority: 85
+            - mountPoint: global.header/component
+              importName: ApplicationLauncherDropdown
+              config:
+                priority: 82
+            - mountPoint: global.header/application-launcher
+              importName: MenuItemLink
+              config:
+                priority: 100
+                section: AI Agents
+                props:
+                  icon: developerHub
+                  title: Doc Gen Agent
+                  link: ${DOC_GEN_AGENT_URL}
+            - mountPoint: global.header/application-launcher
+              importName: MenuItemLink
+              config:
+                priority: 90
+                section: AI Agents
+                props:
+                  icon: developerHub
+                  title: OpenAPI Gen Agent
+                  link: ${OPENAPI_GEN_AGENT_URL}
+            - mountPoint: global.header/application-launcher
+              importName: MenuItemLink
+              config:
+                priority: 50
+                section: Documentation
+                props:
+                  icon: developerHub
+                  link: https://docs.redhat.com/en/documentation/red_hat_developer_hub
+                  title: Developer Hub Docs
+            - mountPoint: global.header/component
+              importName: HelpDropdown
+              config:
+                priority: 80
+            - mountPoint: global.header/help
+              importName: SupportButton
+              config:
+                priority: 10
+            - mountPoint: global.header/component
+              importName: NotificationButton
+              config:
+                priority: 70
+            - mountPoint: global.header/component
+              importName: Divider
+              config:
+                priority: 50
+            - mountPoint: global.header/component
+              importName: ProfileDropdown
+              config:
+                priority: 10
+            - mountPoint: global.header/profile
+              importName: MenuItemLink
+              config:
+                priority: 100
+                props:
+                  icon: manageAccounts
+                  link: /settings
+                  title: Settings
+            - mountPoint: global.header/profile
+              importName: LogoutButton
+              config:
+                priority: 10
