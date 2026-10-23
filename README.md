@@ -385,6 +385,7 @@ agentic-doc-generation/
 ├── install-openshift-ai.sh              # One-time: installs OpenShift AI (AI Hub, AI Studio, MLFlow)
 ├── generate-mcp-catalog-source.sh       # Regenerates mcp-catalog-source.yaml from every */mcp-catalog.yaml
 ├── register-mcp-catalog.sh              # Registers every */mcp-catalog-entry.yaml in the Gen AI Playground
+├── reload-mcp-catalog.sh                # Restarts model-catalog so AI Hub picks up a new/edited source
 ├── mcp-catalog-source.yaml              # GENERATED — import into the AI Hub MCP Catalog
 └── README.md
 ```
@@ -478,6 +479,17 @@ component — no need to touch either script when a new one is added:
    concatenating every `*/mcp-catalog.yaml` fragment in the repo into one
    `mcp_servers:` list, matching the format OpenShift AI's catalog import
    expects.
+
+   **Important:** after adding or editing a source this way (including
+   re-uploading it with a new/changed server), the AI Hub MCP Catalog
+   page won't show the change until the `model-catalog` backend pod
+   restarts — it only parses catalog source content once, at pod
+   startup (the "MCP catalog sources" *settings* page itself updates
+   live; the actual browsable *catalog* doesn't). Force it with:
+
+   ```bash
+   ./reload-mcp-catalog.sh
+   ```
 
 2. **Gen AI Playground tool list** — run, with `oc` access to the
    cluster:

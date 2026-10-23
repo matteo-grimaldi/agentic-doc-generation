@@ -1,0 +1,18 @@
+# MCP catalog entry for this repo's Compliance MCP server, consumed by
+# ../register-mcp-catalog.sh (repo root — loops over every component's
+# own fragment; NOT invoked by build-and-deploy.sh / ArgoCD).
+#
+# See github-mcp-server/mcp-catalog-entry.yaml for the full explanation
+# of the shared gen-ai-aa-mcp-servers ConfigMap and why this file is
+# deliberately kept out of compliance-mcp-server/k8s/ (ArgoCD-managed,
+# prune: true) — the short version: it's a JSON Merge Patch fragment
+# that only ever adds/updates this one ConfigMap key, never anyone
+# else's.
+#
+# The key below must be unique cluster-wide and is case-sensitive.
+data:
+  Agentic-Doc-Generation-Compliance-MCP-Server: |
+    {
+      "url": "http://compliance-mcp-server.doc-gen-demo.svc.cluster.local:8080/mcp",
+      "description": "The agentic-doc-generation demo's Compliance MCP server. Read-only proxy over the Governance Hub's REST API: get_compliance_status (is this repo compliant, what's missing), list_violations (every tracked repo with a missing artifact), list_tracked_repos (every repo the Hub knows about), and get_repo_history (full doc-gen-agent/openapi-gen-agent run history for a repo, including PR links). Holds no state of its own."
+    }
