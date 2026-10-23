@@ -34,6 +34,7 @@ import uuid
 from datetime import datetime, timezone
 
 import httpx
+import markdown as markdown_lib
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -84,6 +85,21 @@ def _report_has_violations(report_text: str | None) -> bool | None:
     return bool(_REPORT_FAIL_ROW_RE.search(report_text))
 
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
+
+
+def _render_markdown(text: str | None) -> str:
+    """Jinja filter: renders compliance-scan-agent's Markdown report (plain
+    text, incl. a `Category | Check | Status | Severity | Details` table --
+    see compliance-scan-agent/agent.py's _build_system_prompt) to HTML for
+    display on the repo detail page, instead of dumping raw Markdown
+    syntax into a <pre> block. `tables`/`fenced_code` are the only
+    extensions enabled since that's all the report format ever uses."""
+    if not text:
+        return ""
+    return markdown_lib.markdown(text, extensions=["tables", "fenced_code"])
+
+
+templates.env.filters["markdown"] = _render_markdown
 
 
 # ── Serialization helpers ───────────────────────────────────────────────────

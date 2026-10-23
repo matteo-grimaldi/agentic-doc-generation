@@ -75,7 +75,7 @@
       <p class="gh-muted">
         From run started {{ latest_compliance_run.started_at.strftime('%Y-%m-%d %H:%M UTC') if latest_compliance_run.started_at else '—' }}
       </p>
-      <pre class="gh-report">{{ latest_compliance_run.report_text }}</pre>
+      <div class="gh-report">{{ latest_compliance_run.report_text | markdown | safe }}</div>
     </details>
   {% endif %}
 
