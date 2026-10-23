@@ -20,6 +20,55 @@
 source: agentic-doc-generation MCP servers
 
 mcp_servers:
+  # AI Hub MCP Catalog entry fragment for compliance-mcp-server.
+  #
+  # Consumed by ../generate-mcp-catalog-source.sh (repo root), which
+  # concatenates every component's own mcp-catalog.yaml fragment into one
+  # `mcp_servers:` list under the repo-root mcp-catalog-source.yaml — the
+  # file you actually import via Settings > MCP resources > MCP catalog
+  # sources > Add a source in the OpenShift AI dashboard. Don't hand-edit
+  # mcp-catalog-source.yaml directly; it's generated.
+  #
+  # See github-mcp-server/mcp-catalog.yaml for the template this was
+  # copied from, and the README's "OpenShift AI MCP catalog registration"
+  # section for the full registration workflow.
+  - name: Compliance MCP Server
+    provider: agentic-doc-generation
+    version: "1.0.0"
+    description: >-
+      Read-only MCP server that lets other AI agents query the Governance
+      Hub's documentation-compliance state ("does repo X have an
+      architecture doc / OpenAPI spec?") without scraping its dashboard or
+      touching its database. Every tool is a thin proxy over
+      governance-hub's own REST API; it holds no state of its own.
+    transports:
+      - http
+    deploymentMode: local
+    repositoryUrl: https://github.com/YOUR_ORG/agentic-doc-generation.git
+    documentationUrl: https://github.com/YOUR_ORG/agentic-doc-generation/blob/main/README.md
+    tools:
+      - name: get_compliance_status
+        description: >-
+          Report whether a specific repository is compliant with the
+          org's documentation governance policy (has an architecture doc
+          and, if applicable, an OpenAPI spec).
+        accessType: read_only
+      - name: list_violations
+        description: >-
+          List every tracked repository with at least one compliance
+          violation (missing architecture document or OpenAPI spec).
+        accessType: read_only
+      - name: list_tracked_repos
+        description: >-
+          List every repository currently tracked by the Governance Hub,
+          with its current compliance status.
+        accessType: read_only
+      - name: get_repo_history
+        description: >-
+          Return the full history of doc-gen-agent / openapi-gen-agent
+          runs recorded for a repository, including any resulting pull
+          request URLs.
+        accessType: read_only
   # AI Hub MCP Catalog entry fragment for github-mcp-server.
   #
   # Consumed by ./generate-mcp-catalog-source.sh (repo root), which

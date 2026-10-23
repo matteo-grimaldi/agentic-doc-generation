@@ -16,6 +16,8 @@
 #   ./build-and-deploy-all.sh github-mcp-server # deploy a single component
 #   ./build-and-deploy-all.sh doc-gen-agent
 #   ./build-and-deploy-all.sh openapi-gen-agent
+#   ./build-and-deploy-all.sh governance-hub
+#   ./build-and-deploy-all.sh compliance-mcp-server
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,7 +36,7 @@ if [[ -z "${MODEL_BASE_URL_SET}" || "${MODEL_BASE_URL_SET}" == REPLACE_WITH_* ]]
   echo ""
 fi
 
-COMPONENTS=("github-mcp-server" "doc-gen-agent" "openapi-gen-agent")
+COMPONENTS=("github-mcp-server" "doc-gen-agent" "openapi-gen-agent" "governance-hub" "compliance-mcp-server")
 if [[ $# -gt 0 ]]; then
   COMPONENTS=("$@")
 fi
@@ -56,4 +58,12 @@ fi
 OPENAPI_ROUTE_HOST=$(oc get route openapi-gen-agent -n "${NAMESPACE}" -o jsonpath='https://{.spec.host}' 2>/dev/null || true)
 if [[ -n "${OPENAPI_ROUTE_HOST}" ]]; then
   echo "    OpenAPI-gen agent UI: ${OPENAPI_ROUTE_HOST}"
+fi
+GOVERNANCE_ROUTE_HOST=$(oc get route governance-hub -n "${NAMESPACE}" -o jsonpath='https://{.spec.host}' 2>/dev/null || true)
+if [[ -n "${GOVERNANCE_ROUTE_HOST}" ]]; then
+  echo "    Governance Hub dashboard: ${GOVERNANCE_ROUTE_HOST}"
+fi
+COMPLIANCE_MCP_ROUTE_HOST=$(oc get route compliance-mcp-server -n "${NAMESPACE}" -o jsonpath='https://{.spec.host}' 2>/dev/null || true)
+if [[ -n "${COMPLIANCE_MCP_ROUTE_HOST}" ]]; then
+  echo "    Compliance MCP endpoint: ${COMPLIANCE_MCP_ROUTE_HOST}/mcp"
 fi

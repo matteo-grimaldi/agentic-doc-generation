@@ -1,0 +1,14 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: governance-hub
+  namespace: doc-gen-demo
+spec:
+  to:
+    kind: Service
+    name: governance-hub
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

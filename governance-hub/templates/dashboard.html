@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Governance Hub — Dashboard{% endblock %}
+{% block content %}
+  <section class="gh-summary">
+    <div class="gh-stat">
+      <span class="gh-stat-value">{{ total }}</span>
+      <span class="gh-stat-label">Tracked repos</span>
+    </div>
+    <div class="gh-stat">
+      <span class="gh-stat-value">{{ compliant_pct }}%</span>
+      <span class="gh-stat-label">Compliant</span>
+    </div>
+    <div class="gh-stat gh-stat-violation">
+      <span class="gh-stat-value">{{ violation_count }}</span>
+      <span class="gh-stat-label">Active violations</span>
+    </div>
+  </section>
+
+  {% if not repos %}
+    <p class="gh-empty">
+      No repos tracked yet. A repo appears here the moment
+      <code>doc-gen-agent</code> or <code>openapi-gen-agent</code> runs
+      against it — paste a repo URL into either agent's chat UI, or trigger
+      one via its <code>POST /invoke</code> endpoint.
+    </p>
+  {% else %}
+    <table class="gh-table">
+      <thead>
+        <tr>
+          <th>Repository</th>
+          <th>Architecture Doc</th>
+          <th>OpenAPI Spec</th>
+          <th>Last Checked</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in repos %}
+          <tr class="{{ 'gh-row-violation' if r.violations else '' }}">
+            <td>
+              <a href="/repo/{{ r.owner }}/{{ r.repo }}">{{ r.owner }}/{{ r.repo }}</a>
+            </td>
+            <td>
+              {% if r.has_architecture_doc %}
+                <span class="gh-badge gh-badge-ok">✅ present</span>
+              {% elif r.has_architecture_doc is none %}
+                <span class="gh-badge gh-badge-unknown">— not checked</span>
+              {% else %}
+                <span class="gh-badge gh-badge-missing">❌ missing</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if r.has_openapi_spec %}
+                <span class="gh-badge gh-badge-ok">✅ present</span>
+              {% elif r.has_openapi_spec is none %}
+                <span class="gh-badge gh-badge-unknown">— n/a</span>
+              {% else %}
+                <span class="gh-badge gh-badge-missing">❌ missing</span>
+              {% endif %}
+            </td>
+            <td class="gh-muted">
+              {{ r.last_compliance_check.strftime('%Y-%m-%d %H:%M UTC') if r.last_compliance_check else 'never' }}
+            </td>
+            <td>
+              <a class="gh-link-action" href="/repo/{{ r.owner }}/{{ r.repo }}">View →</a>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+{% endblock %}

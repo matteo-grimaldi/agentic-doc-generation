@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}{{ repo.owner }}/{{ repo.repo }} — Governance Hub{% endblock %}
+{% block content %}
+  <p><a class="gh-link-action" href="/">← Back to dashboard</a></p>
+
+  <h1>{{ repo.owner }}/{{ repo.repo }}</h1>
+  <p class="gh-muted"><a href="{{ repo.repo_url }}" target="_blank" rel="noopener">{{ repo.repo_url }}</a></p>
+
+  <section class="gh-detail-grid">
+    <div class="gh-card">
+      <h2>Architecture Document</h2>
+      {% if repo.has_architecture_doc %}
+        <p><span class="gh-badge gh-badge-ok">✅ present</span></p>
+      {% elif repo.has_architecture_doc is none %}
+        <p><span class="gh-badge gh-badge-unknown">— not checked yet</span></p>
+      {% else %}
+        <p><span class="gh-badge gh-badge-missing">❌ missing</span></p>
+      {% endif %}
+      {% if repo.doc_pr_url %}
+        <p class="gh-muted">
+          Latest PR: <a href="{{ repo.doc_pr_url }}" target="_blank" rel="noopener">#{{ repo.doc_pr_number }}</a>
+          ({{ repo.doc_pr_status or 'open' }})
+        </p>
+      {% endif %}
+      <form method="post" action="/repo/{{ repo.owner }}/{{ repo.repo }}/remediate-form">
+        <input type="hidden" name="agent_type" value="doc-gen" />
+        <button type="submit" class="gh-btn gh-btn-primary">🛠️ Fix Doc (trigger doc-gen-agent)</button>
+      </form>
+    </div>
+
+    <div class="gh-card">
+      <h2>OpenAPI Specification</h2>
+      {% if repo.has_openapi_spec %}
+        <p><span class="gh-badge gh-badge-ok">✅ present</span></p>
+      {% elif repo.has_openapi_spec is none %}
+        <p><span class="gh-badge gh-badge-unknown">— not checked yet</span></p>
+      {% else %}
+        <p><span class="gh-badge gh-badge-missing">❌ missing</span></p>
+      {% endif %}
+      {% if repo.openapi_pr_url %}
+        <p class="gh-muted">
+          Latest PR: <a href="{{ repo.openapi_pr_url }}" target="_blank" rel="noopener">#{{ repo.openapi_pr_number }}</a>
+          ({{ repo.openapi_pr_status or 'open' }})
+        </p>
+      {% endif %}
+      <form method="post" action="/repo/{{ repo.owner }}/{{ repo.repo }}/remediate-form">
+        <input type="hidden" name="agent_type" value="openapi-gen" />
+        <button type="submit" class="gh-btn gh-btn-primary">🛠️ Fix OpenAPI Spec (trigger openapi-gen-agent)</button>
+      </form>
+    </div>
+  </section>
+
+  <form method="post" action="/repo/{{ repo.owner }}/{{ repo.repo }}/check-form">
+    <button type="submit" class="gh-btn">🔄 Refresh compliance check</button>
+  </form>
+  <p class="gh-muted">
+    Last checked: {{ repo.last_compliance_check.strftime('%Y-%m-%d %H:%M UTC') if repo.last_compliance_check else 'never' }}
+  </p>
+
+  <h2>Run History</h2>
+  {% if not repo.runs %}
+    <p class="gh-muted">No agent runs recorded yet.</p>
+  {% else %}
+    <table class="gh-table">
+      <thead>
+        <tr>
+          <th>Started</th>
+          <th>Agent</th>
+          <th>Status</th>
+          <th>Triggered By</th>
+          <th>Result</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in repo.runs %}
+          <tr>
+            <td class="gh-muted">{{ run.started_at.strftime('%Y-%m-%d %H:%M UTC') if run.started_at else '—' }}</td>
+            <td>{{ run.agent_type }}</td>
+            <td>
+              <span class="gh-badge gh-badge-{{ 'ok' if run.status == 'completed' else ('missing' if run.status == 'failed' else 'unknown') }}">
+                {{ run.status }}
+              </span>
+            </td>
+            <td class="gh-muted">{{ run.triggered_by }}</td>
+            <td>
+              {% if run.pr_url %}
+                <a href="{{ run.pr_url }}" target="_blank" rel="noopener">PR #{{ run.pr_number }}</a>
+              {% elif run.error_message %}
+                <span class="gh-muted" title="{{ run.error_message }}">{{ run.error_message[:60] }}</span>
+              {% else %}
+                <span class="gh-muted">—</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+{% endblock %}
