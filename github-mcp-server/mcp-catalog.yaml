@@ -1,0 +1,63 @@
+# AI Hub MCP Catalog entry fragment for github-mcp-server.
+#
+# Consumed by ./generate-mcp-catalog-source.sh (repo root), which
+# concatenates every component's own mcp-catalog.yaml fragment into one
+# `mcp_servers:` list under the repo-root mcp-catalog-source.yaml — the
+# file you actually import via Settings > MCP resources > MCP catalog
+# sources > Add a source in the OpenShift AI dashboard. Don't hand-edit
+# mcp-catalog-source.yaml directly; it's generated.
+#
+# To register a NEW MCP server component here: copy this file (and
+# mcp-catalog-entry.yaml, its ConfigMap-registration counterpart) into
+# the new component's directory, fill in its own fields below, then
+# re-run ./generate-mcp-catalog-source.sh and ./register-mcp-catalog.sh
+# — no other files need to change.
+#
+# This entry must stay a single YAML list item (starts with "- name:")
+# indented exactly 2 spaces, matching the indentation of items under
+# mcp_servers: in mcpcatalogsourcesample.yaml, since it gets pasted
+# as-is under that key.
+- name: GitHub MCP Server
+  provider: agentic-doc-generation
+  version: "1.0.0"
+  description: >-
+    Exposes GitHub repository browsing as MCP tools so an agent can
+    explore a target repo's structure and source files without a
+    local git clone or its own GitHub credentials: repo metadata,
+    filtered recursive file trees, cheap regex-based file outlines,
+    size-capped file reads, and code search. Used by both
+    doc-gen-agent (architecture docs + Mermaid diagrams) and
+    openapi-gen-agent (OpenAPI spec generation) to analyze public
+    GitHub repositories.
+  transports:
+    - http
+  deploymentMode: local
+  repositoryUrl: https://github.com/YOUR_ORG/agentic-doc-generation.git
+  documentationUrl: https://github.com/YOUR_ORG/agentic-doc-generation/blob/main/README.md
+  tools:
+    - name: get_repo_info
+      description: >-
+        Fetch top-level repo metadata: default branch, description,
+        primary language, star count, and topics.
+      accessType: read_only
+    - name: get_repo_structure
+      description: >-
+        Return the recursive file/directory tree of a repository,
+        with vendor/binary paths filtered out.
+      accessType: read_only
+    - name: get_file_outline
+      description: >-
+        Return a lightweight structural outline (imports, top-level
+        declarations) of a single file via regex extraction, without
+        its full content.
+      accessType: read_only
+    - name: read_file
+      description: >-
+        Read the contents of a single file from a repository,
+        size-capped and truncated to protect context budget.
+      accessType: read_only
+    - name: search_code
+      description: >-
+        Search for a code pattern within a repository. Requires a
+        GITHUB_TOKEN configured on the server.
+      accessType: read_only
