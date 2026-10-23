@@ -1,0 +1,11 @@
+# OperatorGroup with no targetNamespaces — tells OLM to install the RHDH
+# operator in all-namespaces scope so it can manage Backstage CRs in any
+# namespace (the CR lives in rhdh, the operator watches globally).
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: rhdh-operator
+  namespace: rhdh-operator
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec: {}

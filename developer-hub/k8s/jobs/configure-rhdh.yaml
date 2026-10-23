@@ -1,0 +1,515 @@
+# configure-rhdh — ArgoCD Sync hook (wave 18) that provisions RHDH end-to-end:
+#
+#  1. Waits for Keycloak (RHBK) to be ready and discovers its Route
+#  2. Gets a Keycloak admin token from the keycloak-initial-admin Secret
+#  3. Creates/updates users: admin (password: password) and developer (password: password)
+#  4. Creates/updates the RHDH OIDC client (clientId: rhdh) with a generated
+#     or reused client secret
+#  5. Discovers RHDH, ArgoCD, doc-gen-agent, and openapi-gen-agent Routes
+#  6. Gets the rhdh-kubernetes-reader SA token
+#  7. Generates or reuses SESSION_SECRET
+#  8. Patches rhdh-secrets with all discovered values (only if changed)
+#  9. Patches the ConsoleLink href to the RHDH URL
+# 10. Restarts the Backstage Deployment (only if secrets changed)
+#
+# Adapted from rhoai3-coding-demo configure-rhdh.yaml with:
+#   - RHBK admin token from keycloak-initial-admin (no pre-existing client)
+#   - User creation via Admin API (admin/password, developer/password)
+#   - No GitLab/SonarQube/DevSpaces; adds doc-gen-agent + openapi-gen-agent routes
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: job-configure-rhdh
+  namespace: rhdh
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "18"
+---
+# Role in rhdh: read rhdh-secrets + rhdh-kubernetes-reader-token, patch rhdh-secrets
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: job-configure-rhdh
+  namespace: rhdh
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "18"
+rules:
+  - apiGroups: ["apps"]
+    resources: [deployments]
+    verbs: [get, list, watch, patch]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [rhdh-secrets, rhdh-kubernetes-reader-token]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [rhdh-secrets]
+    verbs: [patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: job-configure-rhdh
+  namespace: rhdh
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "18"
+subjects:
+  - kind: ServiceAccount
+    name: job-configure-rhdh
+    namespace: rhdh
+roleRef:
+  kind: Role
+  name: job-configure-rhdh
+  apiGroup: rbac.authorization.k8s.io
+---
+# Role in keycloak: read keycloak-initial-admin Secret
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: job-configure-rhdh-keycloak-reader
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "18"
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [keycloak-initial-admin]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: job-configure-rhdh-keycloak-reader
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "18"
+subjects:
+  - kind: ServiceAccount
+    name: job-configure-rhdh
+    namespace: rhdh
+roleRef:
+  kind: Role
+  name: job-configure-rhdh-keycloak-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+# Role in openshift-gitops: read rhdh-local-user Secret (ArgoCD token).
+# OPTIONAL — only needed when OpenShift GitOps / ArgoCD is installed.
+# SkipDryRunOnMissingResource prevents ArgoCD from failing its dry-run when
+# the openshift-gitops namespace is absent (e.g. non-GitOps deployments).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: job-configure-rhdh-gitops-reader
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "18"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [rhdh-local-user]
+    verbs: [get]
+---
+# OPTIONAL — see note on Role above.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: job-configure-rhdh-gitops-reader
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "18"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+subjects:
+  - kind: ServiceAccount
+    name: job-configure-rhdh
+    namespace: rhdh
+roleRef:
+  kind: Role
+  name: job-configure-rhdh-gitops-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+# ClusterRole: read Routes cluster-wide, patch ConsoleLink
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: job-configure-rhdh
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "18"
+rules:
+  - apiGroups: [route.openshift.io]
+    resources: [routes]
+    verbs: [get, list]
+  - apiGroups: [console.openshift.io]
+    resources: [consolelinks]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: job-configure-rhdh
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "18"
+subjects:
+  - kind: ServiceAccount
+    name: job-configure-rhdh
+    namespace: rhdh
+roleRef:
+  kind: ClusterRole
+  name: job-configure-rhdh
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: job-configure-rhdh
+  namespace: rhdh
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "18"
+spec:
+  backoffLimit: 6
+  activeDeadlineSeconds: 1800
+  template:
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: job-configure-rhdh
+      containers:
+        - name: configure
+          image: registry.redhat.io/openshift4/ose-cli@sha256:69762925e16053d77685ff3a08b3b45dd2bfa5d68277851bc6969b368bbd0cb9
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+
+              REALM="platform"
+              RHDH_CLIENT_ID="rhdh"
+
+              # ── 1. Discover Keycloak route ──────────────────────────────
+              echo "=== Step 1: Discovering Keycloak route ==="
+              KC_HOST=""
+              for i in {1..60}; do
+                KC_HOST=$(oc get route -n keycloak --no-headers 2>/dev/null \
+                  | grep -v "^$" | awk '{print $2}' | head -1 || true)
+                if [[ -n "${KC_HOST}" ]]; then break; fi
+                echo "  Waiting for Keycloak route... (${i}/60)"
+                sleep 10
+              done
+              if [[ -z "${KC_HOST}" ]]; then
+                echo "ERROR: Keycloak route not found within timeout"
+                exit 1
+              fi
+              KC_URL="https://${KC_HOST}"
+              echo "  Keycloak URL: ${KC_URL}"
+
+              # ── 2. Wait for Keycloak to respond ────────────────────────
+              echo "=== Step 2: Waiting for Keycloak to be ready ==="
+              for i in {1..60}; do
+                HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" \
+                  "${KC_URL}/realms/master/.well-known/openid-configuration" || echo "000")
+                if [[ "${HTTP_CODE}" == "200" ]]; then
+                  echo "  Keycloak is ready (HTTP ${HTTP_CODE})"
+                  break
+                fi
+                echo "  Waiting for Keycloak HTTP 200... got ${HTTP_CODE} (${i}/60)"
+                sleep 10
+              done
+
+              # ── 3. Get Keycloak admin token ─────────────────────────────
+              echo "=== Step 3: Getting Keycloak admin token ==="
+              KC_ADMIN_USER=$(oc get secret keycloak-initial-admin -n keycloak \
+                -o jsonpath='{.data.username}' 2>/dev/null | base64 -d)
+              KC_ADMIN_PASS=$(oc get secret keycloak-initial-admin -n keycloak \
+                -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
+
+              ADMIN_TOKEN=$(curl -sk -X POST \
+                "${KC_URL}/realms/master/protocol/openid-connect/token" \
+                -d "grant_type=password&client_id=admin-cli&username=${KC_ADMIN_USER}&password=${KC_ADMIN_PASS}" \
+                | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+              echo "  Admin token acquired."
+              AUTH="Authorization: Bearer ${ADMIN_TOKEN}"
+
+              # ── 4. Wait for platform realm to exist ────────────────────
+              echo "=== Step 4: Waiting for platform realm ==="
+              for i in {1..30}; do
+                REALM_STATUS=$(curl -sk -o /dev/null -w "%{http_code}" \
+                  -H "${AUTH}" "${KC_URL}/admin/realms/${REALM}" || echo "000")
+                if [[ "${REALM_STATUS}" == "200" ]]; then
+                  echo "  Realm '${REALM}' exists."
+                  break
+                fi
+                echo "  Waiting for realm '${REALM}'... (${i}/30)"
+                sleep 10
+              done
+
+              # ── 5. Create/update users ──────────────────────────────────
+              echo "=== Step 5: Provisioning users ==="
+              create_or_update_user() {
+                local USERNAME="$1"
+                local PASSWORD="$2"
+                # Check if user exists
+                EXISTING_ID=$(curl -sk -H "${AUTH}" \
+                  "${KC_URL}/admin/realms/${REALM}/users?username=${USERNAME}&exact=true" \
+                  | python3 -c "import sys,json; users=json.load(sys.stdin); print(users[0]['id'] if users else '')" 2>/dev/null || echo "")
+
+                if [[ -n "${EXISTING_ID}" ]]; then
+                  echo "  User '${USERNAME}' already exists (${EXISTING_ID}) — updating password."
+                  curl -sk -X PUT -H "${AUTH}" -H "Content-Type: application/json" \
+                    "${KC_URL}/admin/realms/${REALM}/users/${EXISTING_ID}/reset-password" \
+                    -d "{\"type\":\"password\",\"value\":\"${PASSWORD}\",\"temporary\":false}" \
+                    -o /dev/null
+                else
+                  echo "  Creating user '${USERNAME}'..."
+                  curl -sk -X POST -H "${AUTH}" -H "Content-Type: application/json" \
+                    "${KC_URL}/admin/realms/${REALM}/users" \
+                    -d "{
+                      \"username\": \"${USERNAME}\",
+                      \"enabled\": true,
+                      \"emailVerified\": true,
+                      \"credentials\": [{
+                        \"type\": \"password\",
+                        \"value\": \"${PASSWORD}\",
+                        \"temporary\": false
+                      }]
+                    }" -o /dev/null
+                  echo "  User '${USERNAME}' created."
+                fi
+              }
+
+              create_or_update_user "admin" "password"
+              create_or_update_user "developer" "password"
+              create_or_update_user "architect" "password"
+
+              # ── 5b. Create Keycloak `architects` group and add `architect` member ──
+              echo "=== Step 5b: Provisioning architects group ==="
+              ARCHITECTS_GROUP_ID=$(curl -sk -H "${AUTH}" \
+                "${KC_URL}/admin/realms/${REALM}/groups?search=architects" \
+                | python3 -c "import sys,json; gs=json.load(sys.stdin); print(next((g['id'] for g in gs if g['name']=='architects'), ''))" 2>/dev/null || echo "")
+
+              if [[ -z "${ARCHITECTS_GROUP_ID}" ]]; then
+                echo "  Creating 'architects' group..."
+                curl -sk -X POST -H "${AUTH}" -H "Content-Type: application/json" \
+                  "${KC_URL}/admin/realms/${REALM}/groups" \
+                  -d "{\"name\":\"architects\"}" -o /dev/null
+                ARCHITECTS_GROUP_ID=$(curl -sk -H "${AUTH}" \
+                  "${KC_URL}/admin/realms/${REALM}/groups?search=architects" \
+                  | python3 -c "import sys,json; gs=json.load(sys.stdin); print(next((g['id'] for g in gs if g['name']=='architects'), ''))" 2>/dev/null || echo "")
+                echo "  Group 'architects' created (${ARCHITECTS_GROUP_ID})."
+              else
+                echo "  Group 'architects' already exists (${ARCHITECTS_GROUP_ID})."
+              fi
+
+              # Add architect user to architects group
+              if [[ -n "${ARCHITECTS_GROUP_ID}" ]]; then
+                ARCHITECT_USER_ID=$(curl -sk -H "${AUTH}" \
+                  "${KC_URL}/admin/realms/${REALM}/users?username=architect&exact=true" \
+                  | python3 -c "import sys,json; users=json.load(sys.stdin); print(users[0]['id'] if users else '')" 2>/dev/null || echo "")
+                if [[ -n "${ARCHITECT_USER_ID}" ]]; then
+                  curl -sk -X PUT -H "${AUTH}" \
+                    "${KC_URL}/admin/realms/${REALM}/users/${ARCHITECT_USER_ID}/groups/${ARCHITECTS_GROUP_ID}" \
+                    -o /dev/null
+                  echo "  User 'architect' added to group 'architects'."
+                else
+                  echo "  WARNING: architect user not found — skipping group membership."
+                fi
+              fi
+
+              # ── 6. Discover RHDH route ──────────────────────────────────
+              echo "=== Step 6: Discovering RHDH route ==="
+              RHDH_HOST=""
+              for i in {1..60}; do
+                RHDH_HOST=$(oc get route -n rhdh --no-headers 2>/dev/null \
+                  | grep backstage | awk '{print $2}' | head -1 || true)
+                if [[ -n "${RHDH_HOST}" ]]; then break; fi
+                echo "  Waiting for RHDH Route... (${i}/60)"
+                sleep 10
+              done
+              if [[ -z "${RHDH_HOST}" ]]; then
+                echo "ERROR: RHDH route not found within timeout"
+                exit 1
+              fi
+              RHDH_URL="https://${RHDH_HOST}"
+              echo "  RHDH URL: ${RHDH_URL}"
+
+              # ── 7. Create/update RHDH OIDC client ──────────────────────
+              echo "=== Step 7: Provisioning RHDH OIDC client ==="
+              REDIRECT_URI="${RHDH_URL}/api/auth/oidc/handler/frame"
+
+              EXISTING_CLIENT_ID=$(curl -sk -H "${AUTH}" \
+                "${KC_URL}/admin/realms/${REALM}/clients?clientId=${RHDH_CLIENT_ID}" \
+                | python3 -c "import sys,json; clients=json.load(sys.stdin); print(clients[0]['id'] if clients else '')" 2>/dev/null || echo "")
+
+              # Reuse existing client secret if set and not a placeholder
+              CURRENT_CLIENT_SECRET=$(oc get secret rhdh-secrets -n rhdh \
+                -o jsonpath='{.data.RHDH_OIDC_CLIENT_SECRET}' 2>/dev/null \
+                | base64 -d 2>/dev/null || echo "")
+              if [[ -n "${CURRENT_CLIENT_SECRET}" ]] && \
+                 ! echo "${CURRENT_CLIENT_SECRET}" | grep -qi "placeholder"; then
+                CLIENT_SECRET="${CURRENT_CLIENT_SECRET}"
+              else
+                CLIENT_SECRET=$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 40)
+              fi
+
+              CLIENT_PAYLOAD="{
+                \"clientId\": \"${RHDH_CLIENT_ID}\",
+                \"enabled\": true,
+                \"publicClient\": false,
+                \"secret\": \"${CLIENT_SECRET}\",
+                \"redirectUris\": [\"${REDIRECT_URI}\"],
+                \"webOrigins\": [\"${RHDH_URL}\"],
+                \"standardFlowEnabled\": true,
+                \"directAccessGrantsEnabled\": false,
+                \"protocol\": \"openid-connect\"
+              }"
+
+              if [[ -n "${EXISTING_CLIENT_ID}" ]]; then
+                echo "  Updating existing RHDH client..."
+                curl -sk -X PUT -H "${AUTH}" -H "Content-Type: application/json" \
+                  "${KC_URL}/admin/realms/${REALM}/clients/${EXISTING_CLIENT_ID}" \
+                  -d "${CLIENT_PAYLOAD}" -o /dev/null
+                echo "  RHDH OIDC client updated."
+              else
+                echo "  Creating RHDH OIDC client..."
+                curl -sk -X POST -H "${AUTH}" -H "Content-Type: application/json" \
+                  "${KC_URL}/admin/realms/${REALM}/clients" \
+                  -d "${CLIENT_PAYLOAD}" -o /dev/null
+                echo "  RHDH OIDC client created."
+              fi
+
+              RHBK_METADATA_URL="${KC_URL}/realms/${REALM}"
+              echo "  RHBK metadata URL: ${RHBK_METADATA_URL}"
+
+              # ── 8. Discover ArgoCD route + token ───────────────────────
+              echo "=== Step 8: Discovering ArgoCD ==="
+              ARGOCD_HOST=$(oc get route openshift-gitops-server -n openshift-gitops \
+                -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+              ARGOCD_URL="https://${ARGOCD_HOST}"
+              ARGOCD_TOKEN=$(oc get secret rhdh-local-user -n openshift-gitops \
+                -o jsonpath='{.data.apiToken}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+              if [[ -z "${ARGOCD_HOST}" ]]; then
+                echo "  WARNING: ArgoCD route not found — using empty placeholder"
+                ARGOCD_URL="https://argocd-pending.local"
+              fi
+              echo "  ArgoCD URL: ${ARGOCD_URL}"
+
+              # ── 9. Get Kubernetes SA token ──────────────────────────────
+              echo "=== Step 9: Getting Kubernetes SA token ==="
+              KUBE_SA_TOKEN=$(oc get secret rhdh-kubernetes-reader-token -n rhdh \
+                -o jsonpath='{.data.token}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+              if [[ -z "${KUBE_SA_TOKEN}" ]]; then
+                echo "  WARNING: rhdh-kubernetes-reader-token not yet populated"
+              fi
+
+              # ── 10. Discover agent routes ───────────────────────────────
+              echo "=== Step 10: Discovering agent routes ==="
+              DOC_GEN_HOST=$(oc get route doc-gen-agent -n doc-gen-demo \
+                -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+              DOC_GEN_URL="https://${DOC_GEN_HOST:-doc-gen-pending.local}"
+              echo "  Doc-gen agent URL: ${DOC_GEN_URL}"
+
+              OPENAPI_GEN_HOST=$(oc get route openapi-gen-agent -n doc-gen-demo \
+                -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+              OPENAPI_GEN_URL="https://${OPENAPI_GEN_HOST:-openapi-gen-pending.local}"
+              echo "  OpenAPI-gen agent URL: ${OPENAPI_GEN_URL}"
+
+              GOV_HUB_HOST=$(oc get route governance-hub -n doc-gen-demo \
+                -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+              GOVERNANCE_HUB_URL="https://${GOV_HUB_HOST:-governance-hub-pending.local}"
+              echo "  Governance Hub URL: ${GOVERNANCE_HUB_URL}"
+
+              # ── 11. Generate or reuse SESSION_SECRET ────────────────────
+              echo "=== Step 11: SESSION_SECRET ==="
+              CURRENT_SESSION=$(oc get secret rhdh-secrets -n rhdh \
+                -o jsonpath='{.data.SESSION_SECRET}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+              if [[ -n "${CURRENT_SESSION}" ]] && \
+                 ! echo "${CURRENT_SESSION}" | grep -qi "placeholder"; then
+                SESSION_SECRET="${CURRENT_SESSION}"
+                echo "  Reusing existing SESSION_SECRET."
+              else
+                SESSION_SECRET=$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 40)
+                echo "  Generated new SESSION_SECRET."
+              fi
+
+              # ── 12. Patch rhdh-secrets if anything changed ──────────────
+              echo "=== Step 12: Patching rhdh-secrets ==="
+              b64() { echo -n "$1" | base64 -w0 2>/dev/null || echo -n "$1" | base64; }
+
+              CURRENT_BASE_URL=$(oc get secret rhdh-secrets -n rhdh \
+                -o jsonpath='{.data.RHDH_BASE_URL}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+
+              if [[ "${CURRENT_BASE_URL}" != "${RHDH_URL}" ]] || \
+                 [[ "${CURRENT_CLIENT_SECRET}" != "${CLIENT_SECRET}" ]] || \
+                 [[ "${CURRENT_SESSION}" != "${SESSION_SECRET}" ]]; then
+                SECRETS_CHANGED=true
+                echo "  Secrets have changed — patching..."
+              else
+                SECRETS_CHANGED=false
+                echo "  Secrets unchanged."
+              fi
+
+              oc patch secret rhdh-secrets -n rhdh --type=merge \
+                -p "{\"data\":{
+                  \"SESSION_SECRET\":\"$(b64 "${SESSION_SECRET}")\",
+                  \"RHDH_BASE_URL\":\"$(b64 "${RHDH_URL}")\",
+                  \"RHBK_METADATA_URL\":\"$(b64 "${RHBK_METADATA_URL}")\",
+                  \"RHDH_OIDC_CLIENT_SECRET\":\"$(b64 "${CLIENT_SECRET}")\",
+                  \"RHDH_ARGOCD_URL\":\"$(b64 "${ARGOCD_URL}")\",
+                  \"RHDH_ARGOCD_TOKEN\":\"$(b64 "${ARGOCD_TOKEN}")\",
+                  \"RHDH_KUBERNETES_SA_TOKEN\":\"$(b64 "${KUBE_SA_TOKEN}")\",
+                  \"DOC_GEN_AGENT_URL\":\"$(b64 "${DOC_GEN_URL}")\",
+                  \"OPENAPI_GEN_AGENT_URL\":\"$(b64 "${OPENAPI_GEN_URL}")\",
+                  \"GOVERNANCE_HUB_URL\":\"$(b64 "${GOVERNANCE_HUB_URL}")\"
+                }}"
+              echo "  rhdh-secrets patched."
+
+              # ── 13. Patch ConsoleLink ───────────────────────────────────
+              echo "=== Step 13: Patching ConsoleLink ==="
+              oc patch consolelink rhdh --type=merge \
+                -p "{\"spec\":{\"href\":\"${RHDH_URL}\",\"applicationMenu\":{\"imageURL\":\"${RHDH_URL}/favicon.ico\"}}}" \
+                2>/dev/null && echo "  ConsoleLink patched." || echo "  WARNING: ConsoleLink not found (skipping)."
+
+              # ── 14. Restart Backstage if secrets changed ─────────────────
+              echo "=== Step 14: Restarting RHDH if needed ==="
+              RHDH_DEPLOY=$(oc get deployment -n rhdh --no-headers 2>/dev/null \
+                | grep backstage | awk '{print $1}' | head -1 || true)
+              if [[ -n "${RHDH_DEPLOY}" ]] && [[ "${SECRETS_CHANGED}" == "true" ]]; then
+                echo "  Restarting ${RHDH_DEPLOY}..."
+                oc rollout restart "deployment/${RHDH_DEPLOY}" -n rhdh
+                oc rollout status "deployment/${RHDH_DEPLOY}" -n rhdh --timeout=900s
+                echo "  RHDH restarted successfully."
+              elif [[ -n "${RHDH_DEPLOY}" ]]; then
+                echo "  No restart needed."
+              else
+                echo "  WARNING: Backstage deployment not found yet (will be started by operator)."
+              fi
+
+              echo ""
+              echo "=== RHDH configured successfully ==="
+              echo "  RHDH URL:          ${RHDH_URL}"
+              echo "  Keycloak URL:      ${KC_URL}"
+              echo "  Realm:             ${KC_URL}/realms/${REALM}"
+              echo "  Users:             admin / password"
+              echo "                     developer / password"
+              echo "                     architect / password  (architects group)"
+              echo "  Doc-gen agent:     ${DOC_GEN_URL}"
+              echo "  OpenAPI-gen agent: ${OPENAPI_GEN_URL}"
+              echo "  Governance Hub:    ${GOVERNANCE_HUB_URL}"

@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 #
-# Quick-start, non-GitOps deploy of the application components
-# (github-mcp-server, doc-gen-agent, openapi-gen-agent,
-# compliance-scan-agent, governance-hub, compliance-mcp-server) directly
-# with `oc`.
+# Quick-start, non-GitOps deploy of all demo components directly with `oc`.
+#
+# Components deployed (in order):
+#   github-mcp-server  — MCP server for GitHub repo browsing
+#   doc-gen-agent      — architecture documentation agent (Gradio UI + OGX)
+#   openapi-gen-agent  — OpenAPI specification agent (Gradio UI + OGX)
+#   ci-cd-pipeline     — Tekton CI/CD pipeline
+#   keycloak           — Red Hat Build of Keycloak (RHBK) identity provider
+#   developer-hub      — Red Hat Developer Hub (RHDH 1.10) internal dev portal
 #
 # Inference is served by an external, configurable OpenAI-compatible
 # endpoint (no in-cluster model serving) — set it via
@@ -18,9 +23,8 @@
 #   ./build-and-deploy-all.sh github-mcp-server # deploy a single component
 #   ./build-and-deploy-all.sh doc-gen-agent
 #   ./build-and-deploy-all.sh openapi-gen-agent
-#   ./build-and-deploy-all.sh compliance-scan-agent
-#   ./build-and-deploy-all.sh governance-hub
-#   ./build-and-deploy-all.sh compliance-mcp-server
+#   ./build-and-deploy-all.sh keycloak
+#   ./build-and-deploy-all.sh developer-hub
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -39,7 +43,7 @@ if [[ -z "${MODEL_BASE_URL_SET}" || "${MODEL_BASE_URL_SET}" == REPLACE_WITH_* ]]
   echo ""
 fi
 
-COMPONENTS=("github-mcp-server" "doc-gen-agent" "openapi-gen-agent" "compliance-scan-agent" "governance-hub" "compliance-mcp-server")
+COMPONENTS=("github-mcp-server" "doc-gen-agent" "openapi-gen-agent" "ci-cd-pipeline" "keycloak" "developer-hub")
 if [[ $# -gt 0 ]]; then
   COMPONENTS=("$@")
 fi
@@ -56,21 +60,19 @@ echo ""
 echo "==> All requested components deployed."
 DOC_ROUTE_HOST=$(oc get route doc-gen-agent -n "${NAMESPACE}" -o jsonpath='https://{.spec.host}' 2>/dev/null || true)
 if [[ -n "${DOC_ROUTE_HOST}" ]]; then
-  echo "    Doc-gen agent UI: ${DOC_ROUTE_HOST}"
+  echo "    Doc-gen agent UI:      ${DOC_ROUTE_HOST}"
 fi
 OPENAPI_ROUTE_HOST=$(oc get route openapi-gen-agent -n "${NAMESPACE}" -o jsonpath='https://{.spec.host}' 2>/dev/null || true)
 if [[ -n "${OPENAPI_ROUTE_HOST}" ]]; then
-  echo "    OpenAPI-gen agent UI: ${OPENAPI_ROUTE_HOST}"
+  echo "    OpenAPI-gen agent UI:  ${OPENAPI_ROUTE_HOST}"
 fi
-COMPLIANCE_SCAN_ROUTE_HOST=$(oc get route compliance-scan-agent -n "${NAMESPACE}" -o jsonpath='https://{.spec.host}' 2>/dev/null || true)
-if [[ -n "${COMPLIANCE_SCAN_ROUTE_HOST}" ]]; then
-  echo "    Compliance-scan agent UI: ${COMPLIANCE_SCAN_ROUTE_HOST}"
+KC_ROUTE_HOST=$(oc get route -n keycloak --no-headers 2>/dev/null | grep keycloak | awk '{print $2}' | head -1 || true)
+if [[ -n "${KC_ROUTE_HOST}" ]]; then
+  echo "    Keycloak:              https://${KC_ROUTE_HOST}"
+  echo "      Realm:               https://${KC_ROUTE_HOST}/realms/platform"
 fi
-GOVERNANCE_ROUTE_HOST=$(oc get route governance-hub -n "${NAMESPACE}" -o jsonpath='https://{.spec.host}' 2>/dev/null || true)
-if [[ -n "${GOVERNANCE_ROUTE_HOST}" ]]; then
-  echo "    Governance Hub dashboard: ${GOVERNANCE_ROUTE_HOST}"
-fi
-COMPLIANCE_MCP_ROUTE_HOST=$(oc get route compliance-mcp-server -n "${NAMESPACE}" -o jsonpath='https://{.spec.host}' 2>/dev/null || true)
-if [[ -n "${COMPLIANCE_MCP_ROUTE_HOST}" ]]; then
-  echo "    Compliance MCP endpoint: ${COMPLIANCE_MCP_ROUTE_HOST}/mcp"
+RHDH_ROUTE_HOST=$(oc get route -n rhdh --no-headers 2>/dev/null | grep backstage | awk '{print $2}' | head -1 || true)
+if [[ -n "${RHDH_ROUTE_HOST}" ]]; then
+  echo "    Developer Hub:         https://${RHDH_ROUTE_HOST}"
+  echo "      Users: admin / password   developer / password"
 fi
