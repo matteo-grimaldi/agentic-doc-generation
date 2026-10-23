@@ -1,0 +1,17 @@
+# ConsoleLink adds a Developer Hub entry to the OpenShift web console
+# ApplicationMenu (top-right launcher grid).
+# The href and imageURL are placeholder values — the configure-rhdh Sync Job
+# (wave 18) patches them with the live RHDH Route URL.
+apiVersion: console.openshift.io/v1
+kind: ConsoleLink
+metadata:
+  name: rhdh
+  annotations:
+    argocd.argoproj.io/sync-wave: "15"
+spec:
+  location: ApplicationMenu
+  text: Developer Hub
+  applicationMenu:
+    section: Developer Tools
+    imageURL: https://placeholder.example.com/favicon.ico
+  href: https://placeholder.example.com

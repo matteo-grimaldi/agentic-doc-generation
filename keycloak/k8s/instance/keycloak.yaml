@@ -1,0 +1,32 @@
+# Keycloak instance — created once the RHBK operator CRD is installed.
+# The operator automatically creates:
+#   - A Deployment for the Keycloak server
+#   - A Service (keycloak-service) on port 8080 (HTTP internally)
+#   - An OpenShift Route with edge TLS termination
+#   - A Secret named keycloak-initial-admin with the generated admin password
+#
+# The configure-rhdh Job in developer-hub/ reads keycloak-initial-admin to
+# obtain an admin token, then creates realm users and the RHDH OIDC client
+# via the Admin API.
+# Ref: https://docs.redhat.com/en/documentation/red_hat_build_of_keycloak/26.0/html/operator_guide/basic-deployment-
+apiVersion: k8s.keycloak.org/v2alpha1
+kind: Keycloak
+metadata:
+  name: keycloak
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  instances: 1
+  # HTTP only inside the cluster; TLS is handled by the OpenShift Route
+  # (edge termination) that the operator creates automatically.
+  http:
+    httpEnabled: true
+  hostname:
+    strict: false
+    strictBackchannel: false
+  db:
+    # Use the built-in H2 ephemeral database for a demo. For a persistent
+    # deployment, switch to an external PostgreSQL instance here.
+    vendor: dev-file

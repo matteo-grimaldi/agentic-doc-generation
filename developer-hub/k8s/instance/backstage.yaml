@@ -1,0 +1,63 @@
+# RHDH Backstage instance — references app-config, dynamic plugins, and secrets.
+# The operator creates the Route automatically (route.enabled defaults to true).
+# Adapted from rhoai3-coding-demo for agentic-doc-generation context.
+# Ref: https://docs.redhat.com/en/documentation/red_hat_developer_hub/1.10/html-single/configuring_red_hat_developer_hub/
+apiVersion: rhdh.redhat.com/v1alpha5
+kind: Backstage
+metadata:
+  name: developer-hub
+  namespace: rhdh
+  annotations:
+    argocd.argoproj.io/sync-wave: "18"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  # Disable Developer Lightspeed: no LLM is configured for the portal UI itself
+  # (the AI agents run separately). Disabling prevents the operator from
+  # injecting the unconfigured lightspeed-core sidecar (RHDH 1.10).
+  flavours:
+    - name: lightspeed
+      enabled: false
+  # Prevent the first-boot migration surge-race. The operator's default
+  # Deployment uses RollingUpdate with maxSurge 25% which rounds up to 1
+  # extra pod for a single replica. On a fresh database that surge brings up
+  # TWO backends that race each other's DB migrations and both crash.
+  # maxSurge:0 ensures only one migrator runs at a time.
+  deployment:
+    patch:
+      spec:
+        strategy:
+          rollingUpdate:
+            maxSurge: 0
+            maxUnavailable: 1
+  application:
+    appConfig:
+      mountPath: /opt/app-root/src
+      configMaps:
+        - name: app-config-rhdh
+    dynamicPluginsConfigMapName: dynamic-plugins-rhdh
+    extraFiles:
+      mountPath: /opt/app-root/src
+      configMaps:
+        - name: rhdh-rbac-policies
+          mountPath: /opt/app-root/src/rbac
+          containers:
+            - backstage-backend
+        - name: rhdh-catalog
+          mountPath: /opt/app-root/src/catalog
+          containers:
+            - backstage-backend
+        # Cluster CA for the Kubernetes plugin's caFile. The operator sets
+        # automountServiceAccountToken false so /var/run/secrets/... is absent.
+        - name: kube-root-ca.crt
+          mountPath: /opt/app-root/src/k8s-ca
+          containers:
+            - backstage-backend
+    extraEnvs:
+      envs:
+        # Add the cluster CA to Node's trust store so the Kubernetes plugin's
+        # custom HTTPS agent (with caFile) is honored — avoids the global
+        # NODE_TLS_REJECT_UNAUTHORIZED=0 workaround used in some examples.
+        - name: NODE_EXTRA_CA_CERTS
+          value: /opt/app-root/src/k8s-ca/ca.crt
+      secrets:
+        - name: rhdh-secrets

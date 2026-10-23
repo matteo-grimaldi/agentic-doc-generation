@@ -1,0 +1,160 @@
+# Static Backstage software catalog for the agentic-doc-generation demo.
+#
+# GitOps path (ArgoCD): this ConfigMap is applied by ArgoCD; the Backstage
+#   CR mounts it at /opt/app-root/src/catalog/all.yaml.
+# Non-GitOps path (build-and-deploy.sh): the script creates this ConfigMap via
+#   oc create configmap rhdh-catalog --from-file=all.yaml=developer-hub/k8s/catalog/all.yaml
+#
+# When updating catalog entities, edit developer-hub/k8s/catalog/all.yaml
+# and keep this ConfigMap in sync (or re-run build-and-deploy.sh).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rhdh-catalog
+  namespace: rhdh
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+data:
+  all.yaml: |
+    ---
+    apiVersion: backstage.io/v1alpha1
+    kind: User
+    metadata:
+      name: admin
+      description: Platform administrator
+    spec:
+      memberOf: [demo-team]
+    ---
+    apiVersion: backstage.io/v1alpha1
+    kind: User
+    metadata:
+      name: developer
+      description: Application developer
+    spec:
+      memberOf: [demo-team]
+    ---
+    apiVersion: backstage.io/v1alpha1
+    kind: User
+    metadata:
+      name: architect
+      description: Platform architect — member of the architects group, has Governance Hub access
+    spec:
+      memberOf: [architects]
+    ---
+    apiVersion: backstage.io/v1alpha1
+    kind: Group
+    metadata:
+      name: architects
+      description: Platform architects with access to the Governance Hub
+    spec:
+      type: team
+      children: []
+      members:
+        - architect
+    ---
+    apiVersion: backstage.io/v1alpha1
+    kind: Group
+    metadata:
+      name: demo-team
+      description: Agentic doc generation demo team
+    spec:
+      type: team
+      children: []
+    ---
+    apiVersion: backstage.io/v1alpha1
+    kind: System
+    metadata:
+      name: agentic-doc-generation
+      description: AI-powered documentation generation system using OGX agents and a shared GitHub MCP server.
+      tags:
+        - ai
+        - documentation
+        - agents
+        - openshift
+    spec:
+      owner: demo-team
+    ---
+    apiVersion: backstage.io/v1alpha1
+    kind: Component
+    metadata:
+      name: github-mcp-server
+      title: GitHub MCP Server
+      description: FastMCP server that exposes GitHub repository browsing as MCP tools.
+      annotations:
+        backstage.io/source-location: url:https://github.com/matteo-grimaldi/agentic-doc-generation/tree/main/github-mcp-server
+        backstage.io/kubernetes-id: github-mcp-server
+        argocd/app-name: github-mcp-server
+      tags: [python, mcp, fastmcp, github]
+    spec:
+      type: service
+      lifecycle: production
+      owner: demo-team
+      system: agentic-doc-generation
+      providesApis: [github-mcp-api]
+    ---
+    apiVersion: backstage.io/v1alpha1
+    kind: Component
+    metadata:
+      name: doc-gen-agent
+      title: Documentation Generation Agent
+      description: OGX agentic loop + Gradio UI that generates architecture documentation with Mermaid C4 diagrams.
+      annotations:
+        backstage.io/source-location: url:https://github.com/matteo-grimaldi/agentic-doc-generation/tree/main/doc-gen-agent
+        backstage.io/kubernetes-id: doc-gen-agent
+        argocd/app-name: doc-gen-agent
+      tags: [python, gradio, ogx, ai, documentation]
+    spec:
+      type: service
+      lifecycle: production
+      owner: demo-team
+      system: agentic-doc-generation
+      consumesApis: [github-mcp-api]
+    ---
+    apiVersion: backstage.io/v1alpha1
+    kind: Component
+    metadata:
+      name: openapi-gen-agent
+      title: OpenAPI Generation Agent
+      description: OGX agentic loop + Gradio UI that generates OpenAPI 3.0 specifications for HTTP API repositories.
+      annotations:
+        backstage.io/source-location: url:https://github.com/matteo-grimaldi/agentic-doc-generation/tree/main/openapi-gen-agent
+        backstage.io/kubernetes-id: openapi-gen-agent
+        argocd/app-name: openapi-gen-agent
+      tags: [python, gradio, ogx, ai, openapi]
+    spec:
+      type: service
+      lifecycle: production
+      owner: demo-team
+      system: agentic-doc-generation
+      consumesApis: [github-mcp-api]
+    ---
+    apiVersion: backstage.io/v1alpha1
+    kind: API
+    metadata:
+      name: github-mcp-api
+      title: GitHub MCP API
+      description: MCP tools exposed by the GitHub MCP server (get_repo_info, get_repo_structure, read_file, search_code).
+      tags: [mcp, github, rest]
+    spec:
+      type: openapi
+      lifecycle: production
+      owner: demo-team
+      system: agentic-doc-generation
+      definition: |
+        openapi: "3.0.0"
+        info:
+          title: GitHub MCP Server API
+          version: "1.0"
+        paths:
+          /propose-doc:
+            post:
+              summary: Trigger async documentation generation
+              responses:
+                '202':
+                  description: Accepted
+          /health:
+            get:
+              summary: Health check
+              responses:
+                '200':
+                  description: OK

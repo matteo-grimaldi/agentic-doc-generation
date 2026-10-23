@@ -1,0 +1,13 @@
+# OperatorGroup scoped to the keycloak namespace so the RHBK operator only
+# watches that namespace. A namespace-scoped group is preferred over
+# all-namespaces for operators that create cluster resources at runtime.
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: keycloak
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  targetNamespaces:
+    - keycloak

@@ -1,0 +1,28 @@
+# Platform realm shell import.
+#
+# IMPORTANT: KeycloakRealmImport only CREATES a realm — it never updates or
+# deletes an existing one. This manifest creates the realm shell (name,
+# display name, basic settings). All runtime wiring — users (admin, developer)
+# and the RHDH OIDC client — is applied idempotently by the configure-rhdh
+# Sync Job in developer-hub/ via the Keycloak Admin API. This avoids the
+# create-only limitation of KeycloakRealmImport for subsequent syncs.
+#
+# Ref: https://docs.redhat.com/en/documentation/red_hat_build_of_keycloak/26.0/html/operator_guide/realm-import-
+apiVersion: k8s.keycloak.org/v2alpha1
+kind: KeycloakRealmImport
+metadata:
+  name: platform-realm
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  keycloakCRName: keycloak
+  realm:
+    realm: platform
+    displayName: Platform
+    enabled: true
+    sslRequired: external
+    registrationAllowed: false
+    loginWithEmailAllowed: false
+    duplicateEmailsAllowed: false
