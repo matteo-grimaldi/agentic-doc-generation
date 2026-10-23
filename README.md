@@ -1,10 +1,11 @@
 # Agentic Doc Generation — OpenShift Demo
 
-A GitOps-provisioned demo showing two independent AI agents on
-**OpenShift** automating repository documentation — a simplified take on
+A GitOps-provisioned demo showing three independent AI agents on
+**OpenShift** automating repository documentation and architectural
+compliance — a simplified take on
 [opendatahub-io/architecture-context](https://github.com/opendatahub-io/architecture-context).
 
-Give either agent a GitHub repository URL. Each explores the repo via a
+Give any agent a GitHub repository URL. Each explores the repo via a
 shared GitHub MCP server, then a model served by **your own external,
 OpenAI-compatible endpoint** (no GPU or in-cluster model serving required)
 synthesizes its output:
@@ -14,21 +15,26 @@ synthesizes its output:
 - **openapi-gen-agent** — an OpenAPI 3.0.x specification (YAML), for repos
   that look like HTTP API services and don't already ship one, with its
   own opt-in "Propose as PR" button
+- **compliance-scan-agent** — a structured compliance report checking
+  K8s/OpenShift manifests, project structure, and (for Maven projects)
+  `pom.xml` against separately-maintained guideline documents. Unlike the
+  other two agents, it never opens a PR — it only reports findings, which
+  show up on the Governance Hub dashboard when triggered from there
 
-The two agents are fully independent components: separate pods, separate
-UIs/routes, separate budgets, separate PRs. Neither triggers the other.
+The three agents are fully independent components: separate pods, separate
+UIs/routes, separate budgets. None of them trigger each other.
 
-A third, optional component, **governance-hub**, is a single pane of
+A fourth, optional component, **governance-hub**, is a single pane of
 glass for architectural governance teams: a compliance dashboard that
-tracks, for every repo either agent has run against, whether it has an
-architecture document and/or an OpenAPI spec, surfaces violations, and
-lets a human trigger "Fix it" remediation (re-running the appropriate
-agent) with one click. A fourth, independent component,
-**compliance-mcp-server**, is a standalone, read-only **Compliance MCP
-server** that lets other AI agents query that same compliance state — it
-holds no data of its own, proxying every query through governance-hub's
-REST API. See [Governance dashboard](#governance-dashboard-governance-hub)
-below.
+tracks, for every repo any agent has run against, whether it has an
+architecture document, an OpenAPI spec, and/or any compliance-scan
+violations, surfaces them, and lets a human trigger "Fix it" remediation
+(re-running the appropriate agent) with one click. A fifth, independent
+component, **compliance-mcp-server**, is a standalone, read-only
+**Compliance MCP server** that lets other AI agents query that same
+compliance state — it holds no data of its own, proxying every query
+through governance-hub's REST API. See
+[Governance dashboard](#governance-dashboard-governance-hub) below.
 
 > **Looking for the original, fully in-cluster design?** The
 > [`local-model`](https://github.com/YOUR_ORG/agentic-doc-generation/tree/local-model)
@@ -57,6 +63,10 @@ flowchart TB
                 ApiGradio["Gradio UI\n:7860"]
                 ApiOGX["OGX Sidecar\n:8321"]
             end
+            subgraph scan_pod [Compliance-Scan Agent Pod]
+                ScanGradio["Gradio UI\n:7860"]
+                ScanOGX["OGX Sidecar\n:8321"]
+            end
             GitHubMCP["GitHub MCP Server\n:8080"]
             GovHub["Governance Hub\nDashboard + REST API\n:7860"]
             ComplianceMCP["Compliance MCP Server\n:8080"]
@@ -69,18 +79,24 @@ flowchart TB
 
     Browser -->|"repo URL"| DocGradio
     Browser -->|"repo URL"| ApiGradio
+    Browser -->|"repo URL"| ScanGradio
     DocGradio -->|"Responses API"| DocOGX
     ApiGradio -->|"Responses API"| ApiOGX
+    ScanGradio -->|"Responses API"| ScanOGX
     DocOGX -->|"MCP tools"| GitHubMCP
     ApiOGX -->|"MCP tools"| GitHubMCP
+    ScanOGX -->|"MCP tools"| GitHubMCP
     DocOGX -->|"inference (HTTPS)"| InferenceEndpoint
     ApiOGX -->|"inference (HTTPS)"| InferenceEndpoint
+    ScanOGX -->|"inference (HTTPS)"| InferenceEndpoint
     GitHubMCP -->|"GitHub API"| GitHub["github.com"]
     Browser -->|"view compliance"| GovHub
     DocGradio -.->|"POST /api/runs\n(run report)"| GovHub
     ApiGradio -.->|"POST /api/runs\n(run report)"| GovHub
+    ScanGradio -.->|"POST /api/runs\n(report + run report)"| GovHub
     GovHub -->|"POST /invoke\n(Fix-it button)"| DocGradio
     GovHub -->|"POST /invoke\n(Fix-it button)"| ApiGradio
+    GovHub -->|"POST /invoke\n(Run Scan button)"| ScanGradio
     GovHub -->|"GET /repo-structure\n(compliance check)"| GitHubMCP
     ComplianceMCP -->|"GET /api/repos*\n(REST proxy)"| GovHub
     AppOfApps -->|deploys| GitHubMCP
@@ -119,6 +135,25 @@ user invokes:
    evidence for
 5. Everything streams back into its own chat UI
 
+**compliance-scan-agent:**
+1. User pastes a GitHub repo URL into its own Gradio chat UI, or a
+   governance-team member clicks "Run Compliance Scan" on the
+   [Governance Hub](#governance-dashboard-governance-hub) dashboard
+2. Agent fetches the repo's file tree (zero model budget) and classifies
+   files relevant to three guideline categories: K8s/OpenShift manifests,
+   project structure, and `pom.xml`
+3. It calls `get_file_outline`/`read_file` on the GitHub MCP server for
+   just those classified files
+4. The configured model checks what it found against each of three
+   separately-maintained guideline Markdown files (see
+   [`compliance-scan-agent/guidelines/`](compliance-scan-agent/guidelines/))
+   and produces a structured compliance report: a Markdown table of
+   checks, each PASS/FAIL/SKIP with a severity and remediation hint
+5. Unlike the other two agents, **it never opens a PR** — the report
+   streams back into its chat UI, and (when triggered via `/invoke`, e.g.
+   from the Governance Hub) is also sent to the Hub's `POST /api/runs`
+   callback, where it's rendered on the repo's detail page
+
 ## Prerequisites
 
 - An OpenShift cluster, logged in as `cluster-admin` (`oc login`) —
@@ -131,10 +166,11 @@ user invokes:
   GitLab, or an internal git server) — ArgoCD needs to clone it
 - (Optional) A `GITHUB_TOKEN` with `public_repo` scope, to raise GitHub
   API rate limits and enable the `search_code` tool. Required (with its
-  write access, which `public_repo` already includes) if you want either
-  agent's `/invoke` endpoint to propose its generated output back to its
-  source repo via PR — see
-  [CI/CD pipeline demo](#cicd-pipeline-demo-openshift-pipelines)
+  write access, which `public_repo` already includes) if you want
+  doc-gen-agent's or openapi-gen-agent's `/invoke` endpoint to propose
+  its generated output back to its source repo via PR — see
+  [CI/CD pipeline demo](#cicd-pipeline-demo-openshift-pipelines).
+  compliance-scan-agent never needs write access — it only reports.
 
 ## Quick start (GitOps)
 
@@ -153,11 +189,11 @@ This single command:
 3. ArgoCD then reconciles everything else, in dependency order via
    sync-waves:
    - **Wave 0** — `doc-gen-demo` namespace + GitHub MCP server
-   - **Wave 1** — doc-gen-agent, openapi-gen-agent (each its own Gradio UI
-     + OGX sidecar pod), governance-hub (dashboard + REST API), and
-     compliance-mcp-server (standalone Compliance MCP server), all
-     applied concurrently — each depends only on another wave 0/1
-     component's Service DNS name (compliance-mcp-server on
+   - **Wave 1** — doc-gen-agent, openapi-gen-agent, compliance-scan-agent
+     (each its own Gradio UI + OGX sidecar pod), governance-hub (dashboard
+     + REST API), and compliance-mcp-server (standalone Compliance MCP
+     server), all applied concurrently — each depends only on another
+     wave 0/1 component's Service DNS name (compliance-mcp-server on
      governance-hub's), and tolerates that dependency being briefly
      unavailable at startup
 
@@ -177,14 +213,16 @@ oc get applications -n openshift-gitops -w
 
 Before (or right after) the agents come up, point them at your external
 model endpoint — see [Model configuration](#model-configuration) below
-(both agents share the same `cluster-config` ConfigMap).
+(all three agents share the same `cluster-config` ConfigMap).
 
-Once `doc-gen-agent`, `openapi-gen-agent`, `governance-hub`, and
-`compliance-mcp-server` are `Synced`/`Healthy`, get their routes:
+Once `doc-gen-agent`, `openapi-gen-agent`, `compliance-scan-agent`,
+`governance-hub`, and `compliance-mcp-server` are `Synced`/`Healthy`, get
+their routes:
 
 ```bash
 oc get route doc-gen-agent -n doc-gen-demo -o jsonpath='https://{.spec.host}{"\n"}'
 oc get route openapi-gen-agent -n doc-gen-demo -o jsonpath='https://{.spec.host}{"\n"}'
+oc get route compliance-scan-agent -n doc-gen-demo -o jsonpath='https://{.spec.host}{"\n"}'
 oc get route governance-hub -n doc-gen-demo -o jsonpath='https://{.spec.host}{"\n"}'
 oc get route compliance-mcp-server -n doc-gen-demo -o jsonpath='https://{.spec.host}{"\n"}'
 ```
@@ -205,6 +243,7 @@ Or deploy a single component:
 ./build-and-deploy-all.sh github-mcp-server
 ./build-and-deploy-all.sh doc-gen-agent
 ./build-and-deploy-all.sh openapi-gen-agent
+./build-and-deploy-all.sh compliance-scan-agent
 ./build-and-deploy-all.sh governance-hub
 ./build-and-deploy-all.sh compliance-mcp-server
 ```
@@ -241,15 +280,29 @@ Or deploy a single component:
 5. Click **"Propose as PR"** to open a pull request with the generated
    spec, independent of any doc-gen-agent PR for the same repo
 
+**compliance-scan-agent (architectural compliance report):**
+1. Open the compliance-scan agent route in a browser (separate Route from
+   the other two agents')
+2. Paste a repo URL, e.g. `https://github.com/quarkusio/quarkus-quickstarts`
+3. Watch the agent fetch the file tree, classify K8s manifests /
+   Dockerfiles / `pom.xml` by path convention, and read just those files
+4. Stream back a Markdown compliance report: one table row per
+   applicable check, each PASS/FAIL/SKIP with a severity and (for
+   failures) a one-line remediation hint
+5. There is no "Propose as PR" button here — this agent only reports.
+   Trigger it from the [Governance Hub](#governance-dashboard-governance-hub)
+   dashboard instead to have the report show up on a repo's detail page
+
 ## Governance dashboard (`governance-hub`)
 
 A single pane of glass for architectural governance teams: it tracks
-which repos have an architecture document and/or an OpenAPI spec, flags
-violations, and lets a human trigger remediation without opening either
-agent's own UI. It never discovers repos on its own (no background
-GitHub-org scan) — a repo appears here the moment doc-gen-agent or
-openapi-gen-agent reports a completed run against it, or the moment a
-governance-team member triggers one directly from this dashboard.
+which repos have an architecture document, an OpenAPI spec, and/or
+compliance-scan violations, flags them, and lets a human trigger
+remediation without opening any agent's own UI. It never discovers repos
+on its own (no background GitHub-org scan) — a repo appears here the
+moment any of the three agents reports a completed run against it, or the
+moment a governance-team member triggers one directly from this
+dashboard.
 
 **Open the dashboard:**
 
@@ -262,21 +315,28 @@ oc get route governance-hub -n doc-gen-demo -o jsonpath='https://{.spec.host}{"\
 - A table of tracked repos with ✅/❌ badges for architecture doc and
   OpenAPI spec presence (checked via the GitHub MCP server's
   `GET /repo-structure` route — a zero-LLM-cost file-tree scan, not model
-  inference)
+  inference), plus a compliance-scan column showing whether the most
+  recent scan found any violations
 - Click into a repo for its full run history (every doc-gen-agent /
-  openapi-gen-agent invocation, its outcome, and any resulting PR link),
-  a **"🔄 Refresh compliance check"** button, and two **"🛠️ Fix it"**
-  buttons that call the corresponding agent's `POST /invoke` — the same
-  endpoint the [CI/CD pipeline](#cicd-pipeline-demo-openshift-pipelines)
-  uses. Remediation is always an explicit click; the Hub never
-  auto-triggers either agent.
+  openapi-gen-agent / compliance-scan-agent invocation, its outcome, and
+  any resulting PR link), a **"🔄 Refresh compliance check"** button, and
+  three **"🛠️ Fix it"**-style buttons that call the corresponding
+  agent's `POST /invoke` — the same endpoint the
+  [CI/CD pipeline](#cicd-pipeline-demo-openshift-pipelines) uses for the
+  other two agents. Remediation is always an explicit click; the Hub
+  never auto-triggers any agent. Running the compliance scan from here
+  renders the agent's full Markdown report inline on the repo's detail
+  page (its only deliverable, since it never opens a PR).
 
-**How repos get tracked:** both agents optionally report every background
-run's outcome to the Hub's `POST /api/runs` callback (controlled by each
-agent's `GOVERNANCE_HUB_URL` env var — leave it empty to opt out). A
-freshly opened PR does **not** immediately flip a repo to "compliant": the
-Hub only trusts what's actually on the default branch, re-checked via
-`GET /repo-structure` after each reported run.
+**How repos get tracked:** all three agents optionally report every
+background run's outcome to the Hub's `POST /api/runs` callback
+(controlled by each agent's `GOVERNANCE_HUB_URL` env var — leave it empty
+to opt out). A freshly opened PR does **not** immediately flip a repo to
+"compliant": the Hub only trusts what's actually on the default branch,
+re-checked via `GET /repo-structure` after each reported run. Compliance-
+scan violations, by contrast, are judged directly from the agent's
+reported Markdown table (does it contain a `FAIL` row?) since there is no
+merged-artifact equivalent to re-check against.
 
 **Compliance MCP server:** a separate, standalone component,
 [`compliance-mcp-server`](compliance-mcp-server/), exposes a read-only
@@ -307,26 +367,26 @@ proxies.
 
 ## Model configuration
 
-Both agents call whatever OpenAI-compatible endpoint you point them
+All three agents call whatever OpenAI-compatible endpoint you point them
 at — your own vLLM/Ollama deployment, a hosted provider like OpenAI, or
 an internal gateway. They share the same endpoint configuration, set in
 two places:
 
 | File | What to set |
 |---|---|
-| [`doc-gen-agent/k8s/cluster-config.yaml`](doc-gen-agent/k8s/cluster-config.yaml) | `data.model_base_url` (the endpoint's OpenAI-compatible `/v1` base URL) and `data.model_name` — read by **both** doc-gen-agent and openapi-gen-agent |
-| [`doc-gen-agent/ogx/stack_run_config.yaml`](doc-gen-agent/ogx/stack_run_config.yaml) and [`openapi-gen-agent/ogx/stack_run_config.yaml`](openapi-gen-agent/ogx/stack_run_config.yaml) | `registered_resources.models[0].model_id` / `provider_model_id` in **each** file (must match `model_name` above and the identifier your endpoint expects) |
+| [`doc-gen-agent/k8s/cluster-config.yaml`](doc-gen-agent/k8s/cluster-config.yaml) | `data.model_base_url` (the endpoint's OpenAI-compatible `/v1` base URL) and `data.model_name` — read by **all three** of doc-gen-agent, openapi-gen-agent, and compliance-scan-agent |
+| [`doc-gen-agent/ogx/stack_run_config.yaml`](doc-gen-agent/ogx/stack_run_config.yaml), [`openapi-gen-agent/ogx/stack_run_config.yaml`](openapi-gen-agent/ogx/stack_run_config.yaml), and [`compliance-scan-agent/ogx/stack_run_config.yaml`](compliance-scan-agent/ogx/stack_run_config.yaml) | `registered_resources.models[0].model_id` / `provider_model_id` in **each** file (must match `model_name` above and the identifier your endpoint expects) |
 
 If the endpoint requires an API key, create a Secret (not committed to
-git) — both agents' Deployments reference the same Secret name:
+git) — all three agents' Deployments reference the same Secret name:
 
 ```bash
 oc create secret generic external-model-credentials \
   --from-literal=api_key=<your-api-key> -n doc-gen-demo
 ```
 
-Both agents' `k8s/deployment.yaml` read this Secret optionally — leave it
-unset for endpoints that don't require auth.
+All three agents' `k8s/deployment.yaml` read this Secret optionally —
+leave it unset for endpoints that don't require auth.
 
 If using GitOps, commit and push the `cluster-config.yaml` /
 `stack_run_config.yaml` changes — ArgoCD's `selfHeal` will roll them out
@@ -361,6 +421,13 @@ agentic-doc-generation/
 │   ├── agent.py                         # OGX Responses API agent, OpenAPI-focused system prompt
 │   ├── app.py                           # Gradio chat UI + POST /invoke
 │   ├── openapi-knowledge.md             # OpenAPI style guide injected into the agent prompt
+│   ├── ogx/stack_run_config.yaml        # OGX + external model config
+│   ├── build-and-deploy.sh
+│   └── k8s/
+├── compliance-scan-agent/               # OGX sidecar + Gradio UI — architectural compliance scan (independent)
+│   ├── agent.py                         # OGX Responses API agent, compliance-focused system prompt
+│   ├── app.py                           # Gradio chat UI + POST /invoke — never opens a PR
+│   ├── guidelines/                      # k8s-manifests.md, project-structure.md, pom-xml.md — one per check category
 │   ├── ogx/stack_run_config.yaml        # OGX + external model config
 │   ├── build-and-deploy.sh
 │   └── k8s/
@@ -549,24 +616,34 @@ server(s) already deployed in `doc-gen-demo`.
   has to review and merge the PR. **Neither agent ever opens a PR
   automatically from its chat UI** — a PR is only ever opened via
   `/invoke` (the CI/CD trigger path) or an explicit "Propose as PR" click.
+  **compliance-scan-agent never opens a PR at all** — it only reports.
 - Each agent reads file contents one at a time; very large monorepos will
   hit the `MAX_INFER_ITERS` / token-budget guardrails in
-  [`doc-gen-agent/agent.py`](doc-gen-agent/agent.py) and
-  [`openapi-gen-agent/agent.py`](openapi-gen-agent/agent.py) and produce a
-  partial-but-useful (or, for openapi-gen-agent, no) result rather than
-  exhaustive coverage — this mirrors the token-budget tuning notes in the
-  reference ocp-troubleshooter-demo.
+  [`doc-gen-agent/agent.py`](doc-gen-agent/agent.py),
+  [`openapi-gen-agent/agent.py`](openapi-gen-agent/agent.py), and
+  [`compliance-scan-agent/agent.py`](compliance-scan-agent/agent.py) and
+  produce a partial-but-useful (or, for openapi-gen-agent, no) result
+  rather than exhaustive coverage — this mirrors the token-budget tuning
+  notes in the reference ocp-troubleshooter-demo.
 - openapi-gen-agent's file-tree heuristic (`detect_needs_openapi`) is a
   cheap pre-filter, not authoritative — the agent's own system prompt
   re-confirms and bails out with `NOT_AN_API` if it disagrees, so a wrong
   heuristic trigger costs one extra bounded agent run, never a bogus PR.
+- compliance-scan-agent only checks what its three guideline files (see
+  [`compliance-scan-agent/guidelines/`](compliance-scan-agent/guidelines/))
+  define — it is not a general-purpose linter, and a check category with
+  no applicable files (e.g. `pom.xml` checks on a non-Maven repo) is
+  reported as SKIP for that category, not a violation.
 - Inference quality and latency depend entirely on the external endpoint
   you configure — this repo does not provision or manage that endpoint.
 - `governance-hub` discovers repos purely by agent activity — it never
   scans a GitHub org on its own, so a repo with an undetected compliance
   gap simply won't appear until an agent runs against it at least once
   (via its chat UI, `/invoke`, or the Hub's own "Fix it" button).
-  Compliance checks are existence-only (does `ARCHITECTURE.md` /
-  `openapi.yaml` exist on the default branch?), not a quality or
-  freshness check, and a PR the Hub reports as opened doesn't flip a repo
-  to "compliant" until that PR is actually merged.
+  Architecture-doc/OpenAPI-spec checks are existence-only (does
+  `ARCHITECTURE.md` / `openapi.yaml` exist on the default branch?), not a
+  quality or freshness check, and a PR the Hub reports as opened doesn't
+  flip a repo to "compliant" until that PR is actually merged.
+  compliance-scan violations are judged directly from the latest reported
+  scan's Markdown table, since there's no merged-artifact equivalent to
+  re-check against.

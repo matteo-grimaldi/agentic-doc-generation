@@ -3,10 +3,11 @@ Governance Hub -- single-pane-of-glass compliance dashboard for
 architectural governance teams.
 
 Repos are discovered purely by agent activity: a repo first appears here
-the moment doc-gen-agent or openapi-gen-agent reports a completed run
-against it (POST /api/runs), or the moment a governance-team member
-triggers one from this dashboard (POST /api/repos/{owner}/{repo}/remediate
--- the "Fix it" button). There is no background GitHub-org scan.
+the moment doc-gen-agent, openapi-gen-agent, or compliance-scan-agent
+reports a completed run against it (POST /api/runs), or the moment a
+governance-team member triggers one from this dashboard
+(POST /api/repos/{owner}/{repo}/remediate -- the "Fix it" button). There
+is no background GitHub-org scan.
 
 Compliance itself ("does this repo have an architecture doc / OpenAPI
 spec") is checked on demand via the GitHub MCP server's zero-LLM-cost
@@ -28,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -46,15 +48,40 @@ logger = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# URLs of the two agents this Hub can trigger remediation against. Empty
+# URLs of the three agents this Hub can trigger remediation against. Empty
 # strings are tolerated (the remediate endpoint just returns an error for
 # that agent_type) so the Hub still runs standalone for local iteration.
 DOC_GEN_AGENT_URL = os.getenv("DOC_GEN_AGENT_URL", "http://doc-gen-agent.doc-gen-demo.svc.cluster.local:7860")
 OPENAPI_GEN_AGENT_URL = os.getenv(
     "OPENAPI_GEN_AGENT_URL", "http://openapi-gen-agent.doc-gen-demo.svc.cluster.local:7860"
 )
+# compliance-scan-agent never opens a PR -- triggering it here just fires
+# its POST /invoke the same way as the other two, but its "fix" is a
+# report, not a PR (see report_run's report_text handling below).
+COMPLIANCE_SCAN_AGENT_URL = os.getenv(
+    "COMPLIANCE_SCAN_AGENT_URL", "http://compliance-scan-agent.doc-gen-demo.svc.cluster.local:7860"
+)
 
-AGENT_URLS = {"doc-gen": DOC_GEN_AGENT_URL, "openapi-gen": OPENAPI_GEN_AGENT_URL}
+AGENT_URLS = {
+    "doc-gen": DOC_GEN_AGENT_URL,
+    "openapi-gen": OPENAPI_GEN_AGENT_URL,
+    "compliance-scan": COMPLIANCE_SCAN_AGENT_URL,
+}
+
+# A report "has violations" if its Markdown table contains at least one
+# FAIL row -- a simple, format-matching check rather than re-parsing the
+# whole table, since compliance-scan-agent's own system prompt is the
+# source of truth for the table's exact shape (see
+# compliance-scan-agent/agent.py's _build_system_prompt).
+_REPORT_FAIL_ROW_RE = re.compile(r"\|\s*FAIL\s*\|")
+
+
+def _report_has_violations(report_text: str | None) -> bool | None:
+    """None if no report text was given (nothing to judge), else whether
+    the report's table contains any FAIL row."""
+    if not report_text:
+        return None
+    return bool(_REPORT_FAIL_ROW_RE.search(report_text))
 
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
@@ -74,6 +101,10 @@ def _repo_to_dict(tracked: TrackedRepo) -> dict:
         "last_compliance_check": tracked.last_compliance_check.isoformat() if tracked.last_compliance_check else None,
         "last_doc_gen_run": tracked.last_doc_gen_run.isoformat() if tracked.last_doc_gen_run else None,
         "last_openapi_gen_run": tracked.last_openapi_gen_run.isoformat() if tracked.last_openapi_gen_run else None,
+        "last_compliance_scan_run": (
+            tracked.last_compliance_scan_run.isoformat() if tracked.last_compliance_scan_run else None
+        ),
+        "compliance_scan_has_violations": tracked.compliance_scan_has_violations,
         "doc_pr_url": tracked.doc_pr_url,
         "doc_pr_number": tracked.doc_pr_number,
         "doc_pr_status": tracked.doc_pr_status,
@@ -94,6 +125,7 @@ def _run_to_dict(run: AgentRun) -> dict:
         "pr_number": run.pr_number,
         "error_message": run.error_message,
         "triggered_by": run.triggered_by,
+        "report_text": run.report_text,
     }
 
 
@@ -121,7 +153,7 @@ async def _remediate(tracked_repo_id: int, repo_url: str, agent_type: str) -> di
     """
     agent_url = AGENT_URLS.get(agent_type)
     if not agent_url:
-        return {"error": f"Unknown agent_type '{agent_type}' (expected 'doc-gen' or 'openapi-gen')"}
+        return {"error": f"Unknown agent_type '{agent_type}' (expected 'doc-gen', 'openapi-gen', or 'compliance-scan')"}
 
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
@@ -164,8 +196,9 @@ app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), na
 
 init_db()
 logger.info(
-    "Governance Hub started (doc-gen agent: %s, openapi-gen agent: %s, github-mcp: %s)",
-    DOC_GEN_AGENT_URL, OPENAPI_GEN_AGENT_URL, compliance.GITHUB_MCP_SERVER_URL,
+    "Governance Hub started (doc-gen agent: %s, openapi-gen agent: %s, "
+    "compliance-scan agent: %s, github-mcp: %s)",
+    DOC_GEN_AGENT_URL, OPENAPI_GEN_AGENT_URL, COMPLIANCE_SCAN_AGENT_URL, compliance.GITHUB_MCP_SERVER_URL,
 )
 
 
@@ -234,16 +267,20 @@ async def repo_remediate_form(owner: str, repo: str, agent_type: str = Form(...)
 # ── REST API ─────────────────────────────────────────────────────────────
 
 class RunReport(BaseModel):
-    """Body for POST /api/runs -- what doc-gen-agent / openapi-gen-agent
-    POST when a background /invoke run finishes (see each agent's
-    _report_to_governance helper in app.py)."""
+    """Body for POST /api/runs -- what doc-gen-agent / openapi-gen-agent /
+    compliance-scan-agent POST when a background /invoke run finishes
+    (see each agent's _report_to_governance helper in app.py).
+    `report` is only ever set by compliance-scan-agent (its full
+    Markdown compliance report -- it never opens a PR, so this is the
+    run's entire deliverable)."""
 
     job_id: str
     repo_url: str
-    agent_type: str  # "doc-gen" | "openapi-gen"
+    agent_type: str  # "doc-gen" | "openapi-gen" | "compliance-scan"
     status: str  # "completed" | "failed" | "skipped"
     pr_url: str | None = None
     pr_number: int | None = None
+    report: str | None = None
     error: str | None = None
 
 
@@ -265,8 +302,10 @@ async def report_run(report: RunReport) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    if report.agent_type not in ("doc-gen", "openapi-gen"):
-        raise HTTPException(status_code=400, detail="agent_type must be 'doc-gen' or 'openapi-gen'")
+    if report.agent_type not in ("doc-gen", "openapi-gen", "compliance-scan"):
+        raise HTTPException(
+            status_code=400, detail="agent_type must be 'doc-gen', 'openapi-gen', or 'compliance-scan'"
+        )
 
     session = get_session()
     try:
@@ -281,6 +320,7 @@ async def report_run(report: RunReport) -> dict:
         run.completed_at = datetime.now(timezone.utc)
         run.pr_url = report.pr_url
         run.pr_number = report.pr_number
+        run.report_text = report.report
         run.error_message = report.error
 
         now = datetime.now(timezone.utc)
@@ -290,7 +330,7 @@ async def report_run(report: RunReport) -> dict:
                 tracked.doc_pr_url = report.pr_url
                 tracked.doc_pr_number = report.pr_number
                 tracked.doc_pr_status = "open"
-        else:
+        elif report.agent_type == "openapi-gen":
             tracked.last_openapi_gen_run = now
             if report.pr_url:
                 tracked.openapi_pr_url = report.pr_url
@@ -303,6 +343,14 @@ async def report_run(report: RunReport) -> dict:
                 # compliance check below is still the source of truth for
                 # whether a spec file actually already existed.
                 pass
+        else:  # "compliance-scan"
+            tracked.last_compliance_scan_run = now
+            if report.status == "completed":
+                tracked.compliance_scan_has_violations = _report_has_violations(report.report)
+            # "failed" leaves the prior known violations status
+            # untouched -- a failed run (e.g. a transient model/tool
+            # error) should never silently flip a clean repo to
+            # "violating" or vice versa.
 
         session.add(tracked)
         session.commit()
@@ -354,18 +402,20 @@ async def api_repo_check(owner: str, repo: str) -> dict:
 
 
 class RemediateRequest(BaseModel):
-    agent_type: str  # "doc-gen" | "openapi-gen"
+    agent_type: str  # "doc-gen" | "openapi-gen" | "compliance-scan"
 
 
 @app.post("/api/repos/{owner}/{repo}/remediate", status_code=202)
 async def api_repo_remediate(owner: str, repo: str, body: RemediateRequest) -> dict:
     """
-    "Fix it" -- trigger doc-gen-agent or openapi-gen-agent's POST /invoke
-    against this repo. Never happens automatically; this is only ever
-    called by an explicit governance-team action (the dashboard's Fix-it
-    button, or a deliberate API call), matching the "never auto-remediate
-    without human action" guardrail the rest of this project's agents also
-    follow for proposing PRs.
+    "Fix it" -- trigger doc-gen-agent, openapi-gen-agent, or
+    compliance-scan-agent's POST /invoke against this repo (for
+    compliance-scan-agent this runs a scan and reports a report, not a
+    PR). Never happens automatically; this is only ever called by an
+    explicit governance-team action (the dashboard's Fix-it button, or a
+    deliberate API call), matching the "never auto-remediate without
+    human action" guardrail the rest of this project's agents also follow
+    for proposing PRs.
     """
     session = get_session()
     try:

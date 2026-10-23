@@ -1,0 +1,14 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: compliance-scan-agent
+  namespace: doc-gen-demo
+spec:
+  to:
+    kind: Service
+    name: compliance-scan-agent
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
