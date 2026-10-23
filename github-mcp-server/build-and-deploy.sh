@@ -34,10 +34,10 @@ fi
 
 echo "==> Applying Kubernetes manifests..."
 oc apply -f "${SCRIPT_DIR}/k8s/deployment.yaml" -n "${NAMESPACE}"
-oc apply -f "${SCRIPT_DIR}/k8s/mcpserver.yaml" -n "${NAMESPACE}" 2>/dev/null || \
-  echo "    (MCPServer CRD not installed — skipping catalog registration, deployment is unaffected)"
 
 echo "==> Waiting for rollout..."
 oc rollout status deployment/github-mcp-server -n "${NAMESPACE}" --timeout=180s
 
 echo "==> Done. github-mcp-server is running in namespace ${NAMESPACE}."
+echo "    To register it (and every other MCP server in this repo) in OpenShift AI's"
+echo "    MCP catalog, run from the repo root: ./register-mcp-catalog.sh"
