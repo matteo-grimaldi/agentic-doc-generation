@@ -19,9 +19,10 @@
   {% if not repos %}
     <p class="gh-empty">
       No repos tracked yet. A repo appears here the moment
-      <code>doc-gen-agent</code> or <code>openapi-gen-agent</code> runs
-      against it — paste a repo URL into either agent's chat UI, or trigger
-      one via its <code>POST /invoke</code> endpoint.
+      <code>doc-gen-agent</code>, <code>openapi-gen-agent</code>, or
+      <code>compliance-scan-agent</code> runs against it — paste a repo URL
+      into any agent's chat UI, or trigger one via its
+      <code>POST /invoke</code> endpoint.
     </p>
   {% else %}
     <table class="gh-table">
@@ -30,6 +31,7 @@
           <th>Repository</th>
           <th>Architecture Doc</th>
           <th>OpenAPI Spec</th>
+          <th>Compliance Scan</th>
           <th>Last Checked</th>
           <th>Actions</th>
         </tr>
@@ -56,6 +58,15 @@
                 <span class="gh-badge gh-badge-unknown">— n/a</span>
               {% else %}
                 <span class="gh-badge gh-badge-missing">❌ missing</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if r.compliance_scan_has_violations is none %}
+                <span class="gh-badge gh-badge-unknown">— never scanned</span>
+              {% elif r.compliance_scan_has_violations %}
+                <span class="gh-badge gh-badge-missing">❌ violations found</span>
+              {% else %}
+                <span class="gh-badge gh-badge-ok">✅ clean</span>
               {% endif %}
             </td>
             <td class="gh-muted">
