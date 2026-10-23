@@ -1,0 +1,35 @@
+# MCP catalog entry for this repo's GitHub MCP server, consumed by
+# ../register-mcp-catalog.sh (repo root — loops over every component's
+# own fragment; NOT invoked by build-and-deploy.sh / ArgoCD).
+#
+# Red Hat OpenShift AI's Gen AI Playground / AI Hub tool list is driven
+# by a single, platform-wide `gen-ai-aa-mcp-servers` ConfigMap in the
+# `redhat-ods-applications` namespace (RHOAI 3.0+) — every MCP server on
+# the cluster that wants to appear there adds its own key to that same
+# ConfigMap. See:
+# https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.5/html/experimenting_with_models_in_the_gen_ai_playground/playground-prerequisites_rhoai-user
+#
+# Deliberately kept OUT of github-mcp-server/k8s/ (and therefore out of
+# the ArgoCD-managed github-mcp-server Application, which has
+# prune: true): that ConfigMap is shared platform-wide, cluster-admin
+# owned, cross-namespace state — exactly like install-openshift-ai.sh at
+# the repo root, which is also a one-time, imperative, out-of-gitops
+# step. Letting ArgoCD "own" a shared ConfigMap via its sync path would
+# mean a future removal of this file from git prunes the WHOLE
+# ConfigMap, deleting every other team's/demo's MCP catalog entries too
+# — not just this repo's key. register-mcp-catalog.sh instead applies
+# this file's `data` block as a JSON Merge Patch (`oc patch --type=merge
+# --patch-file=...`), which only ever adds/updates this one key and
+# never touches (or deletes) anyone else's entries in the same
+# ConfigMap, whether or not it already exists.
+#
+# The ConfigMap key below must be unique cluster-wide and is
+# case-sensitive; it is namespaced with this repo's name to avoid
+# colliding with Red Hat's own sample key for a *different* GitHub MCP
+# server (`GitHub-MCP-Server`, pointing at api.githubcopilot.com).
+data:
+  Agentic-Doc-Generation-GitHub-MCP-Server: |
+    {
+      "url": "http://github-mcp-server.doc-gen-demo.svc.cluster.local:8080/mcp",
+      "description": "The agentic-doc-generation demo's GitHub MCP server. Exposes GitHub repository browsing as MCP tools for architecture/OpenAPI analysis: get_repo_info (default branch, description, language), get_repo_structure (filtered recursive file tree), get_file_outline (cheap regex-based imports/signatures scan), read_file (size-capped file contents), and search_code (requires a GITHUB_TOKEN on the server). Analyzes public GitHub repositories only."
+    }

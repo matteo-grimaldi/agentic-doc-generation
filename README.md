@@ -346,6 +346,8 @@ agentic-doc-generation/
 │   ├── server.py
 │   ├── Dockerfile
 │   ├── build-and-deploy.sh
+│   ├── mcp-catalog.yaml                 # AI Hub catalog entry fragment (template for new components)
+│   ├── mcp-catalog-entry.yaml           # Gen AI Playground ConfigMap entry fragment (NOT GitOps-managed)
 │   └── k8s/
 ├── doc-gen-agent/                       # OGX sidecar + Gradio UI — architecture docs & diagrams
 │   ├── agent.py                         # OGX Responses API agent, architecture-focused system prompt
@@ -380,6 +382,10 @@ agentic-doc-generation/
 │   └── k8s/                             # includes tasks/invoke-doc-gen-agent-task.yaml and
 │                                         # tasks/invoke-openapi-gen-agent-task.yaml
 ├── build-and-deploy-all.sh              # Quick-start (non-GitOps) for app components
+├── install-openshift-ai.sh              # One-time: installs OpenShift AI (AI Hub, AI Studio, MLFlow)
+├── generate-mcp-catalog-source.sh       # Regenerates mcp-catalog-source.yaml from every */mcp-catalog.yaml
+├── register-mcp-catalog.sh              # Registers every */mcp-catalog-entry.yaml in the Gen AI Playground
+├── mcp-catalog-source.yaml              # GENERATED — import into the AI Hub MCP Catalog
 └── README.md
 ```
 
@@ -450,6 +456,69 @@ operator install step above must still be run manually first, since
 ArgoCD can't apply `Pipeline`/`Task` resources before their CRDs exist
 (the same reason `gitops/bootstrap.sh` installs the OpenShift GitOps
 operator itself imperatively).
+
+## OpenShift AI MCP catalog registration (optional)
+
+Every MCP server in this repo (currently just `github-mcp-server`) can be
+registered in OpenShift AI through either (or both) of two independent,
+repo-root orchestrator scripts that auto-discover every MCP server
+component — no need to touch either script when a new one is added:
+
+1. **AI Hub MCP Catalog** — regenerate and import
+   [`mcp-catalog-source.yaml`](mcp-catalog-source.yaml):
+
+   ```bash
+   ./generate-mcp-catalog-source.sh
+   ```
+
+   Then import the resulting file in the dashboard: **Settings > MCP
+   resources > MCP catalog sources > Add a source**. No cluster access
+   needed for this one — it's a plain file upload. `mcp-catalog-source.yaml`
+   is a **generated** file (don't hand-edit it); it's produced by
+   concatenating every `*/mcp-catalog.yaml` fragment in the repo into one
+   `mcp_servers:` list, matching the format OpenShift AI's catalog import
+   expects.
+
+2. **Gen AI Playground tool list** — run, with `oc` access to the
+   cluster:
+
+   ```bash
+   ./register-mcp-catalog.sh
+   ```
+
+   This merges every `*/mcp-catalog-entry.yaml` fragment's single key
+   into the platform-wide `gen-ai-aa-mcp-servers` ConfigMap in the
+   `redhat-ods-applications` namespace (RHOAI 3.0+), pointing at each
+   component's already-running Service — it doesn't deploy a second copy
+   of anything. Each fragment is applied as its own JSON Merge Patch, so
+   it's safe to run on a cluster where other MCP servers (from this repo
+   or elsewhere) are already registered.
+
+**To register a new MCP server you add to this repo:** copy
+[`github-mcp-server/mcp-catalog.yaml`](github-mcp-server/mcp-catalog.yaml)
+and
+[`github-mcp-server/mcp-catalog-entry.yaml`](github-mcp-server/mcp-catalog-entry.yaml)
+into the new component's own directory as templates, fill in its name,
+description, tools, and in-cluster URL (and give the ConfigMap entry's
+key a unique name), then re-run both scripts above. That's the entire
+integration surface — neither script, nor `mcp-catalog-source.yaml`,
+needs to change by hand.
+
+Both fragment files are deliberately kept out of each component's
+`k8s/` directory (and therefore out of GitOps/ArgoCD): the resources
+they target — the AI Hub catalog import and the shared
+`gen-ai-aa-mcp-servers` ConfigMap — are cluster-admin-owned, cross
+component/namespace state, so letting ArgoCD "own" and prune a shared
+ConfigMap (most `k8s/` Applications in this repo have `prune: true`)
+would risk deleting every other registered MCP server the moment one
+component's fragment was ever removed from git — see the comment at the
+top of
+[`github-mcp-server/mcp-catalog-entry.yaml`](github-mcp-server/mcp-catalog-entry.yaml).
+
+Prerequisites: OpenShift AI installed with AI Hub enabled (see
+[`install-openshift-ai.sh`](install-openshift-ai.sh), which also enables
+the `mcpCatalog`/`mcpRegistry` dashboard feature flags) and the MCP
+server(s) already deployed in `doc-gen-demo`.
 
 ## Known limitations
 
