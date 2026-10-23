@@ -137,9 +137,69 @@ body {
 
 .gh-detail-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 1rem;
   margin: 1.5rem 0;
+}
+
+.gh-report {
+  background: #fafafa;
+  border: 1px solid var(--gh-border);
+  border-radius: 6px;
+  padding: 1rem 1.25rem;
+  overflow-x: auto;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.gh-report h1, .gh-report h2, .gh-report h3 {
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+.gh-report h1:first-child, .gh-report h2:first-child, .gh-report h3:first-child {
+  margin-top: 0;
+}
+
+.gh-report table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.75rem 0 1.25rem;
+  font-size: 0.85rem;
+}
+
+.gh-report th, .gh-report td {
+  border: 1px solid var(--gh-border);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+
+.gh-report th {
+  background: #eef1f4;
+  font-weight: 600;
+}
+
+.gh-report code {
+  background: #eef1f4;
+  border-radius: 3px;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.85em;
+}
+
+.gh-report pre {
+  background: #1e1e2e;
+  color: #cdd6f4;
+  padding: 0.75rem;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+.gh-report pre code {
+  background: none;
+  padding: 0;
+}
+
+.gh-report ul, .gh-report ol {
+  padding-left: 1.5rem;
 }
 
 .gh-card {

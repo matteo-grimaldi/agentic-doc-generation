@@ -1,0 +1,9 @@
+# The compliance-scan agent only talks to the GitHub MCP server and an
+# external OpenAI-compatible inference endpoint — it does not need any
+# Kubernetes/OpenShift API access, so this is a plain ServiceAccount with
+# no role bindings (same pattern as doc-gen-agent-sa / openapi-gen-agent-sa).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: compliance-scan-agent-sa
+  namespace: doc-gen-demo

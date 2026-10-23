@@ -38,6 +38,8 @@ spec:
               value: "http://doc-gen-agent.doc-gen-demo.svc.cluster.local:7860"
             - name: OPENAPI_GEN_AGENT_URL
               value: "http://openapi-gen-agent.doc-gen-demo.svc.cluster.local:7860"
+            - name: COMPLIANCE_SCAN_AGENT_URL
+              value: "http://compliance-scan-agent.doc-gen-demo.svc.cluster.local:7860"
             - name: PYTHONUNBUFFERED
               value: "1"
           volumeMounts:
