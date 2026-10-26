@@ -1,0 +1,81 @@
+# Replaces the old deployment.yaml (plain Deployment+Service): this MCPServer
+# custom resource is reconciled by OpenShift AI's MCPLifecycleOperator
+# (DataScienceCluster component `mcplifecycleoperator`) into an
+# operator-owned Deployment, Service, and NetworkPolicy with the SAME
+# names/DNS as before (github-mcp-server.doc-gen-demo.svc.cluster.local:8080),
+# so doc-gen-agent/openapi-gen-agent's existing in-cluster URLs keep working
+# unchanged. This also makes the already-running server visible under AI
+# Hub's "Deployed MCP Servers" tab, which only tracks MCPServer CRs.
+#
+# Prerequisite (same pattern as ci-cd-pipeline's Tekton CRDs — see
+# README's CI/CD section): the MCPServer CRD is installed by RHOAI's
+# mcplifecycleoperator component, not by this GitOps tree. Run
+# ./install-openshift-ai.sh (which sets
+# spec.components.mcplifecycleoperator.managementState: Managed) BEFORE
+# ArgoCD syncs this Application — ArgoCD cannot apply a custom resource
+# before its CRD exists. This is a deliberate, documented exception to
+# wave 0's historical "no dependencies" status — see
+# .cursor/rules/gitops-conventions.mdc.
+#
+# `spec.source.containerImage.ref` points at the ImageStream tag built by
+# build-and-deploy.sh. After rebuilding, re-apply this file (or re-run
+# build-and-deploy.sh, which does it for you) and `oc rollout restart
+# deployment/github-mcp-server -n doc-gen-demo` to pick up the new image
+# (no automatic ImageStream trigger is configured, matching the old
+# Deployment's behavior).
+apiVersion: mcp.x-k8s.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: github-mcp-server
+  namespace: doc-gen-demo
+  labels:
+    app.kubernetes.io/name: github-mcp-server
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  source:
+    type: ContainerImage
+    containerImage:
+      ref: image-registry.openshift-image-registry.svc:5000/doc-gen-demo/github-mcp-server:latest
+  config:
+    port: 8080
+    env:
+      - name: MCP_PORT
+        value: "8080"
+      - name: PYTHONUNBUFFERED
+        value: "1"
+      # Optional: raises GitHub API rate limits and is required for
+      # search_code and for POST /propose-doc (opening a PR with the
+      # generated architecture doc against its source repo — see
+      # doc-gen-agent/app.py). For public repos the `public_repo`
+      # scope is sufficient; it includes write access, not just read.
+      # Create with:
+      #   oc create secret generic github-token \
+      #     --from-literal=token=<ghp_...> -n doc-gen-demo
+      - name: GITHUB_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: github-token
+            key: token
+            optional: true
+  runtime:
+    replicas: 1
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+    health:
+      livenessProbe:
+        tcpSocket:
+          port: 8080
+        initialDelaySeconds: 15
+        periodSeconds: 20
+        failureThreshold: 4
+      readinessProbe:
+        tcpSocket:
+          port: 8080
+        initialDelaySeconds: 10
+        periodSeconds: 10
+        failureThreshold: 6

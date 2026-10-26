@@ -89,6 +89,22 @@ governance-hub's storage layer instead of its public API.
   `"error"` key until reachable), the same tolerance governance-hub
   itself has for all three agents. Preserve the
   `argocd.argoproj.io/sync-wave` annotations when adding resources.
+- **`github-mcp-server` and `compliance-mcp-server` are deployed as
+  `MCPServer` custom resources** (`k8s/mcpserver.yaml`), not a
+  hand-written `Deployment`/`Service` — RHOAI's `mcplifecycleoperator`
+  DataScienceCluster component reconciles each into an operator-owned
+  Deployment/Service/NetworkPolicy with the same name/Service DNS, which
+  is also what makes them visible under OpenShift AI's AI Hub "Deployed
+  MCP Servers" tab. This is a deliberate, documented exception to this
+  branch's otherwise-zero in-cluster-operator-dependency design (see
+  `.cursor/rules/gitops-conventions.mdc`): both now hard-require
+  `./install-openshift-ai.sh` to have been run first, same
+  imperative-prerequisite pattern as `ci-cd-pipeline`'s Tekton CRDs.
+  Don't apply an `MCPServer` with the same name as a resource it doesn't
+  already own — the operator refuses to adopt it (delete the old
+  resource first). Every other component in this repo still uses plain
+  `Deployment`/`Service` manifests; don't convert them without the same
+  explicit tradeoff discussion.
 - **ConfigMaps generated from files are not committed as inline YAML.**
   `ogx-stack-config` and `agent-knowledge`/`openapi-agent-knowledge`/
   `compliance-scan-knowledge` (per component) are created by each

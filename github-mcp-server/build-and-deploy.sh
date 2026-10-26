@@ -32,8 +32,15 @@ else
   echo "==> \$GITHUB_TOKEN not set — skipping secret creation (search_code tool will be unavailable, GitHub API rate limits will be lower)."
 fi
 
-echo "==> Applying Kubernetes manifests..."
-oc apply -f "${SCRIPT_DIR}/k8s/deployment.yaml" -n "${NAMESPACE}"
+echo "==> Applying Kubernetes manifests (MCPServer CR — requires the MCPServer CRD;"
+echo "    run ./install-openshift-ai.sh first if this errors with a 'no matches"
+echo "    for kind MCPServer' message)..."
+oc apply -f "${SCRIPT_DIR}/k8s/mcpserver.yaml" -n "${NAMESPACE}"
+
+echo "==> Restarting to pick up the new image (no automatic ImageStream trigger"
+echo "    is configured, so re-applying the MCPServer CR alone won't roll pods"
+echo "    if this is a rebuild rather than first deploy)..."
+oc rollout restart deployment/github-mcp-server -n "${NAMESPACE}" 2>/dev/null || true
 
 echo "==> Waiting for rollout..."
 oc rollout status deployment/github-mcp-server -n "${NAMESPACE}" --timeout=180s

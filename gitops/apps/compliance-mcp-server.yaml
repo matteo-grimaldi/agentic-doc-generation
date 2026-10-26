@@ -7,7 +7,16 @@
 # being briefly unavailable (each tool returns an "error" key until it's
 # reachable), matching how governance-hub itself tolerates doc-gen-agent /
 # openapi-gen-agent being briefly unavailable — no stricter ordering
-# dependency is needed.
+# dependency on governance-hub is needed.
+#
+# PREREQUISITE: compliance-mcp-server/k8s/mcpserver.yaml is an
+# `MCPServer` custom resource (reconciled by RHOAI's mcplifecycleoperator
+# component into the actual Deployment/Service/NetworkPolicy, so it
+# shows up under AI Hub's "Deployed MCP Servers" tab) — its CRD must
+# already be registered before this Application can sync, same as
+# ci-cd-pipeline's Tekton CRDs. Run ./install-openshift-ai.sh
+# (imperatively, before bootstrapping this GitOps tree) to install it;
+# see .cursor/rules/gitops-conventions.mdc.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

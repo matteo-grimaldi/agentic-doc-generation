@@ -14,9 +14,17 @@
 # — no other files need to change.
 #
 # This entry must stay a single YAML list item (starts with "- name:")
-# indented exactly 2 spaces, matching the indentation of items under
-# mcp_servers: in mcpcatalogsourcesample.yaml, since it gets pasted
-# as-is under that key.
+# indented at column 0 in THIS fragment file — generate-mcp-catalog-source.sh
+# adds the 2-space indent itself (via `sed 's/^/  /'`) to nest it under
+# mcp_servers: in the generated output. Don't pre-indent it here or the
+# generator double-indents it and silently drops the entry.
+#
+# `artifacts`/`runtimeMetadata` below are what let the AI Hub MCP
+# Catalog's "Deploy MCP Server" action and "Deployed MCP Servers" list
+# recognize this entry — see compliance-mcp-server/mcp-catalog.yaml for
+# the fuller explanation. `artifacts[].uri` points at this component's
+# already-built ImageStream tag (update it after rebuilding via
+# build-and-deploy.sh, since it's pinned to a digest, not `:latest`).
 - name: GitHub MCP Server
   provider: agentic-doc-generation
   version: "1.0.0"
@@ -34,30 +42,49 @@
   deploymentMode: local
   repositoryUrl: https://github.com/YOUR_ORG/agentic-doc-generation.git
   documentationUrl: https://github.com/YOUR_ORG/agentic-doc-generation/blob/main/README.md
+  artifacts:
+    - uri: "oci://image-registry.openshift-image-registry.svc:5000/doc-gen-demo/github-mcp-server@sha256:d695876c4cc8c6f60ea33e176fece7cc671ebcb058cd0af6239e805bf2677c38"
+  runtimeMetadata:
+    defaultPort: 8080
+    mcpPath: /mcp
+    prerequisites:
+      configMaps:
+        - name: github-mcp-server-config
+          description: >-
+            Optional runtime configuration; GITHUB_TOKEN is normally
+            supplied as a Secret-backed Deployment env var rather than
+            this ConfigMap — see github-mcp-server/build-and-deploy.sh.
+          mountAsFile: false
+          required: false
+          keys:
+            - key: MCP_PORT
+              description: Port the server listens on (defaults to 8080).
+              required: false
+              defaultContent: "8080"
   tools:
-    - name: get_repo_info
-      description: >-
-        Fetch top-level repo metadata: default branch, description,
-        primary language, star count, and topics.
-      accessType: read_only
-    - name: get_repo_structure
-      description: >-
-        Return the recursive file/directory tree of a repository,
-        with vendor/binary paths filtered out.
-      accessType: read_only
-    - name: get_file_outline
-      description: >-
-        Return a lightweight structural outline (imports, top-level
-        declarations) of a single file via regex extraction, without
-        its full content.
-      accessType: read_only
-    - name: read_file
-      description: >-
-        Read the contents of a single file from a repository,
-        size-capped and truncated to protect context budget.
-      accessType: read_only
-    - name: search_code
-      description: >-
-        Search for a code pattern within a repository. Requires a
-        GITHUB_TOKEN configured on the server.
-      accessType: read_only
+  - name: get_repo_info
+    description: >-
+      Fetch top-level repo metadata: default branch, description,
+      primary language, star count, and topics.
+    accessType: read_only
+  - name: get_repo_structure
+    description: >-
+      Return the recursive file/directory tree of a repository,
+      with vendor/binary paths filtered out.
+    accessType: read_only
+  - name: get_file_outline
+    description: >-
+      Return a lightweight structural outline (imports, top-level
+      declarations) of a single file via regex extraction, without
+      its full content.
+    accessType: read_only
+  - name: read_file
+    description: >-
+      Read the contents of a single file from a repository,
+      size-capped and truncated to protect context budget.
+    accessType: read_only
+  - name: search_code
+    description: >-
+      Search for a code pattern within a repository. Requires a
+      GITHUB_TOKEN configured on the server.
+    accessType: read_only

@@ -25,14 +25,30 @@ Never replace this with a real URL in committed manifests —
 
 Preserve `argocd.argoproj.io/sync-wave` annotations:
 
-- Wave 0 — `github-mcp-server` (no dependencies)
-- Wave 1 — `doc-gen-agent` (depends on wave 0's Service DNS name)
+- Wave 0 — `github-mcp-server`
+- Wave 1 — `doc-gen-agent` (depends on wave 0's Service DNS name),
+  `compliance-mcp-server`
 
 Model inference on this branch goes to a configurable external
-OpenAI-compatible endpoint (no in-cluster operator/CRD dependency). The
-`local-model` branch preserves the original three-wave ordering
-(`rhoai-operator` → `model-serving`/`github-mcp-server` → `doc-gen-agent`)
-for in-cluster GPU serving.
+OpenAI-compatible endpoint (no in-cluster operator/CRD dependency for
+inference). The `local-model` branch preserves the original three-wave
+ordering (`rhoai-operator` → `model-serving`/`github-mcp-server` →
+`doc-gen-agent`) for in-cluster GPU serving.
+
+**`github-mcp-server` and `compliance-mcp-server` are deployed via an
+`MCPServer` custom resource** (`k8s/mcpserver.yaml`, reconciled by RHOAI's
+`mcplifecycleoperator` DataScienceCluster component into an
+operator-owned Deployment/Service/NetworkPolicy), not a hand-written
+Deployment — this makes them visible under OpenShift AI's AI Hub
+"Deployed MCP Servers" tab. This is a deliberate exception to this
+branch's "no in-cluster operator/CRD dependency" design: both now
+require `./install-openshift-ai.sh` to have been run first (same
+imperative-prerequisite pattern as `ci-cd-pipeline`'s Tekton CRDs — see
+README) so the `MCPServer` CRD exists before ArgoCD syncs. Don't let the
+operator manage a Deployment/Service with the same name as one it
+doesn't already own — it refuses to adopt resources with no controller
+owner (delete the old resource first; see git history for the original
+hand-written Deployment+Service shape if you ever need to revert).
 
 If you add a resource that depends on another wave's output (a CRD, a
 Service DNS name, a ConfigMap), give it a sync-wave annotation at least
