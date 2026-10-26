@@ -1,10 +1,18 @@
 # Child Application: deploys the GitHub MCP server that lets the agent
 # browse a target repository's structure and file contents.
 #
-# sync-wave 0 — the first component deployed; nothing in this stack
-# depends on an operator or CRD anymore, so this just needs the
+# sync-wave 0 — the first component deployed; just needs the
 # doc-gen-demo namespace (declared in github-mcp-server/k8s/namespace.yaml,
 # or created here via CreateNamespace=true if it runs first).
+#
+# PREREQUISITE: github-mcp-server/k8s/mcpserver.yaml is an `MCPServer`
+# custom resource (reconciled by RHOAI's mcplifecycleoperator component
+# into the actual Deployment/Service/NetworkPolicy, so it shows up under
+# AI Hub's "Deployed MCP Servers" tab) — its CRD must already be
+# registered before this Application can sync, same as ci-cd-pipeline's
+# Tekton CRDs. Run ./install-openshift-ai.sh (imperatively, before
+# bootstrapping this GitOps tree) to install it; see
+# .cursor/rules/gitops-conventions.mdc.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

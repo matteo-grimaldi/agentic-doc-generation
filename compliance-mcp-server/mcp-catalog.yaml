@@ -10,6 +10,14 @@
 # See github-mcp-server/mcp-catalog.yaml for the template this was
 # copied from, and the README's "OpenShift AI MCP catalog registration"
 # section for the full registration workflow.
+#
+# `artifacts`/`runtimeMetadata` below are what let the AI Hub MCP
+# Catalog's "Deploy MCP Server" action and "Deployed MCP Servers" list
+# recognize this entry — without them the dashboard has no image to
+# launch, matching how Red Hat's own redhat-mcp-servers-catalog.yaml
+# entries are structured. `artifacts[].uri` points at this component's
+# already-built ImageStream tag (update it after rebuilding via
+# build-and-deploy.sh, since it's pinned to a digest, not `:latest`).
 - name: Compliance MCP Server
   provider: agentic-doc-generation
   version: "1.0.0"
@@ -24,6 +32,32 @@
   deploymentMode: local
   repositoryUrl: https://github.com/YOUR_ORG/agentic-doc-generation.git
   documentationUrl: https://github.com/YOUR_ORG/agentic-doc-generation/blob/main/README.md
+  artifacts:
+    - uri: "oci://image-registry.openshift-image-registry.svc:5000/doc-gen-demo/compliance-mcp-server@sha256:e04b4db0c10b44c55369a935b452ebb3667c08bb09920e439c8ce98a6a2e5b9a"
+  runtimeMetadata:
+    defaultPort: 8080
+    mcpPath: /mcp
+    prerequisites:
+      configMaps:
+        - name: compliance-mcp-server-config
+          description: >-
+            Optional runtime configuration; GOVERNANCE_HUB_URL is
+            required (points at the Governance Hub's REST API) and is
+            normally supplied as a Deployment env var rather than this
+            ConfigMap — see compliance-mcp-server/build-and-deploy.sh.
+          mountAsFile: false
+          required: false
+          keys:
+            - key: GOVERNANCE_HUB_URL
+              description: >-
+                In-cluster URL of the Governance Hub service this
+                server proxies, e.g.
+                http://governance-hub.doc-gen-demo.svc.cluster.local:7860
+              required: true
+            - key: MCP_PORT
+              description: Port the server listens on (defaults to 8080).
+              required: false
+              defaultContent: "8080"
   tools:
     - name: get_compliance_status
       description: >-

@@ -1,3 +1,7 @@
+# targetPort must match the Service port *name* — since compliance-mcp-server
+# is now deployed via mcpserver.yaml (MCPServer CR, reconciled by RHOAI's
+# MCPLifecycleOperator), the generated Service's port is named `mcp`
+# (not `http` as the old hand-written Deployment+Service used).
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
@@ -8,7 +12,7 @@ spec:
     kind: Service
     name: compliance-mcp-server
   port:
-    targetPort: http
+    targetPort: mcp
   tls:
     termination: edge
     insecureEdgeTerminationPolicy: Redirect

@@ -114,6 +114,16 @@ user invokes:
 
 - An OpenShift cluster, logged in as `cluster-admin` (`oc login`) —
   no GPU node required
+- **Red Hat OpenShift AI, installed with the `mcplifecycleoperator`
+  component enabled** (see [`install-openshift-ai.sh`](install-openshift-ai.sh))
+  — run this imperatively *before* `gitops/bootstrap.sh`/
+  `build-and-deploy-all.sh`. `github-mcp-server` and
+  `compliance-mcp-server` are deployed as `MCPServer` custom resources
+  (`k8s/mcpserver.yaml`, reconciled by this operator), the same
+  imperative-prerequisite pattern as the CI/CD pipeline's Tekton CRDs —
+  ArgoCD/`oc apply` can't create a custom resource before its CRD
+  exists. This also makes both servers visible under OpenShift AI's
+  AI Hub "Deployed MCP Servers" tab.
 - An **external OpenAI-compatible inference endpoint** reachable from the
   cluster: a base URL (e.g. `https://api.openai.com/v1`, or your own
   vLLM/Ollama/gateway deployment) and, if required, an API key
@@ -484,10 +494,17 @@ operator itself imperatively).
 
 ## OpenShift AI MCP catalog registration (optional)
 
-Every MCP server in this repo (currently just `github-mcp-server`) can be
-registered in OpenShift AI through either (or both) of two independent,
-repo-root orchestrator scripts that auto-discover every MCP server
-component — no need to touch either script when a new one is added:
+> Deploying `github-mcp-server`/`compliance-mcp-server` at all now
+> requires OpenShift AI's `mcplifecycleoperator` (see
+> [Prerequisites](#prerequisites)) — that part is **not** optional. What
+> *is* optional is everything below: making them additionally show up in
+> AI Hub's MCP Catalog (discovery) and the Gen AI Playground tool list.
+
+Every MCP server in this repo (`github-mcp-server` and
+`compliance-mcp-server`) can be registered in OpenShift AI through
+either (or both) of two independent, repo-root orchestrator scripts that
+auto-discover every MCP server component — no need to touch either
+script when a new one is added:
 
 1. **AI Hub MCP Catalog** — regenerate and import
    [`mcp-catalog-source.yaml`](mcp-catalog-source.yaml):

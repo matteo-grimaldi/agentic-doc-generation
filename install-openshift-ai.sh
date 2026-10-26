@@ -262,6 +262,42 @@ oc patch odhdashboardconfig odh-dashboard-config -n redhat-ods-applications \
   --type=merge -p "$(cat /tmp/odh-dashboard-feature-flags-patch.json)"
 rm -f /tmp/odh-dashboard-feature-flags-patch.json
 
+# ---------------------------------------------------------------------------
+# Step 7 -- Default MLflow tracking server instance
+# ---------------------------------------------------------------------------
+# The mlflowoperator component (Step 4) only installs the operator; it does
+# not provision an actual MLflow tracking server. Dashboard screens that
+# depend on one (Experiments, Prompts) stay empty until an `Mlflow` custom
+# resource exists. `Mlflow` is cluster-scoped (one tracking server for the
+# whole cluster), so this creates a single default instance backed by
+# SQLite + a PVC -- sufficient for this demo cluster, not meant for HA/
+# production use (swap backendStoreUri/storage for Postgres + S3 for that).
+echo "==> Waiting for Mlflow CRD to be registered..."
+until oc get crd mlflows.mlflow.opendatahub.io >/dev/null 2>&1; do
+  sleep 5
+done
+
+echo "==> Creating default MLflow tracking server instance (if needed)..."
+# The webhook requires the singleton resource to be named exactly "mlflow".
+if ! oc get mlflow mlflow >/dev/null 2>&1; then
+  cat <<'EOF' | oc apply -f -
+apiVersion: mlflow.opendatahub.io/v1
+kind: MLflow
+metadata:
+  name: mlflow
+spec:
+  backendStoreUri: "sqlite:////mlflow/mlflow.db"
+  serveArtifacts: true
+  storage:
+    accessModes: ["ReadWriteOnce"]
+    resources:
+      requests:
+        storage: 10Gi
+EOF
+else
+  echo "    mlflow instance already exists."
+fi
+
 echo "==> Done. Red Hat OpenShift AI is installed with AI Hub, AI Studio, and MLFlow enabled."
 DASHBOARD_ROUTE=$(oc get route rhods-dashboard -n redhat-ods-applications -o jsonpath='https://{.spec.host}' 2>/dev/null || true)
 if [[ -n "${DASHBOARD_ROUTE}" ]]; then
