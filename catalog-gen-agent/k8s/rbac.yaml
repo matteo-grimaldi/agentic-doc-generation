@@ -1,0 +1,9 @@
+# The catalog-gen agent only talks to the GitHub MCP server and an
+# external OpenAI-compatible inference endpoint — it does not need any
+# Kubernetes/OpenShift API access, so this is a plain ServiceAccount with
+# no role bindings (same pattern as doc-gen-agent/k8s/rbac.yaml).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: catalog-gen-agent-sa
+  namespace: doc-gen-demo
