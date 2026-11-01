@@ -86,6 +86,27 @@ else
   done
 fi
 
+echo "==> Ensuring Keycloak OpenShift Route exists..."
+oc apply -f "${SCRIPT_DIR}/k8s/instance/route.yaml"
+
+KC_ROUTE=$(oc get route keycloak -n "${NAMESPACE}" \
+  -o jsonpath='{.spec.host}' 2>/dev/null || true)
+if [[ -z "${KC_ROUTE}" ]]; then
+  KC_ROUTE=$(oc get route -n "${NAMESPACE}" --no-headers 2>/dev/null \
+    | grep keycloak | awk '{print $2}' | head -1 || true)
+fi
+if [[ -n "${KC_ROUTE}" ]]; then
+  CURRENT_KC_HOST=$(oc get keycloak keycloak -n "${NAMESPACE}" \
+    -o jsonpath='{.spec.hostname.hostname}' 2>/dev/null || true)
+  if [[ "${CURRENT_KC_HOST}" != "${KC_ROUTE}" ]]; then
+    echo "==> Configuring Keycloak public hostname (HTTPS OIDC discovery)..."
+    oc patch keycloak keycloak -n "${NAMESPACE}" --type=merge \
+      -p "{\"spec\":{\"hostname\":{\"hostname\":\"${KC_ROUTE}\",\"strict\":false,\"strictBackchannel\":false},\"proxy\":{\"headers\":\"xforwarded\"}}}"
+  else
+    echo "==> Keycloak public hostname already set (${KC_ROUTE})."
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # Always print the route URL and realm URL regardless of which path was taken.
 # ---------------------------------------------------------------------------

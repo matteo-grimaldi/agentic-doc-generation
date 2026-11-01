@@ -68,10 +68,19 @@ spec:
               set -euo pipefail
               ALLOWED_CSV="rhdh-operator.v1.10.6"
               NAMESPACE="rhdh-operator"
+              export ALLOWED_CSV
+
+              csv_phase="$(oc get csv "${ALLOWED_CSV}" -n "${NAMESPACE}" \
+                -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+              if [[ "${csv_phase}" == "Succeeded" ]]; then
+                echo "CSV ${ALLOWED_CSV} already installed (phase=${csv_phase}) — nothing to approve."
+                exit 0
+              fi
+
               echo "Waiting for InstallPlan for ${ALLOWED_CSV}..."
               for i in {1..60}; do
                 IP=$(oc get installplan -n "${NAMESPACE}" -o json 2>/dev/null \
-                  | python3 -c "import sys,json,os; d=json.load(sys.stdin); csv=os.environ.get('ALLOWED_CSV',''); [print(ip['metadata']['name']) for ip in d.get('items',[]) if csv in ip.get('spec',{}).get('clusterServiceVersionNames',[]) and ip.get('status',{}).get('phase','')=='RequiresApproval']" 2>/dev/null || true)
+                  | python3 -c "import sys,json,os; d=json.load(sys.stdin); csv=os.environ['ALLOWED_CSV']; [print(ip['metadata']['name']) for ip in d.get('items',[]) if csv in ip.get('spec',{}).get('clusterServiceVersionNames',[]) and ip.get('status',{}).get('phase','')=='RequiresApproval']" 2>/dev/null || true)
                 if [[ -n "${IP}" ]]; then
                   echo "Approving InstallPlan ${IP} for ${ALLOWED_CSV}..."
                   oc patch installplan "${IP}" -n "${NAMESPACE}" \
@@ -79,8 +88,20 @@ spec:
                   echo "InstallPlan approved."
                   exit 0
                 fi
+                csv_phase="$(oc get csv "${ALLOWED_CSV}" -n "${NAMESPACE}" \
+                  -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+                if [[ "${csv_phase}" == "Succeeded" ]]; then
+                  echo "CSV ${ALLOWED_CSV} installed (InstallPlan was already approved)."
+                  exit 0
+                fi
                 echo "  Waiting... (${i}/60)"
                 sleep 10
               done
-              echo "ERROR: InstallPlan for ${ALLOWED_CSV} not found within timeout"
+              csv_phase="$(oc get csv "${ALLOWED_CSV}" -n "${NAMESPACE}" \
+                -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+              if [[ "${csv_phase}" == "Succeeded" ]]; then
+                echo "CSV ${ALLOWED_CSV} installed after wait."
+                exit 0
+              fi
+              echo "ERROR: InstallPlan for ${ALLOWED_CSV} not found within timeout (csv phase=${csv_phase:-absent})"
               exit 1
