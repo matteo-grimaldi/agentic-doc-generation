@@ -31,14 +31,33 @@ echo "==> Applying RHDH operator resources (OperatorGroup, Subscription)..."
 oc apply -f "${SCRIPT_DIR}/k8s/operator/operatorgroup.yaml"
 oc apply -f "${SCRIPT_DIR}/k8s/operator/subscription.yaml"
 
-echo "==> Applying approve-installplan Job..."
-oc apply -f "${SCRIPT_DIR}/k8s/operator/approve-installplan.yaml"
+RHDH_OPERATOR_CSV="rhdh-operator.v1.10.6"
+
+if oc get csv "${RHDH_OPERATOR_CSV}" -n "${OPERATOR_NS}" >/dev/null 2>&1 \
+  && [[ "$(oc get csv "${RHDH_OPERATOR_CSV}" -n "${OPERATOR_NS}" -o jsonpath='{.status.phase}')" == "Succeeded" ]]; then
+  echo "    RHDH operator CSV ${RHDH_OPERATOR_CSV} already installed — skipping InstallPlan approval Job."
+else
+  echo "==> Applying approve-installplan Job..."
+  oc delete job approve-installplan-rhdh -n "${OPERATOR_NS}" --ignore-not-found
+  oc apply -f "${SCRIPT_DIR}/k8s/operator/approve-installplan.yaml"
+
+  echo "==> Waiting for Manual InstallPlan approval (Subscription uses installPlanApproval: Manual)..."
+  if ! oc wait --for=condition=complete job/approve-installplan-rhdh -n "${OPERATOR_NS}" --timeout=920s; then
+    echo "  WARNING: approve-installplan Job did not complete — check:"
+    echo "    oc logs job/approve-installplan-rhdh -n ${OPERATOR_NS}"
+    exit 1
+  fi
+fi
 
 echo "==> Waiting for RHDH operator to be installed..."
-until oc get csv -n "${OPERATOR_NS}" 2>/dev/null | grep -q "rhdh-operator.v1.10.6"; do
-  echo "  Waiting for CSV rhdh-operator.v1.10.6..."
+until oc get csv -n "${OPERATOR_NS}" 2>/dev/null | grep -q "${RHDH_OPERATOR_CSV}"; do
+  echo "  Waiting for CSV ${RHDH_OPERATOR_CSV}..."
   sleep 15
 done
+if [[ "$(oc get csv "${RHDH_OPERATOR_CSV}" -n "${OPERATOR_NS}" -o jsonpath='{.status.phase}')" != "Succeeded" ]]; then
+  echo "  Waiting for CSV ${RHDH_OPERATOR_CSV} to reach Succeeded..."
+  oc wait --for=jsonpath='{.status.phase}'=Succeeded "csv/${RHDH_OPERATOR_CSV}" -n "${OPERATOR_NS}" --timeout=600s
+fi
 echo "  RHDH operator CSV found."
 
 echo "==> Applying RHDH instance prerequisites (ConfigMaps, Secrets, RBAC)..."
@@ -63,6 +82,7 @@ echo "==> Applying Backstage CR..."
 oc apply -f "${SCRIPT_DIR}/k8s/instance/backstage.yaml"
 
 echo "==> Applying configure-rhdh Job..."
+oc delete job job-configure-rhdh -n "${NAMESPACE}" --ignore-not-found
 if oc get namespace openshift-gitops >/dev/null 2>&1; then
   oc apply -f "${SCRIPT_DIR}/k8s/jobs/configure-rhdh.yaml"
 else

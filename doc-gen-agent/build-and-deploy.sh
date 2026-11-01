@@ -6,8 +6,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 NAMESPACE="${NAMESPACE:-doc-gen-demo}"
 IMAGE_NAME="doc-gen-agent"
+
+# shellcheck source=../scripts/lib-openshift-binary-build.sh
+source "${REPO_ROOT}/scripts/lib-openshift-binary-build.sh"
 
 echo "==> Ensuring namespace ${NAMESPACE} exists..."
 oc get namespace "${NAMESPACE}" >/dev/null 2>&1 || oc create namespace "${NAMESPACE}"
@@ -41,10 +45,7 @@ echo "    your external OpenAI-compatible endpoint before/after this deploy."
 
 echo "==> Building image with OpenShift BuildConfig (binary build)..."
 oc project "${NAMESPACE}" >/dev/null
-if ! oc get imagestream "${IMAGE_NAME}" -n "${NAMESPACE}" >/dev/null 2>&1; then
-  oc new-build --name="${IMAGE_NAME}" --binary --strategy=docker -n "${NAMESPACE}"
-fi
-oc start-build "${IMAGE_NAME}" --from-dir="${SCRIPT_DIR}" --follow -n "${NAMESPACE}"
+run_openshift_binary_build "${IMAGE_NAME}" "${SCRIPT_DIR}" "${NAMESPACE}"
 
 # oc new-build leaves lookupPolicy.local=false, so kubelet always pulls from the
 # internal registry (and needs a valid dockercfg). Local lookup uses the image

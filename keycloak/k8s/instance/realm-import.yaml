@@ -12,7 +12,7 @@ apiVersion: k8s.keycloak.org/v2alpha1
 kind: KeycloakRealmImport
 metadata:
   name: platform-realm
-  namespace: keycloak
+  namespace: rhdh-keycloak
   annotations:
     argocd.argoproj.io/sync-wave: "10"
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true

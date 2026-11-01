@@ -14,7 +14,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NAMESPACE="${NAMESPACE:-keycloak}"
+# NOT "keycloak" — see keycloak/k8s/namespace.yaml for why this dedicated,
+# isolated namespace name avoids colliding with sandbox-provisioned shared
+# SSO Keycloak instances some clusters already run in a namespace with
+# that exact name.
+NAMESPACE="${NAMESPACE:-rhdh-keycloak}"
 
 echo "==> Checking cluster login..."
 oc whoami >/dev/null || { echo "error: not logged in (run 'oc login' first)"; exit 1; }
@@ -80,6 +84,27 @@ else
     echo "  Waiting for Keycloak ready... (${i}/60)"
     sleep 10
   done
+fi
+
+echo "==> Ensuring Keycloak OpenShift Route exists..."
+oc apply -f "${SCRIPT_DIR}/k8s/instance/route.yaml"
+
+KC_ROUTE=$(oc get route keycloak -n "${NAMESPACE}" \
+  -o jsonpath='{.spec.host}' 2>/dev/null || true)
+if [[ -z "${KC_ROUTE}" ]]; then
+  KC_ROUTE=$(oc get route -n "${NAMESPACE}" --no-headers 2>/dev/null \
+    | grep keycloak | awk '{print $2}' | head -1 || true)
+fi
+if [[ -n "${KC_ROUTE}" ]]; then
+  CURRENT_KC_HOST=$(oc get keycloak keycloak -n "${NAMESPACE}" \
+    -o jsonpath='{.spec.hostname.hostname}' 2>/dev/null || true)
+  if [[ "${CURRENT_KC_HOST}" != "${KC_ROUTE}" ]]; then
+    echo "==> Configuring Keycloak public hostname (HTTPS OIDC discovery)..."
+    oc patch keycloak keycloak -n "${NAMESPACE}" --type=merge \
+      -p "{\"spec\":{\"hostname\":{\"hostname\":\"${KC_ROUTE}\",\"strict\":false,\"strictBackchannel\":false},\"proxy\":{\"headers\":\"xforwarded\"}}}"
+  else
+    echo "==> Keycloak public hostname already set (${KC_ROUTE})."
+  fi
 fi
 
 # ---------------------------------------------------------------------------

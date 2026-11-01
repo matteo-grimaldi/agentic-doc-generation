@@ -200,6 +200,42 @@ until [[ "$(oc get datasciencecluster default-dsc -o jsonpath='{.status.phase}' 
   sleep 10
 done
 
+# RHOAI 3.5 may reconcile demo-critical components to Removed on the first pass
+# even when the manifest above requested Managed. The cluster can still report
+# phase=Ready while mlflowoperator (and others) stay Removed, which leaves the
+# Mlflow CRD unregistered and Step 7 waiting forever.
+_ensure_dsc_component_managed() {
+  local component="$1"
+  local spec_state status_state
+  spec_state="$(oc get datasciencecluster default-dsc \
+    -o jsonpath="{.spec.components.${component}.managementState}" 2>/dev/null || true)"
+  if [[ "${spec_state}" != "Managed" ]]; then
+    echo "    Re-applying ${component}=Managed (spec was ${spec_state:-unset})..."
+    oc patch datasciencecluster default-dsc --type=merge \
+      -p "{\"spec\":{\"components\":{\"${component}\":{\"managementState\":\"Managed\"}}}}"
+  fi
+  echo "==> Waiting for ${component} status to report Managed..."
+  local waited=0
+  while true; do
+    status_state="$(oc get datasciencecluster default-dsc \
+      -o jsonpath="{.status.components.${component}.managementState}" 2>/dev/null || true)"
+    if [[ "${status_state}" == "Managed" ]]; then
+      break
+    fi
+    if (( waited >= 600 )); then
+      echo "error: timed out waiting for ${component} to reach Managed."
+      echo "       Check: oc get datasciencecluster default-dsc -o yaml | grep -A6 ${component}"
+      exit 1
+    fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+}
+
+for _component in mlflowoperator mcplifecycleoperator ogx; do
+  _ensure_dsc_component_managed "${_component}"
+done
+
 echo "==> Waiting for RHOAI dashboard route..."
 until oc get route rhods-dashboard -n redhat-ods-applications >/dev/null 2>&1; do
   sleep 5
@@ -273,8 +309,18 @@ rm -f /tmp/odh-dashboard-feature-flags-patch.json
 # SQLite + a PVC -- sufficient for this demo cluster, not meant for HA/
 # production use (swap backendStoreUri/storage for Postgres + S3 for that).
 echo "==> Waiting for Mlflow CRD to be registered..."
+MLFLOW_CRD_WAIT_SEC="${MLFLOW_CRD_WAIT_SEC:-600}"
+_mlflow_crd_waited=0
 until oc get crd mlflows.mlflow.opendatahub.io >/dev/null 2>&1; do
+  if (( _mlflow_crd_waited >= MLFLOW_CRD_WAIT_SEC )); then
+    echo "error: timed out waiting for Mlflow CRD (mlflows.mlflow.opendatahub.io)."
+    echo "       mlflowoperator status:"
+    oc get datasciencecluster default-dsc \
+      -o jsonpath='{.status.components.mlflowoperator}{"\n"}' 2>/dev/null || true
+    exit 1
+  fi
   sleep 5
+  _mlflow_crd_waited=$((_mlflow_crd_waited + 5))
 done
 
 echo "==> Creating default MLflow tracking server instance (if needed)..."

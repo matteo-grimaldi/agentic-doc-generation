@@ -2,7 +2,9 @@
 # The operator automatically creates:
 #   - A Deployment for the Keycloak server
 #   - A Service (keycloak-service) on port 8080 (HTTP internally)
-#   - An OpenShift Route with edge TLS termination
+#   - A Service (keycloak-service) on port 8080 (HTTP internally)
+#   - An OpenShift Route (keycloak/k8s/instance/route.yaml — applied by
+#     build-and-deploy.sh; the operator does not create an OCP Route on its own)
 #   - A Secret named keycloak-initial-admin with the generated admin password
 #
 # The configure-rhdh Job in developer-hub/ reads keycloak-initial-admin to
@@ -13,7 +15,7 @@ apiVersion: k8s.keycloak.org/v2alpha1
 kind: Keycloak
 metadata:
   name: keycloak
-  namespace: keycloak
+  namespace: rhdh-keycloak
   annotations:
     argocd.argoproj.io/sync-wave: "5"
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
@@ -24,8 +26,18 @@ spec:
   http:
     httpEnabled: true
   hostname:
+    # hostname is set at deploy time from the OpenShift Route host (see
+    # keycloak/build-and-deploy.sh and configure-rhdh Job). Without it,
+    # OIDC discovery advertises http:// endpoints; the Route redirects those
+    # to https:// and RHDH login fails with "expected 200 OK, got: 302 Found".
     strict: false
     strictBackchannel: false
+  proxy:
+    headers: xforwarded
+  # RHBK creates a Kubernetes Ingress when enabled; on OpenShift we expose
+  # Keycloak via route.yaml instead (avoids a hostless Ingress with no address).
+  ingress:
+    enabled: false
   db:
     # Use the built-in H2 ephemeral database for a demo. For a persistent
     # deployment, switch to an external PostgreSQL instance here.

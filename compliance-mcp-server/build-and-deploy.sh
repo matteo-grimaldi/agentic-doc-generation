@@ -6,8 +6,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 NAMESPACE="${NAMESPACE:-doc-gen-demo}"
 IMAGE_NAME="compliance-mcp-server"
+
+# shellcheck source=../scripts/lib-openshift-binary-build.sh
+source "${REPO_ROOT}/scripts/lib-openshift-binary-build.sh"
 
 echo "==> Ensuring namespace ${NAMESPACE} exists..."
 oc get namespace "${NAMESPACE}" >/dev/null 2>&1 || oc create namespace "${NAMESPACE}"
@@ -15,10 +19,7 @@ oc label namespace "${NAMESPACE}" opendatahub.io/dashboard=true modelmesh-enable
 
 echo "==> Building image with OpenShift BuildConfig (binary build)..."
 oc project "${NAMESPACE}" >/dev/null
-if ! oc get imagestream "${IMAGE_NAME}" -n "${NAMESPACE}" >/dev/null 2>&1; then
-  oc new-build --name="${IMAGE_NAME}" --binary --strategy=docker -n "${NAMESPACE}"
-fi
-oc start-build "${IMAGE_NAME}" --from-dir="${SCRIPT_DIR}" --follow -n "${NAMESPACE}"
+run_openshift_binary_build "${IMAGE_NAME}" "${SCRIPT_DIR}" "${NAMESPACE}"
 
 echo "==> Enabling local image lookup on ImageStream ${IMAGE_NAME}..."
 oc patch imagestream "${IMAGE_NAME}" -n "${NAMESPACE}" --type=merge \

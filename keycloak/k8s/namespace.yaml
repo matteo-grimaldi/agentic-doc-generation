@@ -1,7 +1,15 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: keycloak
+  # Deliberately NOT named "keycloak": several OpenTLC/RedHatWorkshops
+  # sandbox catalog items pre-provision their own shared-SSO Keycloak in a
+  # namespace literally named "keycloak" (CR "keycloak", Route host
+  # "sso.apps.<cluster-domain>"), backing the cluster's own OAuth
+  # identityProvider. Reusing that name would make `oc apply`/the
+  # build-and-deploy.sh "already running" fast path silently adopt and
+  # mutate that shared instance instead of deploying an isolated one for
+  # RHDH. See AGENTS.md's RHDH IdP isolation note.
+  name: rhdh-keycloak
   labels:
     app.kubernetes.io/part-of: agentic-doc-generation
     app.kubernetes.io/managed-by: argocd

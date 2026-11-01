@@ -1,6 +1,8 @@
 # configure-rhdh — ArgoCD Sync hook (wave 18) that provisions RHDH end-to-end:
 #
 #  1. Waits for Keycloak (RHBK) to be ready and discovers its Route
+#  1b. Patches the Keycloak CR hostname + proxy headers so OIDC discovery
+#      uses https:// URLs (required for RHDH token exchange behind edge TLS)
 #  2. Gets a Keycloak admin token from the keycloak-initial-admin Secret
 #  3. Creates/updates users: admin (password: password) and developer (password: password)
 #  4. Creates/updates the RHDH OIDC client (clientId: rhdh) with a generated
@@ -68,12 +70,16 @@ roleRef:
   name: job-configure-rhdh
   apiGroup: rbac.authorization.k8s.io
 ---
-# Role in keycloak: read keycloak-initial-admin Secret
+# Role in rhdh-keycloak: read keycloak-initial-admin Secret.
+# NOT namespace "keycloak" — this repo's RHDH Keycloak lives in the
+# dedicated "rhdh-keycloak" namespace so it never collides with a
+# sandbox-provisioned shared-SSO Keycloak some clusters already run in a
+# namespace literally named "keycloak" (see keycloak/k8s/namespace.yaml).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: job-configure-rhdh-keycloak-reader
-  namespace: keycloak
+  namespace: rhdh-keycloak
   annotations:
     argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
@@ -83,12 +89,19 @@ rules:
     resources: [secrets]
     resourceNames: [keycloak-initial-admin]
     verbs: [get]
+  - apiGroups: [k8s.keycloak.org]
+    resources: [keycloaks]
+    resourceNames: [keycloak]
+    verbs: [get, patch]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: job-configure-rhdh-keycloak-reader
-  namespace: keycloak
+  namespace: rhdh-keycloak
   annotations:
     argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
@@ -205,11 +218,18 @@ spec:
               RHDH_CLIENT_ID="rhdh"
 
               # ── 1. Discover Keycloak route ──────────────────────────────
+              # Namespace is "rhdh-keycloak" (not "keycloak") — this repo's
+              # dedicated, isolated RHDH Keycloak instance; see
+              # keycloak/k8s/namespace.yaml for why.
               echo "=== Step 1: Discovering Keycloak route ==="
               KC_HOST=""
               for i in {1..60}; do
-                KC_HOST=$(oc get route -n keycloak --no-headers 2>/dev/null \
-                  | grep -v "^$" | awk '{print $2}' | head -1 || true)
+                KC_HOST=$(oc get route keycloak -n rhdh-keycloak \
+                  -o jsonpath='{.spec.host}' 2>/dev/null || true)
+                if [[ -z "${KC_HOST}" ]]; then
+                  KC_HOST=$(oc get route -n rhdh-keycloak --no-headers 2>/dev/null \
+                    | grep -v "^$" | awk '{print $2}' | head -1 || true)
+                fi
                 if [[ -n "${KC_HOST}" ]]; then break; fi
                 echo "  Waiting for Keycloak route... (${i}/60)"
                 sleep 10
@@ -218,14 +238,87 @@ spec:
                 echo "ERROR: Keycloak route not found within timeout"
                 exit 1
               fi
-              KC_URL="https://${KC_HOST}"
-              echo "  Keycloak URL: ${KC_URL}"
+              KC_PUBLIC_URL="https://${KC_HOST}"
+              # Admin REST calls must use in-cluster HTTP; the public Route often
+              # returns 401 for /admin/* (Keycloak 26 hostname/admin settings).
+              KC_ADMIN_URL="http://keycloak-service.rhdh-keycloak.svc.cluster.local:8080"
+              echo "  Keycloak public URL: ${KC_PUBLIC_URL}"
+              echo "  Keycloak admin URL:  ${KC_ADMIN_URL}"
+
+              # ── 1b. Keycloak public hostname (HTTPS in OIDC discovery) ─
+              echo "=== Step 1b: Configuring Keycloak hostname for HTTPS OIDC ==="
+              CURRENT_KC_HOST=$(oc get keycloak keycloak -n rhdh-keycloak \
+                -o jsonpath='{.spec.hostname.hostname}' 2>/dev/null || true)
+              MASTER_ISSUER=$(curl -sk "${KC_PUBLIC_URL}/realms/master/.well-known/openid-configuration" \
+                | python3 -c "import sys,json; print(json.load(sys.stdin).get('issuer',''))" 2>/dev/null || echo "")
+              if [[ "${CURRENT_KC_HOST}" != "${KC_HOST}" ]] || [[ "${MASTER_ISSUER}" != https://* ]]; then
+                echo "  Patching Keycloak CR (current hostname=${CURRENT_KC_HOST:-unset}, issuer=${MASTER_ISSUER:-unknown})..."
+                oc patch keycloak keycloak -n rhdh-keycloak --type=merge \
+                  -p "{\"spec\":{\"hostname\":{\"hostname\":\"${KC_HOST}\",\"strict\":false,\"strictBackchannel\":false},\"proxy\":{\"headers\":\"xforwarded\"}}}"
+              else
+                echo "  Keycloak hostname already set (${KC_HOST}); issuer uses HTTPS."
+              fi
+              for i in {1..60}; do
+                KC_READY=$(oc get keycloak keycloak -n rhdh-keycloak \
+                  -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+                # Use master realm — it always exists; platform may not yet.
+                ISSUER=$(curl -sk "${KC_PUBLIC_URL}/realms/master/.well-known/openid-configuration" \
+                  | python3 -c "import sys,json; print(json.load(sys.stdin).get('issuer',''))" 2>/dev/null || echo "")
+                if [[ "${KC_READY}" == "True" ]] && [[ "${ISSUER}" == https://* ]]; then
+                  echo "  Keycloak OIDC issuer (master): ${ISSUER}"
+                  break
+                fi
+                echo "  Waiting for Keycloak https discovery (ready=${KC_READY}, issuer=${ISSUER:-pending})... (${i}/60)"
+                sleep 10
+              done
+              if [[ "${ISSUER}" != https://* ]]; then
+                echo "ERROR: Keycloak OIDC discovery still not using https (issuer=${ISSUER})"
+                exit 1
+              fi
+              HOSTNAME_PATCHED=false
+              if [[ "${CURRENT_KC_HOST}" != "${KC_HOST}" ]] || [[ "${MASTER_ISSUER}" != https://* ]]; then
+                HOSTNAME_PATCHED=true
+              fi
+
+              # ── 1c. Re-sync platform realm import after Keycloak restart ─
+              # dev-file DB is ephemeral: a hostname patch rolls the pod and wipes
+              # realms/clients. KeycloakRealmImport only re-runs when its Job is
+              # recreated — a stale "Complete" job from before the roll leaves the
+              # realm missing until we delete the Job and wait for import again.
+              echo "=== Step 1c: Ensuring platform realm import matches Keycloak pod ==="
+              KC_POD_START=$(oc get pod keycloak-0 -n rhdh-keycloak \
+                -o jsonpath='{.status.startTime}' 2>/dev/null || echo "")
+              IMPORT_DONE=$(oc get job platform-realm -n rhdh-keycloak \
+                -o jsonpath='{.status.completionTime}' 2>/dev/null || echo "")
+              if [[ "${HOSTNAME_PATCHED}" == "true" ]] || \
+                 [[ -z "${IMPORT_DONE}" ]] || \
+                 { [[ -n "${KC_POD_START}" ]] && [[ -n "${IMPORT_DONE}" ]] && \
+                   [[ "${IMPORT_DONE}" < "${KC_POD_START}" ]]; }; then
+                echo "  Re-triggering platform-realm import (pod start=${KC_POD_START}, last import=${IMPORT_DONE:-never})..."
+                oc delete job platform-realm -n rhdh-keycloak --ignore-not-found
+                for i in {1..60}; do
+                  IMPORT_OK=$(oc get job platform-realm -n rhdh-keycloak \
+                    -o jsonpath='{.status.succeeded}' 2>/dev/null || echo "0")
+                  if [[ "${IMPORT_OK}" == "1" ]]; then
+                    echo "  platform-realm import complete."
+                    break
+                  fi
+                  echo "  Waiting for platform-realm import... (${i}/60)"
+                  sleep 10
+                done
+                if [[ "${IMPORT_OK}" != "1" ]]; then
+                  echo "ERROR: platform-realm import did not complete"
+                  exit 1
+                fi
+              else
+                echo "  platform-realm import already current."
+              fi
 
               # ── 2. Wait for Keycloak to respond ────────────────────────
               echo "=== Step 2: Waiting for Keycloak to be ready ==="
               for i in {1..60}; do
                 HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" \
-                  "${KC_URL}/realms/master/.well-known/openid-configuration" || echo "000")
+                  "${KC_ADMIN_URL}/realms/master/.well-known/openid-configuration" || echo "000")
                 if [[ "${HTTP_CODE}" == "200" ]]; then
                   echo "  Keycloak is ready (HTTP ${HTTP_CODE})"
                   break
@@ -236,13 +329,13 @@ spec:
 
               # ── 3. Get Keycloak admin token ─────────────────────────────
               echo "=== Step 3: Getting Keycloak admin token ==="
-              KC_ADMIN_USER=$(oc get secret keycloak-initial-admin -n keycloak \
+              KC_ADMIN_USER=$(oc get secret keycloak-initial-admin -n rhdh-keycloak \
                 -o jsonpath='{.data.username}' 2>/dev/null | base64 -d)
-              KC_ADMIN_PASS=$(oc get secret keycloak-initial-admin -n keycloak \
+              KC_ADMIN_PASS=$(oc get secret keycloak-initial-admin -n rhdh-keycloak \
                 -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
 
               ADMIN_TOKEN=$(curl -sk -X POST \
-                "${KC_URL}/realms/master/protocol/openid-connect/token" \
+                "${KC_ADMIN_URL}/realms/master/protocol/openid-connect/token" \
                 -d "grant_type=password&client_id=admin-cli&username=${KC_ADMIN_USER}&password=${KC_ADMIN_PASS}" \
                 | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
               echo "  Admin token acquired."
@@ -250,16 +343,29 @@ spec:
 
               # ── 4. Wait for platform realm to exist ────────────────────
               echo "=== Step 4: Waiting for platform realm ==="
-              for i in {1..30}; do
+              REALM_STATUS="000"
+              for i in {1..6}; do
                 REALM_STATUS=$(curl -sk -o /dev/null -w "%{http_code}" \
-                  -H "${AUTH}" "${KC_URL}/admin/realms/${REALM}" || echo "000")
+                  -H "${AUTH}" "${KC_ADMIN_URL}/admin/realms/${REALM}" || echo "000")
                 if [[ "${REALM_STATUS}" == "200" ]]; then
                   echo "  Realm '${REALM}' exists."
                   break
                 fi
-                echo "  Waiting for realm '${REALM}'... (${i}/30)"
+                echo "  Waiting for realm '${REALM}'... (${i}/6)"
                 sleep 10
               done
+              if [[ "${REALM_STATUS}" != "200" ]]; then
+                echo "  Realm '${REALM}' not visible on running Keycloak (HTTP ${REALM_STATUS}) — creating via Admin API..."
+                CREATE_STATUS=$(curl -sk -o /dev/null -w "%{http_code}" -X POST \
+                  -H "${AUTH}" -H "Content-Type: application/json" \
+                  "${KC_ADMIN_URL}/admin/realms" \
+                  -d "{\"realm\":\"${REALM}\",\"enabled\":true,\"displayName\":\"Platform\",\"sslRequired\":\"external\",\"registrationAllowed\":false,\"loginWithEmailAllowed\":false,\"duplicateEmailsAllowed\":false}")
+                if [[ "${CREATE_STATUS}" != "201" && "${CREATE_STATUS}" != "409" ]]; then
+                  echo "ERROR: failed to create realm '${REALM}' (HTTP ${CREATE_STATUS})"
+                  exit 1
+                fi
+                echo "  Realm '${REALM}' ready (create HTTP ${CREATE_STATUS})."
+              fi
 
               # ── 5. Create/update users ──────────────────────────────────
               echo "=== Step 5: Provisioning users ==="
@@ -268,19 +374,19 @@ spec:
                 local PASSWORD="$2"
                 # Check if user exists
                 EXISTING_ID=$(curl -sk -H "${AUTH}" \
-                  "${KC_URL}/admin/realms/${REALM}/users?username=${USERNAME}&exact=true" \
+                  "${KC_ADMIN_URL}/admin/realms/${REALM}/users?username=${USERNAME}&exact=true" \
                   | python3 -c "import sys,json; users=json.load(sys.stdin); print(users[0]['id'] if users else '')" 2>/dev/null || echo "")
 
                 if [[ -n "${EXISTING_ID}" ]]; then
                   echo "  User '${USERNAME}' already exists (${EXISTING_ID}) — updating password."
                   curl -sk -X PUT -H "${AUTH}" -H "Content-Type: application/json" \
-                    "${KC_URL}/admin/realms/${REALM}/users/${EXISTING_ID}/reset-password" \
+                    "${KC_ADMIN_URL}/admin/realms/${REALM}/users/${EXISTING_ID}/reset-password" \
                     -d "{\"type\":\"password\",\"value\":\"${PASSWORD}\",\"temporary\":false}" \
                     -o /dev/null
                 else
                   echo "  Creating user '${USERNAME}'..."
                   curl -sk -X POST -H "${AUTH}" -H "Content-Type: application/json" \
-                    "${KC_URL}/admin/realms/${REALM}/users" \
+                    "${KC_ADMIN_URL}/admin/realms/${REALM}/users" \
                     -d "{
                       \"username\": \"${USERNAME}\",
                       \"enabled\": true,
@@ -302,16 +408,16 @@ spec:
               # ── 5b. Create Keycloak `architects` group and add `architect` member ──
               echo "=== Step 5b: Provisioning architects group ==="
               ARCHITECTS_GROUP_ID=$(curl -sk -H "${AUTH}" \
-                "${KC_URL}/admin/realms/${REALM}/groups?search=architects" \
+                "${KC_ADMIN_URL}/admin/realms/${REALM}/groups?search=architects" \
                 | python3 -c "import sys,json; gs=json.load(sys.stdin); print(next((g['id'] for g in gs if g['name']=='architects'), ''))" 2>/dev/null || echo "")
 
               if [[ -z "${ARCHITECTS_GROUP_ID}" ]]; then
                 echo "  Creating 'architects' group..."
                 curl -sk -X POST -H "${AUTH}" -H "Content-Type: application/json" \
-                  "${KC_URL}/admin/realms/${REALM}/groups" \
+                  "${KC_ADMIN_URL}/admin/realms/${REALM}/groups" \
                   -d "{\"name\":\"architects\"}" -o /dev/null
                 ARCHITECTS_GROUP_ID=$(curl -sk -H "${AUTH}" \
-                  "${KC_URL}/admin/realms/${REALM}/groups?search=architects" \
+                  "${KC_ADMIN_URL}/admin/realms/${REALM}/groups?search=architects" \
                   | python3 -c "import sys,json; gs=json.load(sys.stdin); print(next((g['id'] for g in gs if g['name']=='architects'), ''))" 2>/dev/null || echo "")
                 echo "  Group 'architects' created (${ARCHITECTS_GROUP_ID})."
               else
@@ -321,11 +427,11 @@ spec:
               # Add architect user to architects group
               if [[ -n "${ARCHITECTS_GROUP_ID}" ]]; then
                 ARCHITECT_USER_ID=$(curl -sk -H "${AUTH}" \
-                  "${KC_URL}/admin/realms/${REALM}/users?username=architect&exact=true" \
+                  "${KC_ADMIN_URL}/admin/realms/${REALM}/users?username=architect&exact=true" \
                   | python3 -c "import sys,json; users=json.load(sys.stdin); print(users[0]['id'] if users else '')" 2>/dev/null || echo "")
                 if [[ -n "${ARCHITECT_USER_ID}" ]]; then
                   curl -sk -X PUT -H "${AUTH}" \
-                    "${KC_URL}/admin/realms/${REALM}/users/${ARCHITECT_USER_ID}/groups/${ARCHITECTS_GROUP_ID}" \
+                    "${KC_ADMIN_URL}/admin/realms/${REALM}/users/${ARCHITECT_USER_ID}/groups/${ARCHITECTS_GROUP_ID}" \
                     -o /dev/null
                   echo "  User 'architect' added to group 'architects'."
                 else
@@ -354,11 +460,6 @@ spec:
               echo "=== Step 7: Provisioning RHDH OIDC client ==="
               REDIRECT_URI="${RHDH_URL}/api/auth/oidc/handler/frame"
 
-              EXISTING_CLIENT_ID=$(curl -sk -H "${AUTH}" \
-                "${KC_URL}/admin/realms/${REALM}/clients?clientId=${RHDH_CLIENT_ID}" \
-                | python3 -c "import sys,json; clients=json.load(sys.stdin); print(clients[0]['id'] if clients else '')" 2>/dev/null || echo "")
-
-              # Reuse existing client secret if set and not a placeholder
               CURRENT_CLIENT_SECRET=$(oc get secret rhdh-secrets -n rhdh \
                 -o jsonpath='{.data.RHDH_OIDC_CLIENT_SECRET}' 2>/dev/null \
                 | base64 -d 2>/dev/null || echo "")
@@ -373,29 +474,54 @@ spec:
                 \"clientId\": \"${RHDH_CLIENT_ID}\",
                 \"enabled\": true,
                 \"publicClient\": false,
+                \"clientAuthenticatorType\": \"client-secret\",
                 \"secret\": \"${CLIENT_SECRET}\",
                 \"redirectUris\": [\"${REDIRECT_URI}\"],
-                \"webOrigins\": [\"${RHDH_URL}\"],
+                \"webOrigins\": [\"${RHDH_URL}\", \"+\"],
                 \"standardFlowEnabled\": true,
                 \"directAccessGrantsEnabled\": false,
                 \"protocol\": \"openid-connect\"
               }"
 
-              if [[ -n "${EXISTING_CLIENT_ID}" ]]; then
-                echo "  Updating existing RHDH client..."
-                curl -sk -X PUT -H "${AUTH}" -H "Content-Type: application/json" \
-                  "${KC_URL}/admin/realms/${REALM}/clients/${EXISTING_CLIENT_ID}" \
-                  -d "${CLIENT_PAYLOAD}" -o /dev/null
-                echo "  RHDH OIDC client updated."
-              else
-                echo "  Creating RHDH OIDC client..."
-                curl -sk -X POST -H "${AUTH}" -H "Content-Type: application/json" \
-                  "${KC_URL}/admin/realms/${REALM}/clients" \
-                  -d "${CLIENT_PAYLOAD}" -o /dev/null
-                echo "  RHDH OIDC client created."
+              upsert_rhdh_client() {
+                local HTTP_CODE
+                EXISTING_CLIENT_ID=$(curl -sk -H "${AUTH}" \
+                  "${KC_ADMIN_URL}/admin/realms/${REALM}/clients?clientId=${RHDH_CLIENT_ID}" \
+                  | python3 -c "import sys,json; clients=json.load(sys.stdin); print(clients[0]['id'] if clients else '')" 2>/dev/null || echo "")
+                if [[ -n "${EXISTING_CLIENT_ID}" ]]; then
+                  echo "  Updating existing RHDH client (${EXISTING_CLIENT_ID})..."
+                  HTTP_CODE=$(curl -sk -o /tmp/kc-client-resp -w "%{http_code}" \
+                    -X PUT -H "${AUTH}" -H "Content-Type: application/json" \
+                    "${KC_ADMIN_URL}/admin/realms/${REALM}/clients/${EXISTING_CLIENT_ID}" \
+                    -d "${CLIENT_PAYLOAD}")
+                else
+                  echo "  Creating RHDH OIDC client..."
+                  HTTP_CODE=$(curl -sk -o /tmp/kc-client-resp -w "%{http_code}" \
+                    -X POST -H "${AUTH}" -H "Content-Type: application/json" \
+                    "${KC_ADMIN_URL}/admin/realms/${REALM}/clients" \
+                    -d "${CLIENT_PAYLOAD}")
+                fi
+                echo "  Keycloak client upsert HTTP ${HTTP_CODE}"
+                if [[ "${HTTP_CODE}" != "201" && "${HTTP_CODE}" != "204" ]]; then
+                  echo "ERROR: failed to upsert RHDH OIDC client:"
+                  cat /tmp/kc-client-resp 2>/dev/null || true
+                  return 1
+                fi
+                VERIFY_ID=$(curl -sk -H "${AUTH}" \
+                  "${KC_ADMIN_URL}/admin/realms/${REALM}/clients?clientId=${RHDH_CLIENT_ID}" \
+                  | python3 -c "import sys,json; clients=json.load(sys.stdin); print(clients[0]['id'] if clients else '')" 2>/dev/null || echo "")
+                if [[ -z "${VERIFY_ID}" ]]; then
+                  echo "ERROR: RHDH client '${RHDH_CLIENT_ID}' not visible after upsert"
+                  return 1
+                fi
+                echo "  RHDH OIDC client verified (${VERIFY_ID})."
+              }
+
+              if ! upsert_rhdh_client; then
+                exit 1
               fi
 
-              RHBK_METADATA_URL="${KC_URL}/realms/${REALM}"
+              RHBK_METADATA_URL="${KC_PUBLIC_URL}/realms/${REALM}/.well-known/openid-configuration"
               echo "  RHBK metadata URL: ${RHBK_METADATA_URL}"
 
               # ── 8. Discover ArgoCD route + token ───────────────────────
@@ -491,13 +617,13 @@ spec:
               echo "=== Step 14: Restarting RHDH if needed ==="
               RHDH_DEPLOY=$(oc get deployment -n rhdh --no-headers 2>/dev/null \
                 | grep backstage | awk '{print $1}' | head -1 || true)
-              if [[ -n "${RHDH_DEPLOY}" ]] && [[ "${SECRETS_CHANGED}" == "true" ]]; then
+              # Always restart after a successful configure run so the backend
+              # reloads OIDC discovery (hostname patch may not change secrets).
+              if [[ -n "${RHDH_DEPLOY}" ]]; then
                 echo "  Restarting ${RHDH_DEPLOY}..."
                 oc rollout restart "deployment/${RHDH_DEPLOY}" -n rhdh
                 oc rollout status "deployment/${RHDH_DEPLOY}" -n rhdh --timeout=900s
                 echo "  RHDH restarted successfully."
-              elif [[ -n "${RHDH_DEPLOY}" ]]; then
-                echo "  No restart needed."
               else
                 echo "  WARNING: Backstage deployment not found yet (will be started by operator)."
               fi
@@ -505,8 +631,8 @@ spec:
               echo ""
               echo "=== RHDH configured successfully ==="
               echo "  RHDH URL:          ${RHDH_URL}"
-              echo "  Keycloak URL:      ${KC_URL}"
-              echo "  Realm:             ${KC_URL}/realms/${REALM}"
+              echo "  Keycloak URL:      ${KC_PUBLIC_URL}"
+              echo "  Realm:             ${KC_PUBLIC_URL}/realms/${REALM}"
               echo "  Users:             admin / password"
               echo "                     developer / password"
               echo "                     architect / password  (architects group)"

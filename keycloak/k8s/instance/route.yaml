@@ -1,0 +1,25 @@
+# OpenShift Route for the isolated RHDH Keycloak instance.
+# RHBK 26.x creates a Kubernetes Ingress by default; on OpenShift a Route
+# is required for external HTTPS access (configure-rhdh discovers this host).
+# Do NOT reuse the cluster SSO host (sso.apps.*) — see namespace.yaml.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: keycloak
+  namespace: rhdh-keycloak
+  labels:
+    app.kubernetes.io/part-of: agentic-doc-generation
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  to:
+    kind: Service
+    name: keycloak-service
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
