@@ -108,7 +108,7 @@ COMPLIANCE_MCP_ROUTE_HOST=$(oc get route compliance-mcp-server -n "${NAMESPACE}"
 if [[ -n "${COMPLIANCE_MCP_ROUTE_HOST}" ]]; then
   echo "    Compliance MCP endpoint: ${COMPLIANCE_MCP_ROUTE_HOST}/mcp"
 fi
-KC_ROUTE_HOST=$(oc get route -n keycloak --no-headers 2>/dev/null | grep keycloak | awk '{print $2}' | head -1 || true)
+KC_ROUTE_HOST=$(oc get route -n rhdh-keycloak --no-headers 2>/dev/null | grep keycloak | awk '{print $2}' | head -1 || true)
 if [[ -n "${KC_ROUTE_HOST}" ]]; then
   echo "    Keycloak:              https://${KC_ROUTE_HOST}"
   echo "      Realm:               https://${KC_ROUTE_HOST}/realms/platform"

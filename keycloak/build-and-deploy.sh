@@ -14,7 +14,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NAMESPACE="${NAMESPACE:-keycloak}"
+# NOT "keycloak" — see keycloak/k8s/namespace.yaml for why this dedicated,
+# isolated namespace name avoids colliding with sandbox-provisioned shared
+# SSO Keycloak instances some clusters already run in a namespace with
+# that exact name.
+NAMESPACE="${NAMESPACE:-rhdh-keycloak}"
 
 echo "==> Checking cluster login..."
 oc whoami >/dev/null || { echo "error: not logged in (run 'oc login' first)"; exit 1; }

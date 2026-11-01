@@ -68,12 +68,16 @@ roleRef:
   name: job-configure-rhdh
   apiGroup: rbac.authorization.k8s.io
 ---
-# Role in keycloak: read keycloak-initial-admin Secret
+# Role in rhdh-keycloak: read keycloak-initial-admin Secret.
+# NOT namespace "keycloak" — this repo's RHDH Keycloak lives in the
+# dedicated "rhdh-keycloak" namespace so it never collides with a
+# sandbox-provisioned shared-SSO Keycloak some clusters already run in a
+# namespace literally named "keycloak" (see keycloak/k8s/namespace.yaml).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: job-configure-rhdh-keycloak-reader
-  namespace: keycloak
+  namespace: rhdh-keycloak
   annotations:
     argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
@@ -88,7 +92,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: job-configure-rhdh-keycloak-reader
-  namespace: keycloak
+  namespace: rhdh-keycloak
   annotations:
     argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
@@ -205,10 +209,13 @@ spec:
               RHDH_CLIENT_ID="rhdh"
 
               # ── 1. Discover Keycloak route ──────────────────────────────
+              # Namespace is "rhdh-keycloak" (not "keycloak") — this repo's
+              # dedicated, isolated RHDH Keycloak instance; see
+              # keycloak/k8s/namespace.yaml for why.
               echo "=== Step 1: Discovering Keycloak route ==="
               KC_HOST=""
               for i in {1..60}; do
-                KC_HOST=$(oc get route -n keycloak --no-headers 2>/dev/null \
+                KC_HOST=$(oc get route -n rhdh-keycloak --no-headers 2>/dev/null \
                   | grep -v "^$" | awk '{print $2}' | head -1 || true)
                 if [[ -n "${KC_HOST}" ]]; then break; fi
                 echo "  Waiting for Keycloak route... (${i}/60)"
@@ -236,9 +243,9 @@ spec:
 
               # ── 3. Get Keycloak admin token ─────────────────────────────
               echo "=== Step 3: Getting Keycloak admin token ==="
-              KC_ADMIN_USER=$(oc get secret keycloak-initial-admin -n keycloak \
+              KC_ADMIN_USER=$(oc get secret keycloak-initial-admin -n rhdh-keycloak \
                 -o jsonpath='{.data.username}' 2>/dev/null | base64 -d)
-              KC_ADMIN_PASS=$(oc get secret keycloak-initial-admin -n keycloak \
+              KC_ADMIN_PASS=$(oc get secret keycloak-initial-admin -n rhdh-keycloak \
                 -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
 
               ADMIN_TOKEN=$(curl -sk -X POST \
