@@ -5,9 +5,10 @@
 # Application — the instance must be bootstrapped before child apps sync.
 #
 # Problem: default argocd-rbac-cm only maps cluster-admins *groups* to
-# role:admin. Workshop users (e.g. OpenShift User "admin") often have
-# cluster-admin via RoleBinding but are not in that group, so SSO login
-# shows an empty Applications list.
+# role:admin, and scopes default to `[groups]` only. OpenShift SSO users
+# are authorized in Casbin by JWT `sub` (a Dex hash), not `preferred_username`,
+# so `g, admin, role:admin` never matches unless scopes include
+# `preferred_username` (or the user is in the cluster-admins group).
 #
 # RHDH expects Secret openshift-gitops/rhdh-local-user (key apiToken); the
 # operator creates it when localUsers includes rhdh-local-user.
@@ -18,6 +19,7 @@ metadata:
   namespace: openshift-gitops
 spec:
   rbac:
+    scopes: '[groups, preferred_username]'
     policy: |
       g, system:cluster-admins, role:admin
       g, cluster-admins, role:admin

@@ -76,6 +76,9 @@ echo "    Waiting for operator local-user Secret..."
 for _ in $(seq 1 60); do
   if oc get secret rhdh-local-user-local-user -n openshift-gitops >/dev/null 2>&1; then
     "${SCRIPT_DIR}/sync-rhdh-argocd-secret.sh"
+    if oc get secret rhdh-secrets -n rhdh >/dev/null 2>&1; then
+      "${SCRIPT_DIR}/inject-rhdh-argocd-token.sh" || true
+    fi
     break
   fi
   sleep 2
