@@ -149,9 +149,18 @@ This single command:
 
 1. Installs the OpenShift GitOps operator (if not already present) and
    waits for ArgoCD to come up
-2. Points the root ArgoCD Application (`gitops/root-app.yaml`) at your
+2. Runs **`gitops/preflight.sh`** (checks MCPServer and Tekton CRDs; warns
+   on missing model/github Secrets and OGX ConfigMaps)
+3. Applies **`gitops/argocd-namespace-rolebindings.yaml`** so the Argo CD
+   application-controller can reconcile **`doc-gen-demo`** and
+   **`ci-cd-demo`** (required on OpenShift GitOps 1.22+ — see
+   [GitOps RBAC](#gitops-rbac) below)
+4. Optionally creates **`external-model-credentials`** /
+   **`github-token`** when **`EXTERNAL_MODEL_API_KEY`** / **`GITHUB_TOKEN`**
+   are set in the shell
+5. Points the root ArgoCD Application (`gitops/root-app.yaml`) at your
    repo and applies it
-3. ArgoCD then reconciles every child Application under `gitops/apps/`,
+6. ArgoCD then reconciles every child Application under `gitops/apps/`,
    in dependency order via sync-waves:
    - **Wave 0** — `doc-gen-demo` namespace + GitHub MCP server
    - **Wave 1** — doc-gen-agent, openapi-gen-agent, catalog-gen-agent,
@@ -187,6 +196,39 @@ oc get applications -n openshift-gitops -w
 > ```bash
 > git add gitops/apps && git commit -m "gitops: point apps at repo" && git push
 > ```
+
+### GitOps RBAC
+
+OpenShift GitOps installs a **restricted** ClusterRole for
+`openshift-gitops-argocd-application-controller`: it can watch most
+resources but **cannot patch** Deployments, Services, Routes,
+`MCPServer`, or Tekton objects in application namespaces unless you grant
+access. Without that, child Applications stay **`Failed`** / **`OutOfSync`**
+with `cannot patch resource … forbidden` even when pods are already running
+from a prior `build-and-deploy-all.sh`.
+
+**`gitops/bootstrap.sh`** applies namespace **`admin`** RoleBindings in
+**`doc-gen-demo`** and **`ci-cd-demo`** via
+[`gitops/argocd-namespace-rolebindings.yaml`](gitops/argocd-namespace-rolebindings.yaml).
+That file is **not** part of the App-of-Apps tree (the controller cannot
+bootstrap its own permissions).
+
+If you installed GitOps before this fix, apply the bindings manually and
+refresh sync:
+
+```bash
+oc apply -f gitops/argocd-namespace-rolebindings.yaml
+oc get applications -n openshift-gitops
+```
+
+On an **existing** cluster that already ran bootstrap, you only need the
+`oc apply` above (no need to re-run the full bootstrap script).
+
+The **`ci-cd-pipeline`** Application uses `directory.recurse: true` so Tekton
+**`Task`** manifests under `ci-cd-pipeline/k8s/tasks/` are included in sync.
+**`compliance-mcp-server`** is **`MCPServer` + Route only** in git (same
+pattern as `github-mcp-server`); the MCPLifecycle operator owns the
+Deployment and Service.
 
 Before (or right after) the agents come up, point them at your external
 model endpoint — see [Model configuration](#model-configuration) below
@@ -295,7 +337,9 @@ directly with `oc` as shown above.
 ```
 agentic-doc-generation/
 ├── gitops/
-│   ├── bootstrap.sh                     # Install GitOps operator, apply root app
+│   ├── bootstrap.sh                     # Install GitOps operator, RBAC, apply root app
+│   ├── preflight.sh                     # CRD/Secret/ConfigMap checks before bootstrap
+│   ├── argocd-namespace-rolebindings.yaml  # Argo CD admin in doc-gen-demo + ci-cd-demo
 │   ├── root-app.yaml                    # ArgoCD App-of-Apps
 │   ├── openshift-gitops-subscription.yaml
 │   └── apps/                            # Child ArgoCD Applications (one per component)
