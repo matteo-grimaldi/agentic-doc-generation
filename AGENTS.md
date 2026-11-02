@@ -33,6 +33,8 @@ component breakdown before making changes.
 
 ```
 gitops/                 # ArgoCD App-of-Apps: bootstrap.sh is the entry point
+  argocd-namespace-rolebindings.yaml  # Imperative Argo CD admin in demo namespaces
+  preflight.sh           # CRD/optional runtime checks before bootstrap
   apps/                  # Child ArgoCD Application manifests (one per component)
 github-mcp-server/       # FastMCP server exposing GitHub repo browsing as MCP tools
 doc-gen-agent/           # OGX sidecar (agentic loop) + Gradio UI — architecture docs & diagrams
@@ -79,6 +81,10 @@ governance-hub's storage layer instead of its public API.
   (`https://github.com/YOUR_ORG/agentic-doc-generation.git`). Never
   hardcode a real URL in a manifest — `gitops/bootstrap.sh` substitutes it
   at bootstrap time via `sed`.
+- **OpenShift GitOps RBAC:** `gitops/bootstrap.sh` applies
+  `gitops/argocd-namespace-rolebindings.yaml` imperatively (not via ArgoCD)
+  so the application-controller can patch workloads in `doc-gen-demo` and
+  `ci-cd-demo`. Don't remove those RoleBindings on clusters using GitOps.
 - **Sync-wave ordering matters.** `github-mcp-server` (wave 0) must land
   before `doc-gen-agent`, `openapi-gen-agent`, `compliance-scan-agent`,
   `governance-hub`, and `compliance-mcp-server` (all five wave 1, applied

@@ -6,14 +6,16 @@
 # What this does:
 #   1. Installs the OpenShift GitOps operator (if not already present)
 #   2. Waits for the default ArgoCD instance to come up
-#   3. Points the root ArgoCD Application at THIS repo (substituting the
+#   3. Runs gitops/preflight.sh (CRD / optional Secret+ConfigMap checks)
+#   4. Applies gitops/argocd-namespace-rolebindings.yaml so Argo CD can
+#      reconcile workloads in doc-gen-demo and ci-cd-demo
+#   5. Optionally creates external-model-credentials / github-token Secrets
+#      when EXTERNAL_MODEL_API_KEY / GITHUB_TOKEN are set in the environment
+#   6. Points the root ArgoCD Application at THIS repo (substituting the
 #      repo URL placeholder) and applies it
-#   4. ArgoCD then takes over: it installs the GitHub MCP server and the
-#      doc-gen agent, in dependency order (via sync-waves). Model
-#      inference is not provisioned by this branch — the agent calls a
-#      configurable external OpenAI-compatible endpoint (see
-#      doc-gen-agent/k8s/cluster-config.yaml and the
-#      external-model-credentials Secret documented in the README).
+#   7. ArgoCD then takes over: child Applications under gitops/apps/, in
+#      dependency order (sync-waves). Model inference is not provisioned by
+#      this branch — see doc-gen-agent/k8s/cluster-config.yaml and README.
 #
 # Usage:
 #   ./gitops/bootstrap.sh [repo-url] [git-ref]
@@ -26,6 +28,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+NAMESPACE="${NAMESPACE:-doc-gen-demo}"
 PLACEHOLDER_URL="https://github.com/YOUR_ORG/agentic-doc-generation.git"
 
 REPO_URL="${1:-$(git -C "${REPO_ROOT}" config --get remote.origin.url 2>/dev/null || true)}"
@@ -58,6 +61,29 @@ until oc get deployment openshift-gitops-server -n openshift-gitops >/dev/null 2
   sleep 5
 done
 oc rollout status deployment/openshift-gitops-server -n openshift-gitops --timeout=300s
+
+echo "==> Running GitOps preflight checks..."
+"${SCRIPT_DIR}/preflight.sh"
+
+echo "==> Granting Argo CD application-controller access to demo namespaces..."
+oc apply -f "${SCRIPT_DIR}/argocd-namespace-rolebindings.yaml"
+
+if [[ -n "${EXTERNAL_MODEL_API_KEY:-}" ]]; then
+  echo "==> Creating/updating external-model-credentials secret from \$EXTERNAL_MODEL_API_KEY..."
+  oc create secret generic external-model-credentials \
+    --from-literal=api_key="${EXTERNAL_MODEL_API_KEY}" \
+    -n "${NAMESPACE}" --dry-run=client -o yaml | oc apply -f -
+else
+  echo "    EXTERNAL_MODEL_API_KEY not set — skipping external-model-credentials (see README)."
+fi
+
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  echo "==> Creating/updating github-token secret from \$GITHUB_TOKEN..."
+  oc create secret generic github-token --from-literal=token="${GITHUB_TOKEN}" \
+    -n "${NAMESPACE}" --dry-run=client -o yaml | oc apply -f -
+else
+  echo "    GITHUB_TOKEN not set — skipping github-token (search_code / PR steps need it)."
+fi
 
 echo "==> Rendering root Application with repo URL substituted..."
 TMP_ROOT_APP="$(mktemp)"
