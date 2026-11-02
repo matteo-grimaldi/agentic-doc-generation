@@ -34,6 +34,7 @@ component breakdown before making changes.
 ```
 gitops/                 # ArgoCD App-of-Apps: bootstrap.sh is the entry point
   argocd-namespace-rolebindings.yaml  # Imperative Argo CD admin in demo namespaces
+  argocd-instance-demo.yaml           # Argo CD UI RBAC + rhdh-local-user (merge patch)
   preflight.sh           # CRD/optional runtime checks before bootstrap
   apps/                  # Child ArgoCD Application manifests (one per component)
 github-mcp-server/       # FastMCP server exposing GitHub repo browsing as MCP tools

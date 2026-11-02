@@ -1,0 +1,30 @@
+# Patches the cluster-scoped OpenShift GitOps ArgoCD instance so demo users
+# can see Applications in the UI and RHDH can read the API.
+#
+# Applied imperatively by gitops/bootstrap.sh (merge patch). Not an ArgoCD
+# Application — the instance must be bootstrapped before child apps sync.
+#
+# Problem: default argocd-rbac-cm only maps cluster-admins *groups* to
+# role:admin. Workshop users (e.g. OpenShift User "admin") often have
+# cluster-admin via RoleBinding but are not in that group, so SSO login
+# shows an empty Applications list.
+#
+# RHDH expects Secret openshift-gitops/rhdh-local-user (key apiToken); the
+# operator creates it when localUsers includes rhdh-local-user.
+apiVersion: argoproj.io/v1beta1
+kind: ArgoCD
+metadata:
+  name: openshift-gitops
+  namespace: openshift-gitops
+spec:
+  rbac:
+    policy: |
+      g, system:cluster-admins, role:admin
+      g, cluster-admins, role:admin
+      g, admin, role:admin
+      g, rhdh-local-user, role:admin
+  localUsers:
+    - name: rhdh-local-user
+      enabled: true
+      apiKey: true
+      login: false

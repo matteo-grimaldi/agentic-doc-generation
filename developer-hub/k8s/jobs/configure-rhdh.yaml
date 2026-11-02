@@ -531,6 +531,10 @@ spec:
               ARGOCD_URL="https://${ARGOCD_HOST}"
               ARGOCD_TOKEN=$(oc get secret rhdh-local-user -n openshift-gitops \
                 -o jsonpath='{.data.apiToken}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+              if [[ -z "${ARGOCD_TOKEN}" ]]; then
+                ARGOCD_TOKEN=$(oc get secret rhdh-local-user-local-user -n openshift-gitops \
+                  -o jsonpath='{.data.apiToken}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+              fi
               if [[ -z "${ARGOCD_HOST}" ]]; then
                 echo "  WARNING: ArgoCD route not found — using empty placeholder"
                 ARGOCD_URL="https://argocd-pending.local"
