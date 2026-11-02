@@ -224,6 +224,39 @@ oc get applications -n openshift-gitops
 On an **existing** cluster that already ran bootstrap, you only need the
 `oc apply` above (no need to re-run the full bootstrap script).
 
+### Argo CD UI shows no applications
+
+The Applications **do exist** in the cluster (`oc get applications -n
+openshift-gitops`). An empty Argo CD UI is usually one of these:
+
+1. **Wrong URL** — use the GitOps server Route, not the OpenShift Console
+   Operators page alone:
+   ```bash
+   oc get route openshift-gitops-server -n openshift-gitops \
+     -o jsonpath='https://{.spec.host}{"\n"}'
+   ```
+   Open **Applications** in the left nav; set **Projects** to **All** or
+   **default**.
+
+2. **OpenShift SSO without `cluster-admins` group** — default Argo CD RBAC
+   only grants `role:admin` to the `cluster-admins` **group**. Workshop
+   users with cluster-admin via RoleBinding (e.g. OpenShift User `admin`) may
+   still see **no apps** after **Log in via OpenShift**. Fix:
+   ```bash
+   oc apply -f gitops/argocd-instance-demo.yaml
+   oc apply -f gitops/argocd-namespace-rolebindings.yaml   # if not done yet
+   ./gitops/sync-rhdh-argocd-secret.sh   # if using Developer Hub Argo CD plugin
+   ```
+   Then log out of Argo CD and sign in again (or use the built-in **admin**
+   account — `admin.enabled` is true; retrieve the initial password from the
+   `argocd-secret` in `openshift-gitops`).
+
+3. **Red Hat Developer Hub Argo CD plugin** — RHDH reads
+   `openshift-gitops/rhdh-local-user` (`apiToken`). That Secret is created
+   when `gitops/argocd-instance-demo.yaml` is applied. Re-run the
+   `configure-rhdh` Job (or `developer-hub/build-and-deploy.sh`) so RHDH
+   picks up the token.
+
 The **`ci-cd-pipeline`** Application uses `directory.recurse: true` so Tekton
 **`Task`** manifests under `ci-cd-pipeline/k8s/tasks/` are included in sync.
 **`compliance-mcp-server`** is **`MCPServer` + Route only** in git (same
@@ -340,6 +373,7 @@ agentic-doc-generation/
 │   ├── bootstrap.sh                     # Install GitOps operator, RBAC, apply root app
 │   ├── preflight.sh                     # CRD/Secret/ConfigMap checks before bootstrap
 │   ├── argocd-namespace-rolebindings.yaml  # Argo CD admin in doc-gen-demo + ci-cd-demo
+│   ├── argocd-instance-demo.yaml        # Argo CD UI RBAC + rhdh-local-user token
 │   ├── root-app.yaml                    # ArgoCD App-of-Apps
 │   ├── openshift-gitops-subscription.yaml
 │   └── apps/                            # Child ArgoCD Applications (one per component)

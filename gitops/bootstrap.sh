@@ -9,11 +9,13 @@
 #   3. Runs gitops/preflight.sh (CRD / optional Secret+ConfigMap checks)
 #   4. Applies gitops/argocd-namespace-rolebindings.yaml so Argo CD can
 #      reconcile workloads in doc-gen-demo and ci-cd-demo
-#   5. Optionally creates external-model-credentials / github-token Secrets
+#   5. Merges gitops/argocd-instance-demo.yaml (UI RBAC for user admin +
+#      rhdh-local-user API token for Developer Hub)
+#   6. Optionally creates external-model-credentials / github-token Secrets
 #      when EXTERNAL_MODEL_API_KEY / GITHUB_TOKEN are set in the environment
-#   6. Points the root ArgoCD Application at THIS repo (substituting the
+#   7. Points the root ArgoCD Application at THIS repo (substituting the
 #      repo URL placeholder) and applies it
-#   7. ArgoCD then takes over: child Applications under gitops/apps/, in
+#   8. ArgoCD then takes over: child Applications under gitops/apps/, in
 #      dependency order (sync-waves). Model inference is not provisioned by
 #      this branch — see doc-gen-agent/k8s/cluster-config.yaml and README.
 #
@@ -67,6 +69,20 @@ echo "==> Running GitOps preflight checks..."
 
 echo "==> Granting Argo CD application-controller access to demo namespaces..."
 oc apply -f "${SCRIPT_DIR}/argocd-namespace-rolebindings.yaml"
+
+echo "==> Patching Argo CD instance RBAC (demo UI + RHDH local user)..."
+oc apply -f "${SCRIPT_DIR}/argocd-instance-demo.yaml"
+echo "    Waiting for operator local-user Secret..."
+for _ in $(seq 1 60); do
+  if oc get secret rhdh-local-user-local-user -n openshift-gitops >/dev/null 2>&1; then
+    "${SCRIPT_DIR}/sync-rhdh-argocd-secret.sh"
+    break
+  fi
+  sleep 2
+done
+if ! oc get secret rhdh-local-user -n openshift-gitops >/dev/null 2>&1; then
+  echo "    warning: rhdh-local-user Secret not ready — RHDH Argo CD plugin may stay empty until you run gitops/sync-rhdh-argocd-secret.sh"
+fi
 
 if [[ -n "${EXTERNAL_MODEL_API_KEY:-}" ]]; then
   echo "==> Creating/updating external-model-credentials secret from \$EXTERNAL_MODEL_API_KEY..."
