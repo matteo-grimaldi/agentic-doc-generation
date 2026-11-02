@@ -213,6 +213,15 @@ from a prior `build-and-deploy-all.sh`.
 That file is **not** part of the App-of-Apps tree (the controller cannot
 bootstrap its own permissions).
 
+Child Applications intentionally **do not** use Argo CD's
+`ServerSideApply=true` sync option. Workloads deployed earlier with
+`build-and-deploy-all.sh` / `oc apply` carry client-side-apply metadata;
+with `ServerSideApply=true`, Argo CD tries a **client-side apply migration**
+that fails with the same `cannot patch resource … forbidden` symptom even
+when the namespace RoleBindings above are present. After the RoleBindings
+are applied, use the manifests in this repo (no `ServerSideApply`) or delete
+and let Argo CD recreate affected objects.
+
 If you installed GitOps before this fix, apply the bindings manually and
 refresh sync:
 
@@ -238,24 +247,30 @@ openshift-gitops`). An empty Argo CD UI is usually one of these:
    Open **Applications** in the left nav; set **Projects** to **All** or
    **default**.
 
-2. **OpenShift SSO without `cluster-admins` group** — default Argo CD RBAC
-   only grants `role:admin` to the `cluster-admins` **group**. Workshop
-   users with cluster-admin via RoleBinding (e.g. OpenShift User `admin`) may
-   still see **no apps** after **Log in via OpenShift**. Fix:
+2. **OpenShift SSO + default RBAC scopes** — out of the box, Casbin scopes are
+   **`[groups]` only**, so `g, admin, role:admin` does **not** apply to SSO
+   (JWT `sub` is a Dex hash, not the name `admin`). Workshop users with
+   cluster-admin but **not** in the `cluster-admins` group see an empty list.
+   Fix:
    ```bash
    oc apply -f gitops/argocd-instance-demo.yaml
    oc apply -f gitops/argocd-namespace-rolebindings.yaml   # if not done yet
    ./gitops/sync-rhdh-argocd-secret.sh   # if using Developer Hub Argo CD plugin
+   ./gitops/inject-rhdh-argocd-token.sh  # copies token into rhdh/rhdh-secrets
    ```
-   Then log out of Argo CD and sign in again (or use the built-in **admin**
-   account — `admin.enabled` is true; retrieve the initial password from the
-   `argocd-secret` in `openshift-gitops`).
+   That manifest sets `scopes: '[groups, preferred_username]'`. **Log out** of
+   Argo CD completely, then sign in again (old sessions keep the prior RBAC).
 
 3. **Red Hat Developer Hub Argo CD plugin** — RHDH reads
-   `openshift-gitops/rhdh-local-user` (`apiToken`). That Secret is created
-   when `gitops/argocd-instance-demo.yaml` is applied. Re-run the
-   `configure-rhdh` Job (or `developer-hub/build-and-deploy.sh`) so RHDH
-   picks up the token.
+   `openshift-gitops/rhdh-local-user` (`apiToken`) and stores it in
+   **`rhdh/rhdh-secrets`** as **`RHDH_ARGOCD_TOKEN`**. If that value is empty
+   (common when RHDH was deployed before GitOps RBAC/token setup), the plugin
+   shows **no applications** even though the API has nine. Fix:
+   ```bash
+   ./gitops/sync-rhdh-argocd-secret.sh
+   ./gitops/inject-rhdh-argocd-token.sh
+   ```
+   Or re-run the **`configure-rhdh`** Job from `developer-hub/build-and-deploy.sh`.
 
 The **`ci-cd-pipeline`** Application uses `directory.recurse: true` so Tekton
 **`Task`** manifests under `ci-cd-pipeline/k8s/tasks/` are included in sync.
