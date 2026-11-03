@@ -10,7 +10,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application source
-COPY app.py agent.py start.sh ./
+COPY app.py agent.py mlflow_telemetry.py start.sh ./
 
 # Non-root user for OpenShift compatibility
 RUN useradd -u 1001 -r -g 0 -d /app -s /sbin/nologin appuser && \

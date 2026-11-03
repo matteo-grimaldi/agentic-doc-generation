@@ -1,0 +1,2 @@
+# Workspace support (mlflow.set_workspace / MLFLOW_WORKSPACE) needs >= 3.13
+mlflow>=3.13

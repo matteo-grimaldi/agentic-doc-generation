@@ -36,6 +36,8 @@ from typing import AsyncIterator
 import httpx
 from ogx_client import AsyncOgxClient
 
+from mlflow_telemetry import trace_agent_run
+
 logger = logging.getLogger(__name__)
 
 OGX_BASE_URL = os.getenv("OGX_BASE_URL", "http://localhost:8321")
@@ -397,6 +399,7 @@ def _load_guidelines(directory: str = GUIDELINES_DIR, filenames: tuple[str, ...]
     return "\n\n".join(sections)
 
 
+@trace_agent_run(name="catalog-gen-agent.run", agent_name="catalog-gen-agent")
 async def run_agent(repo_url: str, repo_structure: dict | None = None) -> AsyncIterator[str]:
     """
     Stream the catalog-gen agent's response for a given GitHub repository

@@ -27,6 +27,8 @@ from typing import AsyncIterator
 import httpx
 from ogx_client import AsyncOgxClient
 
+from mlflow_telemetry import trace_agent_run
+
 logger = logging.getLogger(__name__)
 
 OGX_BASE_URL = os.getenv("OGX_BASE_URL", "http://localhost:8321")
@@ -300,6 +302,7 @@ def _load_knowledge(path: str = KNOWLEDGE_FILE) -> str:
         return ""
 
 
+@trace_agent_run(name="doc-gen-agent.run", agent_name="doc-gen-agent")
 async def run_agent(repo_url: str) -> AsyncIterator[str]:
     """
     Stream the agent's architecture-documentation response for a given
@@ -312,6 +315,10 @@ async def run_agent(repo_url: str) -> AsyncIterator[str]:
     Yields:
         Text chunks (and tool-call status lines) from the agent.
     """
+    # Keep AsyncOgxClient (not openai.AsyncOpenAI): OGX-specific params
+    # such as max_infer_iters / MCP tool wiring are first-class on
+    # ogx-client. LLM token/latency traces come from the OGX sidecar's
+    # mlflow.openai.autolog(); this decorator records the end-to-end run.
     client = AsyncOgxClient(
         base_url=OGX_BASE_URL,
         api_key="local",

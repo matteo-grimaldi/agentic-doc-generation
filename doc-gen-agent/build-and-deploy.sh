@@ -12,6 +12,10 @@ IMAGE_NAME="doc-gen-agent"
 
 # shellcheck source=../scripts/lib-openshift-binary-build.sh
 source "${REPO_ROOT}/scripts/lib-openshift-binary-build.sh"
+# shellcheck source=../scripts/lib-mlflow-credentials.sh
+source "${REPO_ROOT}/scripts/lib-mlflow-credentials.sh"
+# shellcheck source=../scripts/lib-ogx-sidecar-deploy.sh
+source "${REPO_ROOT}/scripts/lib-ogx-sidecar-deploy.sh"
 
 echo "==> Ensuring namespace ${NAMESPACE} exists..."
 oc get namespace "${NAMESPACE}" >/dev/null 2>&1 || oc create namespace "${NAMESPACE}"
@@ -20,6 +24,9 @@ oc label namespace "${NAMESPACE}" opendatahub.io/dashboard=true modelmesh-enable
 echo "==> Applying cluster-config ConfigMap and RBAC..."
 oc apply -f "${SCRIPT_DIR}/k8s/cluster-config.yaml" -n "${NAMESPACE}"
 oc apply -f "${SCRIPT_DIR}/k8s/rbac.yaml" -n "${NAMESPACE}"
+
+ensure_mlflow_credentials_secret "${NAMESPACE}" "${REPO_ROOT}"
+ensure_ogx_mlflow_sidecar "${NAMESPACE}" "${REPO_ROOT}"
 
 echo "==> Creating/updating ogx-stack-config ConfigMap from ogx/stack_run_config.yaml..."
 oc create configmap ogx-stack-config \
@@ -42,6 +49,8 @@ fi
 echo "==> NOTE: edit k8s/cluster-config.yaml (model_base_url, model_name) and"
 echo "    ogx/stack_run_config.yaml (model_id/provider_model_id) to point at"
 echo "    your external OpenAI-compatible endpoint before/after this deploy."
+echo "==> MLflow OGX sidecar: OGX_MLFLOW_SIDECAR_MODE=cluster (default, in-cluster build)"
+echo "    or quay (pull ${OGX_MLFLOW_SIDECAR_IMAGE:-quay.io/mgrimald/ogx-mlflow-sidecar:latest})"
 
 echo "==> Building image with OpenShift BuildConfig (binary build)..."
 oc project "${NAMESPACE}" >/dev/null
@@ -57,6 +66,8 @@ oc patch imagestream "${IMAGE_NAME}" -n "${NAMESPACE}" --type=merge \
 echo "==> Applying Deployment, Service, and Route..."
 oc apply -f "${SCRIPT_DIR}/k8s/deployment.yaml" -n "${NAMESPACE}"
 oc apply -f "${SCRIPT_DIR}/k8s/route.yaml" -n "${NAMESPACE}"
+
+maybe_apply_ogx_mlflow_sidecar_image doc-gen-agent "${NAMESPACE}"
 
 echo "==> Waiting for rollout..."
 oc rollout status deployment/doc-gen-agent -n "${NAMESPACE}" --timeout=300s

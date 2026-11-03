@@ -17,6 +17,13 @@
 # The API key for the endpoint is supplied separately via the
 # external-model-credentials Secret (see k8s/deployment.yaml and the
 # README) — never put it in this ConfigMap.
+#
+# mlflow_tracking_uri: in-cluster or Route URL of the OpenShift AI MLflow
+# tracking server (from the MLflow UI quickstart / Mlflow CR). Leave empty
+# to disable tracing. Pods in doc-gen-demo must be able to reach this URI;
+# optional auth goes in the mlflow-credentials Secret (never commit tokens):
+#   oc create secret generic mlflow-credentials \
+#     --from-literal=token="$(oc whoami -t)" -n doc-gen-demo
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -25,3 +32,9 @@ metadata:
 data:
   model_name: "external-model/qwen38-27b"
   model_base_url: "https://maas-rhdp.apps.maas.redhatworkshops.io/v1"
+  # Empty = MLflow tracing off. Example in-cluster form after
+  # ./install-openshift-ai.sh creates the Mlflow CR:
+  #   http://mlflow.redhat-ods-applications.svc.cluster.local:5000
+  # (confirm Service name/namespace/port on your cluster — the MLflow UI
+  # quickstart shows the URI to use).
+  mlflow_tracking_uri: "https://mlflow.redhat-ods-applications.svc.cluster.local:8443/mlflow"

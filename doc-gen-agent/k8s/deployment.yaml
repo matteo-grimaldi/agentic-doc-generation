@@ -26,18 +26,11 @@ spec:
     spec:
       serviceAccountName: doc-gen-agent-sa
       containers:
-        # ── OGX sidecar ──────────────────────────────────────────────────────
+        # ── OGX sidecar (ogx-mlflow-sidecar image: cluster build or Quay) ───
+        # Image ref is set by build-and-deploy.sh (see scripts/lib-ogx-sidecar-deploy.sh).
         - name: ogx-server
-          image: ogxai/distribution-starter:latest
+          image: image-registry.openshift-image-registry.svc:5000/doc-gen-demo/ogx-mlflow-sidecar:latest
           imagePullPolicy: Always
-          command:
-            - uvicorn
-            - ogx.core.server.server:create_app
-            - --host
-            - "0.0.0.0"
-            - --port
-            - "8321"
-            - --factory
           ports:
             - containerPort: 8321
               name: ogx-http
@@ -75,6 +68,28 @@ spec:
                   key: model_name
             - name: OPENAI_MAX_RETRIES
               value: "8"
+            - name: PYTHONPATH
+              value: /app/ogx-mlflow
+            - name: OGX_MLFLOW_SERVICE_NAME
+              value: "doc-gen-agent"
+            - name: MLFLOW_TRACKING_URI
+              valueFrom:
+                configMapKeyRef:
+                  name: cluster-config
+                  key: mlflow_tracking_uri
+            - name: MLFLOW_WORKSPACE
+              value: "doc-gen-demo"
+            - name: MLFLOW_EXPERIMENT
+              value: "doc-gen-agent"
+            # Optional — create with:
+            #   oc create secret generic mlflow-credentials \
+            #     --from-literal=token=<token> -n doc-gen-demo
+            - name: MLFLOW_TRACKING_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mlflow-credentials
+                  key: token
+                  optional: true
           volumeMounts:
             - name: ogx-config
               mountPath: /etc/ogx
@@ -84,14 +99,14 @@ spec:
             httpGet:
               path: /v1/models
               port: 8321
-            initialDelaySeconds: 45
+            initialDelaySeconds: 90
             periodSeconds: 20
             failureThreshold: 4
           readinessProbe:
             httpGet:
               path: /v1/models
               port: 8321
-            initialDelaySeconds: 30
+            initialDelaySeconds: 75
             periodSeconds: 10
             failureThreshold: 6
           resources:
@@ -145,6 +160,21 @@ spec:
             # _report_to_governance).
             - name: GOVERNANCE_HUB_URL
               value: "http://governance-hub.doc-gen-demo.svc.cluster.local:7860"
+            - name: MLFLOW_TRACKING_URI
+              valueFrom:
+                configMapKeyRef:
+                  name: cluster-config
+                  key: mlflow_tracking_uri
+            - name: MLFLOW_WORKSPACE
+              value: "doc-gen-demo"
+            - name: MLFLOW_EXPERIMENT
+              value: "doc-gen-agent"
+            - name: MLFLOW_TRACKING_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mlflow-credentials
+                  key: token
+                  optional: true
           livenessProbe:
             httpGet:
               path: /
