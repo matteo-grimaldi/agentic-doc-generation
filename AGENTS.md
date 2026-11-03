@@ -56,8 +56,10 @@ directory with its manifests. `ogx-mlflow-sidecar/` holds the sidecar
 `Dockerfile`, `start_ogx.py`, `mlflow_telemetry.py`, in-cluster
 `build-and-deploy.sh`, and optional `build-and-push-quay.sh` for
 [`quay.io/mgrimald/ogx-mlflow-sidecar`](https://quay.io/repository/mgrimald/ogx-mlflow-sidecar).
-Agent Deployments use that image via `OGX_MLFLOW_SIDECAR_MODE=cluster`
-(default, OpenShift binary build) or `quay` (pull pre-built). `doc-gen-agent`, `openapi-gen-agent`, and
+Agent Deployments default to **`quay.io/mgrimald/ogx-mlflow-sidecar:latest`**
+(`cluster-config` `ogx_mlflow_sidecar_image` must stay in sync). Use
+`OGX_MLFLOW_SIDECAR_MODE=cluster` to build on OpenShift and patch to the
+namespace ImageStream instead. `doc-gen-agent`, `openapi-gen-agent`, and
 `compliance-scan-agent` are three separate agents, not slices of one
 component — don't reintroduce cross-calls between them (e.g. one
 triggering another's generation or budget) without the user explicitly
@@ -151,6 +153,11 @@ governance-hub's storage layer instead of its public API.
   `compliance-scan-agent/ogx/stack_run_config.yaml`). The endpoint's API
   key goes in the `external-model-credentials` Secret (created
   out-of-band, never committed), not in any of those files.
+- **OGX MLflow sidecar image** defaults to Quay: keep
+  `cluster-config` `ogx_mlflow_sidecar_image` in sync with the
+  `ogx-server` `image` field in all four agent `k8s/deployment.yaml`
+  files. Use `OGX_MLFLOW_SIDECAR_MODE=cluster` only when building
+  `ogx-mlflow-sidecar` into the namespace ImageStream instead.
 - **`compliance-scan-agent`'s compliance checks live in separate
   guideline Markdown files** under `compliance-scan-agent/guidelines/`
   (one per check category: K8s/OpenShift manifests, project structure,

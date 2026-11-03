@@ -18,6 +18,11 @@
 # external-model-credentials Secret (see k8s/deployment.yaml and the
 # README) — never put it in this ConfigMap.
 #
+# ogx_mlflow_sidecar_image: default ogx-server image (must match all four agent
+# Deployments' ogx-server container image). Override at deploy time with
+# OGX_MLFLOW_SIDECAR_MODE=cluster to build in-cluster and patch to the
+# namespace ImageStream instead.
+#
 # mlflow_tracking_uri: in-cluster or Route URL of the OpenShift AI MLflow
 # tracking server (from the MLflow UI quickstart / Mlflow CR). Leave empty
 # to disable tracing. Pods in doc-gen-demo must be able to reach this URI;
@@ -38,3 +43,4 @@ data:
   # (confirm Service name/namespace/port on your cluster — the MLflow UI
   # quickstart shows the URI to use).
   mlflow_tracking_uri: "https://mlflow.redhat-ods-applications.svc.cluster.local:8443/mlflow"
+  ogx_mlflow_sidecar_image: "quay.io/mgrimald/ogx-mlflow-sidecar:latest"

@@ -49,8 +49,8 @@ fi
 echo "==> NOTE: edit k8s/cluster-config.yaml (model_base_url, model_name) and"
 echo "    ogx/stack_run_config.yaml (model_id/provider_model_id) to point at"
 echo "    your external OpenAI-compatible endpoint before/after this deploy."
-echo "==> MLflow OGX sidecar: OGX_MLFLOW_SIDECAR_MODE=cluster (default, in-cluster build)"
-echo "    or quay (pull ${OGX_MLFLOW_SIDECAR_IMAGE:-quay.io/mgrimald/ogx-mlflow-sidecar:latest})"
+echo "==> MLflow OGX sidecar: default Quay (${OGX_MLFLOW_SIDECAR_IMAGE:-quay.io/mgrimald/ogx-mlflow-sidecar:latest})"
+echo "    Use OGX_MLFLOW_SIDECAR_MODE=cluster for in-cluster ImageStream build."
 
 echo "==> Building image with OpenShift BuildConfig (binary build)..."
 oc project "${NAMESPACE}" >/dev/null
