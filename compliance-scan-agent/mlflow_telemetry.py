@@ -16,10 +16,79 @@ from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
+# #region agent log
+def _agent_debug_log(
+    hypothesis_id: str, location: str, message: str, data: dict[str, Any]
+) -> None:
+    import json
+    import time
+    from urllib.parse import urlparse
+
+    safe_data = dict(data)
+    if "tracking_uri" in safe_data:
+        parsed = urlparse(str(safe_data["tracking_uri"]))
+        safe_data["uri_scheme"] = parsed.scheme
+        safe_data["uri_port"] = parsed.port
+        safe_data["uri_host"] = parsed.hostname
+    payload = {
+        "sessionId": "9d0799",
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": safe_data,
+        "timestamp": int(time.time() * 1000),
+    }
+    line = json.dumps(payload, default=str) + "\n"
+    for path in (
+        os.getenv("CURSOR_DEBUG_LOG_PATH", ""),
+        "/Users/mgrimald/projects/agentic-doc-generation/.cursor/debug-9d0799.log",
+    ):
+        if not path:
+            continue
+        try:
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(line)
+            break
+        except OSError:
+            pass
+    logger.info("agent_debug %s", line.strip())
+
+
+# #endregion
+
 F = TypeVar("F", bound=Callable[..., Any])
 
 _CONFIGURED = False
 _ENABLED = False
+
+
+def _apply_mlflow_tls_env(*, tracking_uri: str) -> str:
+    """
+    Ensure MLFLOW_TRACKING_INSECURE_TLS is set before importing mlflow.
+
+    OpenShift AI in-cluster tracking URIs often use https://…svc.cluster.local
+    with a service certificate that fails default TLS verification.
+    """
+    explicit = (os.getenv("MLFLOW_TRACKING_INSECURE_TLS") or "").strip().lower()
+    if explicit == "true":
+        os.environ["MLFLOW_TRACKING_INSECURE_TLS"] = "true"
+        return "true"
+    if explicit == "false":
+        return "false"
+    from urllib.parse import urlparse
+
+    host = urlparse(tracking_uri).hostname or ""
+    if tracking_uri.lower().startswith("https://") and host.endswith(
+        ".svc.cluster.local"
+    ):
+        os.environ["MLFLOW_TRACKING_INSECURE_TLS"] = "true"
+        logger.info(
+            "Set MLFLOW_TRACKING_INSECURE_TLS=true for in-cluster HTTPS "
+            "tracking URI (host=%s)",
+            host,
+        )
+        return "true"
+    return explicit or "(unset)"
 
 
 def configure_mlflow(*, service_name: str) -> bool:
@@ -44,6 +113,26 @@ def configure_mlflow(*, service_name: str) -> bool:
         _ENABLED = False
         return False
 
+    workspace = (os.getenv("MLFLOW_WORKSPACE") or "doc-gen-demo").strip()
+    experiment = (os.getenv("MLFLOW_EXPERIMENT") or service_name).strip()
+    token_set = bool((os.getenv("MLFLOW_TRACKING_TOKEN") or "").strip())
+    insecure_tls = _apply_mlflow_tls_env(tracking_uri=tracking_uri)
+
+    # #region agent log
+    _agent_debug_log(
+        "H1-H3",
+        "mlflow_telemetry.py:configure_mlflow:pre_init",
+        "MLflow configure entry",
+        {
+            "tracking_uri": tracking_uri,
+            "insecure_tls_env": insecure_tls,
+            "token_set": token_set,
+            "workspace": workspace,
+            "experiment": experiment,
+        },
+    )
+    # #endregion
+
     try:
         import mlflow
     except ImportError:
@@ -55,17 +144,33 @@ def configure_mlflow(*, service_name: str) -> bool:
         _ENABLED = False
         return False
 
-    workspace = (os.getenv("MLFLOW_WORKSPACE") or "doc-gen-demo").strip()
-    experiment = (os.getenv("MLFLOW_EXPERIMENT") or service_name).strip()
-
-    # RHOAI/OpenShift AI may inject MLFLOW_TRACKING_TOKEN; the Python SDK
-    # also reads it from the environment. Do not log the token value.
-    token_set = bool((os.getenv("MLFLOW_TRACKING_TOKEN") or "").strip())
-
     mlflow.set_tracking_uri(tracking_uri)
     set_workspace = getattr(mlflow, "set_workspace", None)
     if callable(set_workspace):
-        set_workspace(workspace)
+        try:
+            set_workspace(workspace)
+            # #region agent log
+            _agent_debug_log(
+                "H4",
+                "mlflow_telemetry.py:configure_mlflow:set_workspace",
+                "set_workspace succeeded",
+                {"workspace": workspace},
+            )
+            # #endregion
+        except Exception as exc:
+            # #region agent log
+            _agent_debug_log(
+                "H4",
+                "mlflow_telemetry.py:configure_mlflow:set_workspace",
+                "set_workspace failed",
+                {
+                    "workspace": workspace,
+                    "exc_type": type(exc).__name__,
+                    "exc_msg": str(exc)[:500],
+                },
+            )
+            # #endregion
+            raise
     else:
         # Older SDKs: workspace is still honored via MLFLOW_WORKSPACE env
         # (X-Mlflow-Workspace header) when the server has workspaces enabled.
@@ -76,7 +181,30 @@ def configure_mlflow(*, service_name: str) -> bool:
             workspace,
         )
 
-    mlflow.set_experiment(experiment)
+    try:
+        mlflow.set_experiment(experiment)
+        # #region agent log
+        _agent_debug_log(
+            "H4",
+            "mlflow_telemetry.py:configure_mlflow:set_experiment",
+            "set_experiment succeeded",
+            {"experiment": experiment},
+        )
+        # #endregion
+    except Exception as exc:
+        # #region agent log
+        _agent_debug_log(
+            "H4",
+            "mlflow_telemetry.py:configure_mlflow:set_experiment",
+            "set_experiment failed",
+            {
+                "experiment": experiment,
+                "exc_type": type(exc).__name__,
+                "exc_msg": str(exc)[:500],
+            },
+        )
+        # #endregion
+        raise
     mlflow.openai.autolog()
 
     logger.info(
