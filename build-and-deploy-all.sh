@@ -37,6 +37,10 @@
 #   ./build-and-deploy-all.sh compliance-mcp-server
 #   ./build-and-deploy-all.sh keycloak
 #   ./build-and-deploy-all.sh developer-hub
+#
+# MLflow OGX sidecar (all four agents): OGX_MLFLOW_SIDECAR_MODE=cluster (default)
+# builds ogx-mlflow-sidecar on the cluster; use quay to pull
+# quay.io/mgrimald/ogx-mlflow-sidecar instead (see README Observability).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -52,8 +56,20 @@ if [[ -n "${NAMESPACE:-}" ]]; then
 fi
 NAMESPACE="${NAMESPACE:-doc-gen-demo}"
 
+REPO_ROOT="${SCRIPT_DIR}"
+# shellcheck source=scripts/lib-mlflow-credentials.sh
+source "${REPO_ROOT}/scripts/lib-mlflow-credentials.sh"
+# shellcheck source=scripts/lib-ogx-sidecar-deploy.sh
+source "${REPO_ROOT}/scripts/lib-ogx-sidecar-deploy.sh"
+
+AGENT_COMPONENTS=(doc-gen-agent openapi-gen-agent catalog-gen-agent compliance-scan-agent)
+export OGX_MLFLOW_SIDECAR_MODE="${OGX_MLFLOW_SIDECAR_MODE:-cluster}"
+export OGX_MLFLOW_SIDECAR_IMAGE="${OGX_MLFLOW_SIDECAR_IMAGE:-quay.io/mgrimald/ogx-mlflow-sidecar:latest}"
+
 echo "==> Checking cluster login..."
 oc whoami >/dev/null || { echo "error: not logged into an OpenShift cluster (run 'oc login' first)"; exit 1; }
+
+ensure_mlflow_credentials_secret "${NAMESPACE}" "${REPO_ROOT}"
 
 MODEL_BASE_URL_SET=$(oc get configmap cluster-config -n "${NAMESPACE}" -o jsonpath='{.data.model_base_url}' 2>/dev/null || true)
 if [[ -z "${MODEL_BASE_URL_SET}" || "${MODEL_BASE_URL_SET}" == REPLACE_WITH_* ]]; then
@@ -68,6 +84,22 @@ fi
 COMPONENTS=("github-mcp-server" "doc-gen-agent" "openapi-gen-agent" "catalog-gen-agent" "compliance-scan-agent" "governance-hub" "compliance-mcp-server" "ci-cd-pipeline" "keycloak" "developer-hub")
 if [[ $# -gt 0 ]]; then
   COMPONENTS=("$@")
+fi
+
+deploying_agent=false
+for component in "${COMPONENTS[@]}"; do
+  for agent in "${AGENT_COMPONENTS[@]}"; do
+    if [[ "${component}" == "${agent}" ]]; then
+      deploying_agent=true
+      break 2
+    fi
+  done
+done
+
+if [[ "${deploying_agent}" == true && "${OGX_MLFLOW_SIDECAR_MODE}" == cluster ]]; then
+  echo ""
+  echo "==> MLflow OGX sidecar: in-cluster build (ogx-mlflow-sidecar ImageStream)"
+  ensure_ogx_mlflow_sidecar_image_cluster "${NAMESPACE}" "${REPO_ROOT}"
 fi
 
 for component in "${COMPONENTS[@]}"; do

@@ -24,6 +24,10 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel
 
 from agent import MODEL_NAME, extract_architecture_document, run_agent
+from mlflow_telemetry import configure_mlflow
+
+# Opt-in MLflow tracing (no-op when MLFLOW_TRACKING_URI is unset).
+configure_mlflow(service_name="doc-gen-agent")
 
 # Base URL of the GitHub MCP server's plain REST API (not its /mcp MCP
 # endpoint) — used only by the /invoke background task below to propose the

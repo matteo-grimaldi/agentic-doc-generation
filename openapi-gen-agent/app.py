@@ -31,6 +31,10 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel
 
 from agent import MODEL_NAME, detect_needs_openapi, extract_openapi_spec, run_agent
+from mlflow_telemetry import configure_mlflow
+
+# Opt-in MLflow tracing (no-op when MLFLOW_TRACKING_URI is unset).
+configure_mlflow(service_name="openapi-gen-agent")
 
 # Base URL of the GitHub MCP server's plain REST API (not its /mcp MCP
 # endpoint) — used by _fetch_repo_structure (zero-model-budget detection)

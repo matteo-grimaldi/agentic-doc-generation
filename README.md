@@ -380,6 +380,74 @@ If using GitOps, commit and push the `cluster-config.yaml` /
 automatically. The Secret itself should never be committed; create it
 directly with `oc` as shown above.
 
+## Observability (MLflow tracing)
+
+All four OGX agents (`doc-gen-agent`, `openapi-gen-agent`,
+`compliance-scan-agent`, `catalog-gen-agent`) can export traces to the
+OpenShift AI MLflow tracking server provisioned by
+[`install-openshift-ai.sh`](install-openshift-ai.sh).
+
+| Layer | What is traced |
+|---|---|
+| OGX sidecar (`ogx-mlflow-sidecar` image) | Each OpenAI-compatible call to the external model (`mlflow.openai.autolog()`) — tokens, latency, model id |
+| Gradio agent process | End-to-end `run_agent()` span with tags `agent`, `model`, `repo_url` |
+
+Each agent pod runs the **`ogx-mlflow-sidecar`** container image (MLflow autolog +
+[`start_ogx.py`](ogx-mlflow-sidecar/start_ogx.py) entrypoint). There are two ways to
+obtain that image:
+
+| `OGX_MLFLOW_SIDECAR_MODE` | How |
+|---|---|
+| **`cluster`** (default) | OpenShift binary build via [`ogx-mlflow-sidecar/build-and-deploy.sh`](ogx-mlflow-sidecar/build-and-deploy.sh) — run automatically from each agent's `build-and-deploy.sh` and once up front from [`build-and-deploy-all.sh`](build-and-deploy-all.sh). Needs sufficient build-node ephemeral storage (~30Gi limit on the sidecar build). |
+| **`quay`** | Pull a pre-built image (default [`quay.io/mgrimald/ogx-mlflow-sidecar:latest`](https://quay.io/repository/mgrimald/ogx-mlflow-sidecar)). Publish with [`build-and-push-quay.sh`](ogx-mlflow-sidecar/build-and-push-quay.sh) or a Quay repository build trigger. Private repos need an `imagePullSecret` on the agent Deployments. |
+
+```bash
+# Default: build sidecar on cluster, then agents
+./build-and-deploy-all.sh
+
+# Use Quay instead (after the image exists on Quay)
+OGX_MLFLOW_SIDECAR_MODE=quay ./build-and-deploy-all.sh
+
+# Publish to Quay from your laptop (optional; not run by deploy scripts)
+podman login quay.io
+./ogx-mlflow-sidecar/build-and-push-quay.sh
+```
+
+**Opt-in.** Leave `mlflow_tracking_uri` empty in
+[`doc-gen-agent/k8s/cluster-config.yaml`](doc-gen-agent/k8s/cluster-config.yaml)
+(the default) to disable tracing. Set it to the URI shown in the MLflow
+UI quickstart (in-cluster Service URL or Route), for example:
+
+```yaml
+mlflow_tracking_uri: "http://mlflow.redhat-ods-applications.svc.cluster.local:5000"
+```
+
+Confirm the Service name/namespace/port on your cluster before enabling.
+
+| Env / config | Default | Notes |
+|---|---|---|
+| `MLFLOW_TRACKING_URI` ← `cluster-config.mlflow_tracking_uri` | `""` (off) | Required to enable |
+| `MLFLOW_WORKSPACE` | `doc-gen-demo` | RHOAI workspace (= namespace) |
+| `MLFLOW_EXPERIMENT` | per-agent name | One experiment per agent |
+| `MLFLOW_TRACKING_TOKEN` ← Secret `mlflow-credentials` / `token` | optional | Create if the server requires auth |
+
+```bash
+# Optional auth for the tracking server (also created automatically by
+# build-and-deploy-all.sh and each agent build-and-deploy.sh when
+# mlflow_tracking_uri is set and you are logged in with oc)
+oc create secret generic mlflow-credentials \
+  --from-literal=token="$(oc whoami -t)" -n doc-gen-demo
+
+# Then deploy an agent:
+./doc-gen-agent/build-and-deploy.sh
+```
+
+**Smoke test.** After setting the URI and rebuilding/rolling agents: run
+one agent against a small repo, open the OpenShift AI MLflow UI, select
+workspace `doc-gen-demo`, open that agent's experiment, and confirm a
+trace appears with the repo URL tag (agent span) plus nested/sibling
+OpenAI spans from the sidecar.
+
 ## Project structure
 
 ```
@@ -399,11 +467,18 @@ agentic-doc-generation/
 │   ├── mcp-catalog.yaml                 # AI Hub catalog entry fragment (template for new components)
 │   ├── mcp-catalog-entry.yaml           # Gen AI Playground ConfigMap entry fragment (NOT GitOps-managed)
 │   └── k8s/
+├── ogx-mlflow-sidecar/                  # MLflow-instrumented OGX sidecar image
+│   ├── start_ogx.py                     # configure_mlflow + uvicorn ENTRYPOINT
+│   ├── build-and-push-quay.sh           # optional publish to quay.io/mgrimald/ogx-mlflow-sidecar
+│   ├── build-and-deploy.sh              # in-cluster binary build (default deploy path)
+│   ├── Dockerfile
+│   └── ...
 ├── doc-gen-agent/                       # OGX sidecar + Gradio UI — architecture docs & diagrams
 │   ├── agent.py                         # OGX Responses API agent, architecture-focused system prompt
 │   ├── app.py                           # Gradio chat UI + POST /invoke
+│   ├── mlflow_telemetry.py              # Opt-in MLflow tracing helpers
 │   ├── knowledge.md                     # Documentation style guide injected into the agent prompt
-│   ├── k8s/cluster-config.yaml          # External model endpoint config — SHARED with openapi-gen-agent
+│   ├── k8s/cluster-config.yaml          # External model + MLflow URI — SHARED by all agents
 │   ├── ogx/stack_run_config.yaml        # OGX + external model config
 │   ├── build-and-deploy.sh
 │   └── k8s/
@@ -689,6 +764,11 @@ server(s) already deployed in `doc-gen-demo`.
 
 ## Known limitations
 
+- **OpenShift binary builds and disk:** The `ogx-mlflow-sidecar` ImageStream build
+  layers on `ogxai/distribution-starter` and often fails on workshop nodes (low
+  ephemeral storage). Use `OGX_MLFLOW_SIDECAR_MODE=quay` and a pre-built
+  [`quay.io/mgrimald/ogx-mlflow-sidecar`](https://quay.io/repository/mgrimald/ogx-mlflow-sidecar)
+  image when the in-cluster build cannot run.
 - This demo analyzes **public** GitHub repos only (the GitHub MCP server
   uses unauthenticated or token-based REST calls, no OAuth flow).
 - `search_code` requires a `GITHUB_TOKEN` (GitHub's code search API does

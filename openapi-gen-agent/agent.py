@@ -35,6 +35,8 @@ from typing import AsyncIterator
 import httpx
 from ogx_client import AsyncOgxClient
 
+from mlflow_telemetry import trace_agent_run
+
 logger = logging.getLogger(__name__)
 
 OGX_BASE_URL = os.getenv("OGX_BASE_URL", "http://localhost:8321")
@@ -395,6 +397,7 @@ def _load_knowledge(path: str = KNOWLEDGE_FILE) -> str:
         return ""
 
 
+@trace_agent_run(name="openapi-gen-agent.run", agent_name="openapi-gen-agent")
 async def run_agent(repo_url: str, repo_structure: dict | None = None) -> AsyncIterator[str]:
     """
     Stream the OpenAPI-specification agent's response for a given GitHub

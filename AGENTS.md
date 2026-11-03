@@ -38,19 +38,26 @@ gitops/                 # ArgoCD App-of-Apps: bootstrap.sh is the entry point
   preflight.sh           # CRD/optional runtime checks before bootstrap
   apps/                  # Child ArgoCD Application manifests (one per component)
 github-mcp-server/       # FastMCP server exposing GitHub repo browsing as MCP tools
+ogx-mlflow-sidecar/      # MLflow sidecar image (Dockerfile + cluster build-and-deploy.sh)
 doc-gen-agent/           # OGX sidecar (agentic loop) + Gradio UI — architecture docs & diagrams
 openapi-gen-agent/       # OGX sidecar (agentic loop) + Gradio UI — OpenAPI spec generation (independent)
 compliance-scan-agent/   # OGX sidecar (agentic loop) + Gradio UI — architectural compliance scan (independent, report-only)
+catalog-gen-agent/       # OGX sidecar (agentic loop) + Gradio UI — Backstage catalog-info.yaml generation
 governance-hub/          # FastAPI compliance dashboard + REST API
 compliance-mcp-server/   # Standalone, read-only Compliance MCP server (proxies governance-hub's REST API)
 build-and-deploy-all.sh  # Non-GitOps quick-start for the app components
 ```
 
 Each deployable component (`github-mcp-server/`, `doc-gen-agent/`,
-`openapi-gen-agent/`, `compliance-scan-agent/`, `governance-hub/`,
-`compliance-mcp-server/`) is self-contained: source, `Dockerfile`,
-`requirements.txt`, `build-and-deploy.sh`, and a `k8s/` directory with
-its manifests. `doc-gen-agent`, `openapi-gen-agent`, and
+`openapi-gen-agent/`, `compliance-scan-agent/`, `catalog-gen-agent/`,
+`governance-hub/`, `compliance-mcp-server/`) is self-contained: source,
+`Dockerfile`, `requirements.txt`, `build-and-deploy.sh`, and a `k8s/`
+directory with its manifests. `ogx-mlflow-sidecar/` holds the sidecar
+`Dockerfile`, `start_ogx.py`, `mlflow_telemetry.py`, in-cluster
+`build-and-deploy.sh`, and optional `build-and-push-quay.sh` for
+[`quay.io/mgrimald/ogx-mlflow-sidecar`](https://quay.io/repository/mgrimald/ogx-mlflow-sidecar).
+Agent Deployments use that image via `OGX_MLFLOW_SIDECAR_MODE=cluster`
+(default, OpenShift binary build) or `quay` (pull pre-built). `doc-gen-agent`, `openapi-gen-agent`, and
 `compliance-scan-agent` are three separate agents, not slices of one
 component — don't reintroduce cross-calls between them (e.g. one
 triggering another's generation or budget) without the user explicitly
@@ -120,14 +127,15 @@ governance-hub's storage layer instead of its public API.
   a new file-backed ConfigMap, follow the same pattern and document it
   with a comment at the top of the Deployment manifest that references
   it.
-- **`doc-gen-agent`, `openapi-gen-agent`, and `compliance-scan-agent`
-  share the `cluster-config` ConfigMap and `external-model-credentials`
-  Secret** (both in the `doc-gen-demo` namespace) — only
-  `doc-gen-agent/k8s/cluster-config.yaml` is committed; the other two
-  agents' Deployments reference the same ConfigMap name rather than
-  duplicating it. Don't create a second `cluster-config.yaml` under
-  `openapi-gen-agent/k8s/` or `compliance-scan-agent/k8s/` — that would
-  create a resource ArgoCD-ownership conflict between the Applications.
+- **`doc-gen-agent`, `openapi-gen-agent`, `compliance-scan-agent`, and
+  `catalog-gen-agent` share the `cluster-config` ConfigMap and
+  `external-model-credentials` Secret** (both in the `doc-gen-demo`
+  namespace) — only `doc-gen-agent/k8s/cluster-config.yaml` is committed;
+  the other agents' Deployments reference the same ConfigMap name rather
+  than duplicating it. That ConfigMap also holds optional
+  `mlflow_tracking_uri` (empty = tracing off). Don't create a second
+  `cluster-config.yaml` under another agent's `k8s/` — that would create
+  a resource ArgoCD-ownership conflict between the Applications.
 - **`governance-hub` persists its compliance database (tracked repos +
   agent run history) to a PVC** (`governance-hub-data`, mounted at `/data`,
   `DATABASE_PATH` env var), not a ConfigMap — it's a SQLite file that the
