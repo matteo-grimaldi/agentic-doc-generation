@@ -1,5 +1,6 @@
-# Allow HTTPRoutes in doc-gen-demo to attach to Gateway mcp-gateway
-# (cross-namespace parentRefs).
+# Retained for any leftover doc-gen-demo HTTPRoutes attaching to Gateway
+# mcp-gateway (cross-namespace parentRefs). Backend discovery routes now
+# live in mcp-gateway itself; this grant is harmless if unused.
 apiVersion: gateway.networking.k8s.io/v1beta1
 kind: ReferenceGrant
 metadata:

@@ -1,19 +1,21 @@
-# Gateway API discovery route for compliance-mcp-server's /mcp transport.
+# Discovery route for compliance-mcp-server /mcp. Same-namespace as the
+# MCPServerRegistration (OwnNamespace operator); see httproute-github.yaml.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: compliance-mcp-server-mcp
-  namespace: doc-gen-demo
+  namespace: mcp-gateway
   labels:
     app.kubernetes.io/name: compliance-mcp-server
     app.kubernetes.io/part-of: agentic-doc-generation
 spec:
+  hostnames:
+    - compliance-mcp-server.mcp.local
   parentRefs:
     - group: gateway.networking.k8s.io
       kind: Gateway
       name: mcp-gateway
-      namespace: mcp-gateway
-      sectionName: mcp
+      sectionName: mcp-backends
   rules:
     - matches:
         - path:
@@ -21,4 +23,5 @@ spec:
             value: /mcp
       backendRefs:
         - name: compliance-mcp-server
+          namespace: doc-gen-demo
           port: 8080

@@ -194,6 +194,13 @@ echo "    Connectivity Link / Kuadrant CSV ready (or not yet installed; AuthPoli
 # ---------------------------------------------------------------------------
 echo "==> Ensuring MCP Gateway Operator..."
 oc get namespace "${MCP_SYSTEM_NS}" >/dev/null 2>&1 || oc create namespace "${MCP_SYSTEM_NS}"
+# Operator 0.7.1 hardcodes Secret writes for MCPVirtualServer into
+# mcp-system even when the operator itself is installed elsewhere.
+# GitOps also creates this namespace; keep it here so VS reconcile does
+# not fail with "namespaces mcp-system not found" before the first sync.
+if [[ "${MCP_SYSTEM_NS}" != "mcp-system" ]]; then
+  oc get namespace mcp-system >/dev/null 2>&1 || oc create namespace mcp-system
+fi
 
 if ! oc get crd mcpgatewayextensions.mcp.kuadrant.io >/dev/null 2>&1; then
   MCP_GW_PKG="mcp-gateway"
