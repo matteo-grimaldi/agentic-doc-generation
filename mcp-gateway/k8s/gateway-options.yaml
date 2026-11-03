@@ -1,0 +1,17 @@
+# Istio GatewayClass parameters for mcp-gateway. Without type: ClusterIP the
+# openshift-default controller creates a LoadBalancer Service; on clusters
+# without a cloud LB provider that stays EXTERNAL-IP=<pending> and the
+# Gateway never reaches Programmed=True (AddressNotAssigned). Same pattern
+# as OpenShift AI's data-science-gateway-config.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-gateway-options
+  namespace: mcp-gateway
+  labels:
+    app.kubernetes.io/name: mcp-gateway
+    app.kubernetes.io/part-of: agentic-doc-generation
+data:
+  service: |
+    spec:
+      type: ClusterIP
