@@ -389,8 +389,8 @@ OpenShift AI MLflow tracking server provisioned by
 
 | Layer | What is traced |
 |---|---|
-| OGX sidecar (`ogx-mlflow-sidecar` image) | Each OpenAI-compatible call to the external model (`mlflow.openai.autolog()`) — tokens, latency, model id |
-| Gradio agent process | End-to-end `run_agent()` span with tags `agent`, `model`, `repo_url` |
+| Gradio agent process | Root `run_agent()` AGENT span; MCP tool calls as child TOOL spans; sends W3C `traceparent` to OGX |
+| OGX sidecar (`ogx-mlflow-sidecar` image) | OpenAI autolog spans for each model call, nested under the agent trace when `traceparent` is received |
 
 Each agent pod runs the **`ogx-mlflow-sidecar`** container image (MLflow autolog +
 [`start_ogx.py`](ogx-mlflow-sidecar/start_ogx.py) entrypoint). There are two ways to
@@ -446,8 +446,11 @@ oc create secret generic mlflow-credentials \
 **Smoke test.** After setting the URI and rebuilding/rolling agents: run
 one agent against a small repo, open the OpenShift AI MLflow UI, select
 workspace `doc-gen-demo`, open that agent's experiment, and confirm a
-trace appears with the repo URL tag (agent span) plus nested/sibling
-OpenAI spans from the sidecar.
+trace appears with the repo URL tag (agent span) plus nested OpenAI
+spans from the sidecar and MCP tool spans from the agent process. If you
+see **many trace IDs for one UI run**, the Gradio pod and sidecar were not
+linked — rebuild/publish the `ogx-mlflow-sidecar` image (traceparent
+middleware) and the agent image (`extra_headers` on `responses.create`).
 
 ## Project structure
 

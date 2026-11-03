@@ -39,7 +39,7 @@ def main() -> None:
     import uvicorn
 
     uvicorn.run(
-        "ogx.core.server.server:create_app",
+        "ogx_mlflow_app:create_app",
         host="0.0.0.0",
         port=int(os.getenv("OGX_PORT", "8321")),
         factory=True,

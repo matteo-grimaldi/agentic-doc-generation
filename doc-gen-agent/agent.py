@@ -27,7 +27,7 @@ from typing import AsyncIterator
 import httpx
 from ogx_client import AsyncOgxClient
 
-from mlflow_telemetry import trace_agent_run
+from mlflow_telemetry import get_mcp_tool_span_tracker, mlflow_outbound_trace_headers, trace_agent_run
 
 logger = logging.getLogger(__name__)
 
@@ -338,6 +338,8 @@ async def run_agent(repo_url: str) -> AsyncIterator[str]:
 
     logger.info("Sending request to OGX at %s for repo %s", OGX_BASE_URL, repo_url)
 
+    tool_spans = get_mcp_tool_span_tracker()
+
     try:
         stream = await asyncio.wait_for(
             client.responses.create(
@@ -354,6 +356,7 @@ async def run_agent(repo_url: str) -> AsyncIterator[str]:
                 ],
                 stream=True,
                 extra_body={"max_infer_iters": MAX_INFER_ITERS},
+                extra_headers=mlflow_outbound_trace_headers(),
             ),
             timeout=60,
         )
@@ -397,6 +400,7 @@ async def run_agent(repo_url: str) -> AsyncIterator[str]:
                 elif event_type == "response.output_item.added":
                     item = getattr(event, "item", None)
                     if item and getattr(item, "type", None) == "mcp_call":
+                        tool_spans.on_mcp_call_added(item)
                         tool_calls += 1
                         server = getattr(item, "server_label", "unknown")
                         tool = getattr(item, "name", "unknown")
@@ -406,6 +410,7 @@ async def run_agent(repo_url: str) -> AsyncIterator[str]:
                 elif event_type == "response.output_item.done":
                     item = getattr(event, "item", None)
                     if item and getattr(item, "type", None) == "mcp_call":
+                        tool_spans.on_mcp_call_done(item)
                         server = getattr(item, "server_label", "unknown")
                         tool = getattr(item, "name", "unknown")
                         error = getattr(item, "error", None)

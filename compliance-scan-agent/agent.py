@@ -38,7 +38,7 @@ from typing import AsyncIterator
 import httpx
 from ogx_client import AsyncOgxClient
 
-from mlflow_telemetry import trace_agent_run
+from mlflow_telemetry import get_mcp_tool_span_tracker, mlflow_outbound_trace_headers, trace_agent_run
 
 logger = logging.getLogger(__name__)
 
@@ -383,6 +383,8 @@ async def run_agent(repo_url: str, repo_structure: dict | None = None) -> AsyncI
         MAX_INFER_ITERS, MAX_READ_FILES, len(instructions), len(user_message),
     )
 
+    tool_spans = get_mcp_tool_span_tracker()
+
     try:
         stream = await asyncio.wait_for(
             client.responses.create(
@@ -419,6 +421,7 @@ async def run_agent(repo_url: str, repo_structure: dict | None = None) -> AsyncI
                         "chat_template_kwargs": CHAT_TEMPLATE_KWARGS,
                     },
                 },
+                extra_headers=mlflow_outbound_trace_headers(),
             ),
             timeout=60,
         )
@@ -464,6 +467,7 @@ async def run_agent(repo_url: str, repo_structure: dict | None = None) -> AsyncI
                 elif event_type == "response.output_item.added":
                     item = getattr(event, "item", None)
                     if item and getattr(item, "type", None) == "mcp_call":
+                        tool_spans.on_mcp_call_added(item)
                         tool_calls += 1
                         server = getattr(item, "server_label", "unknown")
                         tool = getattr(item, "name", "unknown")
@@ -472,6 +476,7 @@ async def run_agent(repo_url: str, repo_structure: dict | None = None) -> AsyncI
                 elif event_type == "response.output_item.done":
                     item = getattr(event, "item", None)
                     if item and getattr(item, "type", None) == "mcp_call":
+                        tool_spans.on_mcp_call_done(item)
                         server = getattr(item, "server_label", "unknown")
                         tool = getattr(item, "name", "unknown")
                         error = getattr(item, "error", None)
