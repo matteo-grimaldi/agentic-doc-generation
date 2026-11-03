@@ -36,10 +36,21 @@ def main() -> None:
         service_name,
     )
 
+    app_factory = "ogx_mlflow_app:create_app"
+    try:
+        import ogx_mlflow_app  # noqa: F401
+    except ImportError:
+        app_factory = "ogx.core.server.server:create_app"
+        logger.warning(
+            "ogx_mlflow_app not in image — MLflow trace propagation middleware "
+            "disabled; Chat tab LLM spans stay on separate traces until you "
+            "rebuild/publish ogx-mlflow-sidecar"
+        )
+
     import uvicorn
 
     uvicorn.run(
-        "ogx_mlflow_app:create_app",
+        app_factory,
         host="0.0.0.0",
         port=int(os.getenv("OGX_PORT", "8321")),
         factory=True,

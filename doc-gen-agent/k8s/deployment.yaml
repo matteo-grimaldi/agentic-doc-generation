@@ -83,6 +83,12 @@ spec:
                   name: cluster-config
                   key: mlflow_tracking_insecure_tls
                   optional: true
+            - name: MLFLOW_OGX_TRACE_PROPAGATION
+              valueFrom:
+                configMapKeyRef:
+                  name: cluster-config
+                  key: mlflow_ogx_trace_propagation
+                  optional: true
             - name: MLFLOW_WORKSPACE
               value: "doc-gen-demo"
             - name: MLFLOW_EXPERIMENT
@@ -176,6 +182,12 @@ spec:
                 configMapKeyRef:
                   name: cluster-config
                   key: mlflow_tracking_insecure_tls
+                  optional: true
+            - name: MLFLOW_OGX_TRACE_PROPAGATION
+              valueFrom:
+                configMapKeyRef:
+                  name: cluster-config
+                  key: mlflow_ogx_trace_propagation
                   optional: true
             - name: MLFLOW_WORKSPACE
               value: "doc-gen-demo"

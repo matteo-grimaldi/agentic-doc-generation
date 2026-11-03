@@ -213,7 +213,8 @@ def configure_mlflow(*, service_name: str) -> bool:
     # Gradio agent images use ogx-client, not the OpenAI SDK — autolog belongs
     # on the OGX sidecar that performs responses.create() to the model endpoint.
     if importlib.util.find_spec("openai") is not None:
-        mlflow.openai.autolog()
+        # Sidecar must emit LLM spans (messages/tokens) for the MLflow UI Chat tab.
+        mlflow.openai.autolog(log_traces=True)
     else:
         logger.info(
             "Skipping mlflow.openai.autolog() — openai not installed "
@@ -239,12 +240,14 @@ def mlflow_outbound_trace_headers() -> dict[str, str]:
     """
     W3C traceparent headers for outbound HTTP calls (e.g. Gradio → OGX).
 
-    Must be called while an active MLflow span exists (inside trace_agent_run).
-    Opt-in until the OGX sidecar image includes trace-context middleware.
+    Links sidecar openai.autolog spans (Chat tab: prompts/messages) under the
+    same trace as the Gradio AGENT span. Requires the ogx-mlflow-sidecar image
+    with trace-context middleware (ogx_mlflow_app).
     """
     if not _ENABLED:
         return {}
-    if (os.getenv("MLFLOW_OGX_TRACE_PROPAGATION") or "").strip().lower() != "true":
+    propagate = (os.getenv("MLFLOW_OGX_TRACE_PROPAGATION") or "true").strip().lower()
+    if propagate in ("0", "false", "no", "off"):
         return {}
     try:
         from mlflow.tracing.distributed import (
@@ -278,9 +281,9 @@ def _flush_mlflow_traces(*, location: str) -> None:
         return
     import mlflow
 
+    # Do not pass terminate=True — Gradio is long-lived; terminating the async
+    # exporter breaks later runs and can drop LLM span payloads.
     try:
-        mlflow.flush_trace_async_logging(terminate=True)
-    except TypeError:
         mlflow.flush_trace_async_logging()
     except Exception:
         logger.debug("MLflow trace flush failed", exc_info=True)
