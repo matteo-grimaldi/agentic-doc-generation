@@ -408,8 +408,8 @@ OpenShift AI MLflow tracking server provisioned by
 
 | Layer | What is traced |
 |---|---|
-| Gradio agent process | Root `run_agent()` AGENT span; MCP tool calls as child TOOL spans; sends W3C `traceparent` to OGX |
-| OGX sidecar (`ogx-mlflow-sidecar` image) | [`start_ogx.py`](ogx-mlflow-sidecar/start_ogx.py) calls `mlflow.openai.autolog()` **before** stock `ogx.core.server.server:create_app` — each `/v1/chat/completions` call becomes its own trace with **Chat tab** (prompts, messages, tokens). Default `mlflow_ogx_trace_propagation: "false"` keeps this behavior |
+| Gradio agent process | Root `run_agent()` AGENT span; MCP tool calls as child TOOL spans; one UUID per run as MLflow **Session** (`mlflow.trace.session`); sends `X-Mlflow-Trace-Session` (and optional W3C `traceparent`) to OGX |
+| OGX sidecar (`ogx-mlflow-sidecar` image) | [`start_ogx.py`](ogx-mlflow-sidecar/start_ogx.py) calls `mlflow.openai.autolog()` before the OGX app; middleware applies the run Session to sidecar traces. Default `mlflow_ogx_trace_propagation: "false"` keeps **one Chat-tab trace per LLM call** (separate trace IDs, same Session) |
 
 Each agent pod runs the **`ogx-mlflow-sidecar`** container image (MLflow autolog +
 [`start_ogx.py`](ogx-mlflow-sidecar/start_ogx.py) entrypoint). There are two ways to
@@ -462,14 +462,21 @@ oc create secret generic mlflow-credentials \
 ./doc-gen-agent/build-and-deploy.sh
 ```
 
-**Smoke test.** After setting the URI and rebuilding/rolling agents: run
+**Session grouping.** Each Gradio / `/invoke` call gets a UUID written as
+trace metadata `mlflow.trace.session` (MLflow UI **Session** column). The
+same id is sent to the sidecar so AGENT + all OpenAI autolog traces for that
+run share one Session even when they have different trace IDs. Filter traces
+with metadata key `mlflow.trace.session` equal to that UUID to inspect one run.
+`mlflow_ogx_trace_propagation` only controls whether sidecar LLM spans nest
+under the AGENT trace ID (propagation on) vs stay separate Chat-tab traces
+(propagation off, the default)—not Session grouping.
+
+**Smoke test.** After setting the URI and rebuilding/rolling agents (and
+republishing `ogx-mlflow-sidecar` when middleware/entrypoint changed): run
 one agent against a small repo, open the OpenShift AI MLflow UI, select
-workspace `doc-gen-demo`, open that agent's experiment, and confirm a
-trace appears with the repo URL tag (agent span) plus nested OpenAI
-spans from the sidecar and MCP tool spans from the agent process. If you
-see **many trace IDs for one UI run**, the Gradio pod and sidecar were not
-linked — rebuild/publish the `ogx-mlflow-sidecar` image (traceparent
-middleware) and the agent image (`extra_headers` on `responses.create`).
+workspace `doc-gen-demo`, open that agent's experiment, and confirm the AGENT
+trace and sidecar Chat traces share the same **Session** value, with MCP tool
+spans under the agent process.
 
 ## Project structure
 

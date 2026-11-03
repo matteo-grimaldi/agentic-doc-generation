@@ -27,7 +27,7 @@ from typing import AsyncIterator
 import httpx
 from ogx_client import AsyncOgxClient
 
-from mlflow_telemetry import get_mcp_tool_span_tracker, mlflow_outbound_trace_headers, trace_agent_run
+from mlflow_telemetry import get_mcp_tool_span_tracker, mlflow_ogx_request_headers, trace_agent_run
 
 logger = logging.getLogger(__name__)
 
@@ -393,7 +393,7 @@ async def run_agent(repo_url: str) -> AsyncIterator[str]:
                 tools=[mcp_tool],
                 stream=True,
                 extra_body={"max_infer_iters": MAX_INFER_ITERS},
-                extra_headers=mlflow_outbound_trace_headers(),
+                extra_headers=mlflow_ogx_request_headers(),
             ),
             timeout=60,
         )
