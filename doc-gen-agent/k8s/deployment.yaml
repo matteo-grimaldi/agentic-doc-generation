@@ -26,10 +26,10 @@ spec:
     spec:
       serviceAccountName: doc-gen-agent-sa
       containers:
-        # ── OGX sidecar (ogx-mlflow-sidecar image: cluster build or Quay) ───
+        # ── OGX sidecar (default: Quay; cluster build via OGX_MLFLOW_SIDECAR_MODE=cluster) ──
         # Image ref is set by build-and-deploy.sh (see scripts/lib-ogx-sidecar-deploy.sh).
         - name: ogx-server
-          image: image-registry.openshift-image-registry.svc:5000/doc-gen-demo/ogx-mlflow-sidecar:latest
+          image: quay.io/mgrimald/ogx-mlflow-sidecar:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8321

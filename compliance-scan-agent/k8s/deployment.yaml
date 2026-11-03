@@ -31,7 +31,7 @@ spec:
       serviceAccountName: compliance-scan-agent-sa
       containers:
         - name: ogx-server
-          image: image-registry.openshift-image-registry.svc:5000/doc-gen-demo/ogx-mlflow-sidecar:latest
+          image: quay.io/mgrimald/ogx-mlflow-sidecar:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8321

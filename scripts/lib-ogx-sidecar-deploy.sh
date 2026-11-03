@@ -23,7 +23,7 @@ ensure_ogx_mlflow_sidecar_image_cluster() {
 apply_ogx_mlflow_sidecar_image() {
   local deployment="$1"
   local namespace="$2"
-  local mode="${OGX_MLFLOW_SIDECAR_MODE:-cluster}"
+  local mode="${OGX_MLFLOW_SIDECAR_MODE:-quay}"
   local image="${OGX_MLFLOW_SIDECAR_IMAGE:-}"
 
   if [[ "${mode}" == cluster ]]; then
@@ -71,12 +71,12 @@ spec:
 
 # Before agent deploy.
 # OGX_MLFLOW_SIDECAR_MODE:
-#   cluster (default) — ogx-mlflow-sidecar/build-and-deploy.sh (OpenShift binary build)
-#   quay              — pull OGX_MLFLOW_SIDECAR_IMAGE (default quay.io/mgrimald/ogx-mlflow-sidecar:latest)
+#   quay (default)    — pull OGX_MLFLOW_SIDECAR_IMAGE / cluster-config ogx_mlflow_sidecar_image
+#   cluster           — ogx-mlflow-sidecar/build-and-deploy.sh (OpenShift binary build)
 ensure_ogx_mlflow_sidecar() {
   local namespace="$1"
   local repo_root="$2"
-  local mode="${OGX_MLFLOW_SIDECAR_MODE:-cluster}"
+  local mode="${OGX_MLFLOW_SIDECAR_MODE:-quay}"
 
   case "${mode}" in
     cluster)
@@ -93,7 +93,7 @@ ensure_ogx_mlflow_sidecar() {
   esac
 }
 
-# After oc apply deployment — sets ogx-server image (idempotent for cluster mode).
+# After oc apply deployment — aligns ogx-server image with mode (Quay default in git).
 maybe_apply_ogx_mlflow_sidecar_image() {
   local deployment="$1"
   local namespace="$2"

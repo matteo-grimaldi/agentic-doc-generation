@@ -38,9 +38,8 @@
 #   ./build-and-deploy-all.sh keycloak
 #   ./build-and-deploy-all.sh developer-hub
 #
-# MLflow OGX sidecar (all four agents): OGX_MLFLOW_SIDECAR_MODE=cluster (default)
-# builds ogx-mlflow-sidecar on the cluster; use quay to pull
-# quay.io/mgrimald/ogx-mlflow-sidecar instead (see README Observability).
+# MLflow OGX sidecar: default pull from Quay (see cluster-config ogx_mlflow_sidecar_image).
+# Set OGX_MLFLOW_SIDECAR_MODE=cluster to build ogx-mlflow-sidecar on the cluster instead.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -63,7 +62,7 @@ source "${REPO_ROOT}/scripts/lib-mlflow-credentials.sh"
 source "${REPO_ROOT}/scripts/lib-ogx-sidecar-deploy.sh"
 
 AGENT_COMPONENTS=(doc-gen-agent openapi-gen-agent catalog-gen-agent compliance-scan-agent)
-export OGX_MLFLOW_SIDECAR_MODE="${OGX_MLFLOW_SIDECAR_MODE:-cluster}"
+export OGX_MLFLOW_SIDECAR_MODE="${OGX_MLFLOW_SIDECAR_MODE:-quay}"
 export OGX_MLFLOW_SIDECAR_IMAGE="${OGX_MLFLOW_SIDECAR_IMAGE:-quay.io/mgrimald/ogx-mlflow-sidecar:latest}"
 
 echo "==> Checking cluster login..."

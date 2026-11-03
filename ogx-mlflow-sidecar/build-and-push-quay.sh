@@ -37,4 +37,4 @@ else
 fi
 
 echo "==> Pushed ${QUAY_IMAGE}"
-echo "    Deploy: OGX_MLFLOW_SIDECAR_MODE=quay ./doc-gen-agent/build-and-deploy.sh"
+echo "    Deploy: ./doc-gen-agent/build-and-deploy.sh  (or OGX_MLFLOW_SIDECAR_MODE=cluster)"

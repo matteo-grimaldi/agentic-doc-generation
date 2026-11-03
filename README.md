@@ -398,15 +398,15 @@ obtain that image:
 
 | `OGX_MLFLOW_SIDECAR_MODE` | How |
 |---|---|
-| **`cluster`** (default) | OpenShift binary build via [`ogx-mlflow-sidecar/build-and-deploy.sh`](ogx-mlflow-sidecar/build-and-deploy.sh) — run automatically from each agent's `build-and-deploy.sh` and once up front from [`build-and-deploy-all.sh`](build-and-deploy-all.sh). Needs sufficient build-node ephemeral storage (~30Gi limit on the sidecar build). |
-| **`quay`** | Pull a pre-built image (default [`quay.io/mgrimald/ogx-mlflow-sidecar:latest`](https://quay.io/repository/mgrimald/ogx-mlflow-sidecar)). Publish with [`build-and-push-quay.sh`](ogx-mlflow-sidecar/build-and-push-quay.sh) or a Quay repository build trigger. Private repos need an `imagePullSecret` on the agent Deployments. |
+| **`quay`** (default) | Pull [`quay.io/mgrimald/ogx-mlflow-sidecar:latest`](https://quay.io/repository/mgrimald/ogx-mlflow-sidecar) (also set in `cluster-config` `ogx_mlflow_sidecar_image` and each agent Deployment). Publish with [`build-and-push-quay.sh`](ogx-mlflow-sidecar/build-and-push-quay.sh) or a Quay build trigger. Private repos need an `imagePullSecret` on the agent Deployments. |
+| **`cluster`** | OpenShift binary build via [`ogx-mlflow-sidecar/build-and-deploy.sh`](ogx-mlflow-sidecar/build-and-deploy.sh) — `build-and-deploy-all.sh` runs this once up front when any agent is deployed. Needs sufficient build-node ephemeral storage (~30Gi limit on the sidecar build). |
 
 ```bash
-# Default: build sidecar on cluster, then agents
+# Default: agents pull ogx-server from Quay (image must exist on Quay)
 ./build-and-deploy-all.sh
 
-# Use Quay instead (after the image exists on Quay)
-OGX_MLFLOW_SIDECAR_MODE=quay ./build-and-deploy-all.sh
+# Build sidecar on cluster instead
+OGX_MLFLOW_SIDECAR_MODE=cluster ./build-and-deploy-all.sh
 
 # Publish to Quay from your laptop (optional; not run by deploy scripts)
 podman login quay.io
