@@ -58,10 +58,48 @@ for crd in gateways.gateway.networking.k8s.io httproutes.gateway.networking.k8s.
 done
 echo "    Gateway API CRDs present."
 
-if ! oc get gatewayclass openshift-default >/dev/null 2>&1; then
-  fail "GatewayClass openshift-default not found — use the cluster's built-in class; do not create a second GatewayClass."
+# openshift-default is the Ingress Operator's GatewayClass — it is NOT
+# pre-created on every cluster. Creating it (exactly this name +
+# controllerName) is the documented enablement step; the Ingress Operator
+# then installs a lightweight Service Mesh control plane in
+# openshift-ingress. Do not invent a second class name.
+GATEWAY_CLASS_NAME="${GATEWAY_CLASS_NAME:-openshift-default}"
+GATEWAY_CONTROLLER="${GATEWAY_CONTROLLER:-openshift.io/gateway-controller/v1}"
+echo "==> Ensuring GatewayClass ${GATEWAY_CLASS_NAME}..."
+if ! oc get gatewayclass "${GATEWAY_CLASS_NAME}" >/dev/null 2>&1; then
+  cat <<EOF | oc apply -f -
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: ${GATEWAY_CLASS_NAME}
+spec:
+  controllerName: ${GATEWAY_CONTROLLER}
+EOF
+  echo "    Created GatewayClass/${GATEWAY_CLASS_NAME} (Ingress Operator will reconcile it)."
+else
+  echo "    GatewayClass/${GATEWAY_CLASS_NAME} already present."
 fi
-echo "    GatewayClass openshift-default present."
+
+echo "==> Waiting for GatewayClass ${GATEWAY_CLASS_NAME} to be Accepted..."
+_waited=0
+while true; do
+  accepted="$(oc get gatewayclass "${GATEWAY_CLASS_NAME}" -o jsonpath='{.status.conditions[?(@.type=="Accepted")].status}' 2>/dev/null || true)"
+  if [[ "${accepted}" == "True" ]]; then
+    break
+  fi
+  if (( _waited >= 300 )); then
+    echo "    warning: GatewayClass ${GATEWAY_CLASS_NAME} not Accepted yet (status=${accepted:-unset})."
+    echo "    Continuing — first Gateway create may still trigger Ingress Operator install."
+    echo "    If Gateways stay unprogrammed, check: oc get gatewayclass ${GATEWAY_CLASS_NAME} -o yaml"
+    echo "    and look for an OSSM v2 conflict (v2 and the Gateway-API mesh cannot coexist)."
+    break
+  fi
+  sleep 5
+  _waited=$((_waited + 5))
+done
+if [[ "${accepted:-}" == "True" ]]; then
+  echo "    GatewayClass/${GATEWAY_CLASS_NAME} Accepted=True."
+fi
 
 # ---------------------------------------------------------------------------
 # Step 2 -- Red Hat Connectivity Link (AuthPolicy / Kuadrant CRDs)
