@@ -41,6 +41,11 @@ data:
   # ./install-openshift-ai.sh creates the Mlflow CR:
   #   http://mlflow.redhat-ods-applications.svc.cluster.local:5000
   # (confirm Service name/namespace/port on your cluster — the MLflow UI
-  # quickstart shows the URI to use).
+  # quickstart shows the URI to use). For https:// in-cluster Service URLs
+  # (e.g. :8443), set mlflow_tracking_insecure_tls to "true" or use plain
+  # http://…:5000 instead. Alternatively mount the service CA and set
+  # MLFLOW_TRACKING_SERVER_CERT_PATH in the Deployment (not in ConfigMap).
   mlflow_tracking_uri: "https://mlflow.redhat-ods-applications.svc.cluster.local:8443/mlflow"
+  # Literal "true" disables TLS verify for MLFLOW_TRACKING_URI (demo only).
+  mlflow_tracking_insecure_tls: "true"
   ogx_mlflow_sidecar_image: "quay.io/mgrimald/ogx-mlflow-sidecar:latest"

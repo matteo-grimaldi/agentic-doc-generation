@@ -96,6 +96,12 @@ spec:
                 configMapKeyRef:
                   name: cluster-config
                   key: mlflow_tracking_uri
+            - name: MLFLOW_TRACKING_INSECURE_TLS
+              valueFrom:
+                configMapKeyRef:
+                  name: cluster-config
+                  key: mlflow_tracking_insecure_tls
+                  optional: true
             - name: MLFLOW_WORKSPACE
               value: "doc-gen-demo"
             - name: MLFLOW_EXPERIMENT
@@ -184,6 +190,12 @@ spec:
                 configMapKeyRef:
                   name: cluster-config
                   key: mlflow_tracking_uri
+            - name: MLFLOW_TRACKING_INSECURE_TLS
+              valueFrom:
+                configMapKeyRef:
+                  name: cluster-config
+                  key: mlflow_tracking_insecure_tls
+                  optional: true
             - name: MLFLOW_WORKSPACE
               value: "doc-gen-demo"
             - name: MLFLOW_EXPERIMENT

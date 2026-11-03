@@ -427,6 +427,7 @@ Confirm the Service name/namespace/port on your cluster before enabling.
 | Env / config | Default | Notes |
 |---|---|---|
 | `MLFLOW_TRACKING_URI` ← `cluster-config.mlflow_tracking_uri` | `""` (off) | Required to enable |
+| `MLFLOW_TRACKING_INSECURE_TLS` ← `cluster-config.mlflow_tracking_insecure_tls` | unset | Set to `true` for in-cluster `https://` URIs with a self-signed service cert (demo only); prefer `http://…:5000` when available |
 | `MLFLOW_WORKSPACE` | `doc-gen-demo` | RHOAI workspace (= namespace) |
 | `MLFLOW_EXPERIMENT` | per-agent name | One experiment per agent |
 | `MLFLOW_TRACKING_TOKEN` ← Secret `mlflow-credentials` / `token` | optional | Create if the server requires auth |
