@@ -9,6 +9,7 @@ runs without a tracking server keep working.
 from __future__ import annotations
 
 import functools
+import importlib.util
 import logging
 import os
 from collections.abc import AsyncIterator, Callable
@@ -205,7 +206,16 @@ def configure_mlflow(*, service_name: str) -> bool:
         )
         # #endregion
         raise
-    mlflow.openai.autolog()
+    # Gradio agent images use ogx-client, not the OpenAI SDK — autolog belongs
+    # on the OGX sidecar that performs responses.create() to the model endpoint.
+    if importlib.util.find_spec("openai") is not None:
+        mlflow.openai.autolog()
+    else:
+        logger.info(
+            "Skipping mlflow.openai.autolog() — openai not installed "
+            "(service=%s); use sidecar autolog for model HTTP spans",
+            service_name,
+        )
 
     logger.info(
         "MLflow tracing enabled — uri=%s workspace=%s experiment=%s "
