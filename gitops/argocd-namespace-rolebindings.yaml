@@ -50,6 +50,23 @@ subjects:
     name: openshift-gitops-argocd-application-controller
     namespace: openshift-gitops
 ---
+# mcp-system holds the operator's hardcoded MCPVirtualServer config Secret
+# (see mcp-gateway/k8s/virtualserver-config-sync.yaml). Argo creates the
+# namespace + a small Role for the sync Job SA.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openshift-gitops-argocd-application-controller-admin
+  namespace: mcp-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: admin
+subjects:
+  - kind: ServiceAccount
+    name: openshift-gitops-argocd-application-controller
+    namespace: openshift-gitops
+---
 # OpenShift's aggregated ClusterRole/admin only allows get/list/watch on
 # gateways.gateway.networking.k8s.io (HTTPRoutes are fully writable). The
 # mcp-gateway Application must create/update the Gateway CR itself.

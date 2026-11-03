@@ -1,7 +1,8 @@
 # Register both MCP servers with the gateway. Prefix is omitted so tool
 # names stay get_repo_info / get_compliance_status / etc. — matching the
 # four agents' existing system prompts. The two servers' tool names do
-# not collide.
+# not collide. targetRef stays same-namespace (mcp-gateway) — the
+# OwnNamespace operator cannot resolve HTTPRoutes in doc-gen-demo.
 apiVersion: mcp.kuadrant.io/v1alpha1
 kind: MCPServerRegistration
 metadata:
@@ -16,7 +17,6 @@ spec:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: github-mcp-server-mcp
-    namespace: doc-gen-demo
 ---
 apiVersion: mcp.kuadrant.io/v1alpha1
 kind: MCPServerRegistration
@@ -32,4 +32,3 @@ spec:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: compliance-mcp-server-mcp
-    namespace: doc-gen-demo
