@@ -22,22 +22,35 @@ logger = logging.getLogger("ogx-mlflow-sidecar")
 _STOCK_OGX_APP = "ogx.core.server.server:create_app"
 
 
-def _resolve_app_factory() -> str:
-    """Stock OGX app by default; optional trace-propagation middleware."""
-    propagate = (
-        os.getenv("MLFLOW_OGX_TRACE_PROPAGATION") or "false"
-    ).strip().lower() in ("1", "true", "yes", "on")
-    if not propagate:
+def _propagation_enabled() -> bool:
+    return (os.getenv("MLFLOW_OGX_TRACE_PROPAGATION") or "false").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _resolve_app_factory(*, mlflow_enabled: bool) -> str:
+    """
+    Stock OGX when MLflow is off; otherwise ogx_mlflow_app (session middleware,
+    plus optional W3C traceparent when MLFLOW_OGX_TRACE_PROPAGATION is on).
+    """
+    if not mlflow_enabled:
         return _STOCK_OGX_APP
     try:
         import ogx_mlflow_app  # noqa: F401
     except ImportError:
         logger.warning(
-            "MLFLOW_OGX_TRACE_PROPAGATION is enabled but ogx_mlflow_app is "
-            "missing — using stock OGX app (LLM Chat spans export separately)"
+            "MLflow tracing is enabled but ogx_mlflow_app is missing — "
+            "using stock OGX app (no session/traceparent middleware)"
         )
         return _STOCK_OGX_APP
-    logger.info("MLflow trace propagation middleware enabled on OGX HTTP")
+    logger.info(
+        "MLflow OGX middleware enabled (session headers always; "
+        "traceparent propagation=%s)",
+        _propagation_enabled(),
+    )
     return "ogx_mlflow_app:create_app"
 
 
@@ -60,7 +73,7 @@ def main() -> None:
             "MLflow openai.autolog active — inference requests export prompts/"
             "messages to the tracking server (Chat tab in MLflow UI)"
         )
-    app_factory = _resolve_app_factory()
+    app_factory = _resolve_app_factory(mlflow_enabled=enabled)
     logger.info(
         "Starting OGX uvicorn (mlflow_tracing=%s, service=%s, app=%s)",
         enabled,

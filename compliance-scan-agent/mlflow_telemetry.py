@@ -8,11 +8,13 @@ runs without a tracking server keep working.
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import importlib.util
 import logging
 import os
-from collections.abc import AsyncIterator, Callable
+import uuid
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextvars import ContextVar
 from typing import Any, TypeVar
 
@@ -60,11 +62,17 @@ def _agent_debug_log(
 
 F = TypeVar("F", bound=Callable[..., Any])
 
+# MLflow UI Session column / metadata key (mlflow.tracing.context session_id).
+MLFLOW_TRACE_SESSION_META = "mlflow.trace.session"
+# Gradio → OGX: shared run session for grouping AGENT + sidecar autolog traces.
+MLFLOW_TRACE_SESSION_HEADER = "X-Mlflow-Trace-Session"
+
 _CONFIGURED = False
 _ENABLED = False
 _mcp_tool_tracker: ContextVar["McpToolSpanTracker | None"] = ContextVar(
     "mcp_tool_tracker", default=None
 )
+_run_session_id: ContextVar[str | None] = ContextVar("run_session_id", default=None)
 
 
 def _apply_mlflow_tls_env(*, tracking_uri: str) -> str:
@@ -235,18 +243,24 @@ def configure_mlflow(*, service_name: str, enable_openai_autolog: bool = False) 
     return True
 
 
+def _propagation_enabled() -> bool:
+    return (os.getenv("MLFLOW_OGX_TRACE_PROPAGATION") or "false").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
 def mlflow_outbound_trace_headers() -> dict[str, str]:
     """
     W3C traceparent headers for outbound HTTP calls (e.g. Gradio → OGX).
 
-    Links sidecar openai.autolog spans (Chat tab: prompts/messages) under the
-    same trace as the Gradio AGENT span. Requires the ogx-mlflow-sidecar image
-    with trace-context middleware (ogx_mlflow_app).
+    Links sidecar openai.autolog spans under the same trace as the Gradio AGENT
+    span when MLFLOW_OGX_TRACE_PROPAGATION is enabled. Prefer
+    mlflow_ogx_request_headers() for Gradio → OGX (includes session id).
     """
-    if not _ENABLED:
-        return {}
-    propagate = (os.getenv("MLFLOW_OGX_TRACE_PROPAGATION") or "false").strip().lower()
-    if propagate in ("0", "false", "no", "off"):
+    if not _ENABLED or not _propagation_enabled():
         return {}
     try:
         from mlflow.tracing.distributed import (
@@ -257,6 +271,39 @@ def mlflow_outbound_trace_headers() -> dict[str, str]:
     except Exception:
         logger.debug("Could not build MLflow trace propagation headers", exc_info=True)
         return {}
+
+
+def mlflow_ogx_request_headers() -> dict[str, str]:
+    """
+    Headers for Gradio → OGX responses.create calls.
+
+    Always includes X-Mlflow-Trace-Session when a run session is active so
+    sidecar openai.autolog traces share the MLflow UI Session with the AGENT
+    trace (even when propagation is off). Optionally merges W3C traceparent
+    when MLFLOW_OGX_TRACE_PROPAGATION is enabled.
+    """
+    if not _ENABLED:
+        return {}
+    headers: dict[str, str] = {}
+    session_id = _run_session_id.get()
+    if session_id:
+        headers[MLFLOW_TRACE_SESSION_HEADER] = session_id
+    headers.update(mlflow_outbound_trace_headers())
+    return headers
+
+
+@contextlib.contextmanager
+def _trace_session_context(session_id: str) -> Iterator[None]:
+    """Apply MLflow session_id for the current agent run (AGENT + TOOL spans)."""
+    import mlflow
+
+    tracing_context = getattr(getattr(mlflow, "tracing", None), "context", None)
+    if callable(tracing_context):
+        with tracing_context(session_id=session_id):
+            yield
+        return
+    # Older SDKs without mlflow.tracing.context — metadata set after span start.
+    yield
 
 
 def get_mcp_tool_span_tracker() -> "McpToolSpanTracker":
@@ -405,6 +452,8 @@ def trace_agent_run(
             if repo_url is None and args:
                 repo_url = args[0]
             model_name = os.getenv("MODEL_NAME", "")
+            run_session_id = str(uuid.uuid4())
+            session_token = _run_session_id.set(run_session_id)
 
             span_type = "AGENT"
             try:
@@ -414,54 +463,82 @@ def trace_agent_run(
             except Exception:
                 pass
 
-            with mlflow.start_span(name=name, span_type=span_type) as span:
-                try:
-                    span.set_inputs({"repo_url": repo_url})
-                except Exception:
-                    logger.debug("Could not set span inputs", exc_info=True)
-                try:
-                    mlflow.update_current_trace(
-                        tags={
-                            "agent": agent_name,
-                            "model": model_name,
-                            "repo_url": str(repo_url or ""),
-                        }
-                    )
-                except Exception:
-                    logger.debug("Could not set trace tags", exc_info=True)
+            try:
+                with _trace_session_context(run_session_id):
+                    with mlflow.start_span(name=name, span_type=span_type) as span:
+                        try:
+                            span.set_inputs({"repo_url": repo_url})
+                        except Exception:
+                            logger.debug("Could not set span inputs", exc_info=True)
+                        try:
+                            mlflow.update_current_trace(
+                                tags={
+                                    "agent": agent_name,
+                                    "model": model_name,
+                                    "repo_url": str(repo_url or ""),
+                                },
+                                metadata={
+                                    MLFLOW_TRACE_SESSION_META: run_session_id,
+                                },
+                            )
+                        except TypeError:
+                            # Older SDKs may not accept metadata= on update_current_trace.
+                            try:
+                                mlflow.update_current_trace(
+                                    tags={
+                                        "agent": agent_name,
+                                        "model": model_name,
+                                        "repo_url": str(repo_url or ""),
+                                    }
+                                )
+                                mlflow.update_current_trace(
+                                    metadata={
+                                        MLFLOW_TRACE_SESSION_META: run_session_id,
+                                    }
+                                )
+                            except Exception:
+                                logger.debug(
+                                    "Could not set trace tags/session", exc_info=True
+                                )
+                        except Exception:
+                            logger.debug("Could not set trace tags", exc_info=True)
 
-                text_bytes = 0
-                tool_calls = 0
-                error: str | None = None
-                try:
-                    async for chunk in fn(*args, **kwargs):
-                        text_bytes += len(chunk)
-                        if "Calling **" in chunk:
-                            tool_calls += 1
-                        if chunk.startswith("\n\n⚠️ **Error:**"):
-                            error = chunk.strip()[:500]
-                        yield chunk
-                except Exception as exc:
-                    error = str(exc)
-                    raise
-                finally:
-                    tracker = _mcp_tool_tracker.get()
-                    if tracker is not None:
-                        tracker.close_all()
-                        _mcp_tool_tracker.set(None)
-                    try:
-                        span.set_outputs(
-                            {
-                                "text_bytes": text_bytes,
-                                "tool_call_status_lines": tool_calls,
-                                "error": error,
-                            }
-                        )
-                    except Exception:
-                        logger.debug("Could not set span outputs", exc_info=True)
-            _flush_mlflow_traces(
-                location="mlflow_telemetry.py:trace_agent_run:post_span",
-            )
+                        text_bytes = 0
+                        tool_calls = 0
+                        error: str | None = None
+                        try:
+                            async for chunk in fn(*args, **kwargs):
+                                text_bytes += len(chunk)
+                                if "Calling **" in chunk:
+                                    tool_calls += 1
+                                if chunk.startswith("\n\n⚠️ **Error:**"):
+                                    error = chunk.strip()[:500]
+                                yield chunk
+                        except Exception as exc:
+                            error = str(exc)
+                            raise
+                        finally:
+                            tracker = _mcp_tool_tracker.get()
+                            if tracker is not None:
+                                tracker.close_all()
+                                _mcp_tool_tracker.set(None)
+                            try:
+                                span.set_outputs(
+                                    {
+                                        "text_bytes": text_bytes,
+                                        "tool_call_status_lines": tool_calls,
+                                        "error": error,
+                                    }
+                                )
+                            except Exception:
+                                logger.debug(
+                                    "Could not set span outputs", exc_info=True
+                                )
+                _flush_mlflow_traces(
+                    location="mlflow_telemetry.py:trace_agent_run:post_span",
+                )
+            finally:
+                _run_session_id.reset(session_token)
 
         return wrapper  # type: ignore[return-value]
 
