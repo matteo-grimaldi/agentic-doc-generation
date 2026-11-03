@@ -90,10 +90,12 @@ governance-hub's storage layer instead of its public API.
   resource must live under a component's `k8s/` directory so ArgoCD picks
   it up. Don't hand-apply one-off resources without also committing the
   manifest.
-- **ArgoCD Application `repoURL` fields contain a placeholder**
-  (`https://github.com/YOUR_ORG/agentic-doc-generation.git`). Never
-  hardcode a real URL in a manifest — `gitops/bootstrap.sh` substitutes it
-  at bootstrap time via `sed`.
+- **ArgoCD Application `repoURL` fields use this fork's real GitHub URL**
+  (`https://github.com/matteo-grimaldi/agentic-doc-generation.git`), same
+  as the other child apps. App-of-Apps syncs those manifests as-is — a
+  `YOUR_ORG` placeholder left in git never gets rewritten and breaks
+  sync. `gitops/bootstrap.sh` can still rewrite the URL when bootstrapping
+  a different fork.
 - **OpenShift GitOps RBAC:** `gitops/bootstrap.sh` applies
   `gitops/argocd-namespace-rolebindings.yaml` imperatively (not via ArgoCD)
   so the application-controller can patch workloads in `doc-gen-demo`,
