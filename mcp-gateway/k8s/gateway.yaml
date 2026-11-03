@@ -1,8 +1,9 @@
-# In-cluster MCP Gateway listener. Class openshift-default ships with
-# OpenShift 4.19+; do not create a second GatewayClass. No public
-# hostname — agents reach this via the Gateway status address on port
-# 8080 (HTTP). The MCPGatewayExtension below attaches MCP protocol
-# handling to listener name `mcp`.
+# In-cluster MCP Gateway listener. Class openshift-default is the Ingress
+# Operator's Gateway API class (controller openshift.io/gateway-controller/v1).
+# ./install-mcp-gateway.sh creates that GatewayClass if missing — do not
+# invent a second class name. No public hostname — agents reach this via
+# the Gateway status address on port 8080 (HTTP). The MCPGatewayExtension
+# attaches MCP protocol handling to listener name `mcp`.
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
