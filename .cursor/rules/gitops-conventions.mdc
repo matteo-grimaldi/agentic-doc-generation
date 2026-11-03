@@ -25,9 +25,11 @@ Never replace this with a real URL in committed manifests —
 
 Preserve `argocd.argoproj.io/sync-wave` annotations:
 
-- Wave 0 — `github-mcp-server`
-- Wave 1 — `doc-gen-agent` (depends on wave 0's Service DNS name),
-  `compliance-mcp-server`
+- Wave 0 — `github-mcp-server`, `mcp-gateway` (Connectivity Link MCP
+  Gateway: Gateway, MCPGatewayExtension, AuthPolicy, HTTPRoutes,
+  MCPServerRegistrations, MCPVirtualServers)
+- Wave 1 — `doc-gen-agent` and the other agents / governance-hub /
+  `compliance-mcp-server` (MCP tools via gateway; REST via Service DNS)
 
 Model inference on this branch goes to a configurable external
 OpenAI-compatible endpoint (no in-cluster operator/CRD dependency for
@@ -49,6 +51,14 @@ operator manage a Deployment/Service with the same name as one it
 doesn't already own — it refuses to adopt resources with no controller
 owner (delete the old resource first; see git history for the original
 hand-written Deployment+Service shape if you ever need to revert).
+
+**MCP Gateway** CRDs come from `./install-openshift-ai.sh`, which calls
+`./install-mcp-gateway.sh` (Connectivity Link + MCP Gateway Operator)
+before GitOps syncs `gitops/apps/mcp-gateway.yaml`. Re-run
+`./install-mcp-gateway.sh` alone after the Gateway is Programmed to
+patch `cluster-config` `mcp_gateway_url` (the doc-gen-agent Application
+`ignoreDifferences` that key). DataScienceCluster `aigateway` is the
+model gateway and stays `Removed`.
 
 If you add a resource that depends on another wave's output (a CRD, a
 Service DNS name, a ConfigMap), give it a sync-wave annotation at least

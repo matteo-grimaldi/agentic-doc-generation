@@ -1,0 +1,40 @@
+# Virtual servers filter tools/list (and prompts/list) when the client
+# sends X-Mcp-Virtualserver: <namespace>/<name>. The four Gradio agents
+# use mcp-gateway/github-tools. Clients that can send both the
+# TokenReview bearer and X-Mcp-Virtualserver: mcp-gateway/compliance-tools
+# can reach compliance tools through the same gateway.
+#
+# Adding a new MCP tool on either server requires adding it here on
+# purpose — the allowlist is the deliberate gate.
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPVirtualServer
+metadata:
+  name: github-tools
+  namespace: mcp-gateway
+  labels:
+    app.kubernetes.io/name: github-tools
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  description: GitHub repo browsing tools for the doc-gen / openapi / catalog / compliance-scan agents
+  tools:
+    - get_repo_info
+    - get_repo_structure
+    - get_file_outline
+    - read_file
+    - search_code
+---
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPVirtualServer
+metadata:
+  name: compliance-tools
+  namespace: mcp-gateway
+  labels:
+    app.kubernetes.io/name: compliance-tools
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  description: Governance Hub compliance tools (proxied by compliance-mcp-server)
+  tools:
+    - get_compliance_status
+    - list_violations
+    - list_tracked_repos
+    - get_repo_history

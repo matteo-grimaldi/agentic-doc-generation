@@ -1,0 +1,35 @@
+# Register both MCP servers with the gateway. Prefix is omitted so tool
+# names stay get_repo_info / get_compliance_status / etc. — matching the
+# four agents' existing system prompts. The two servers' tool names do
+# not collide.
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: github-mcp-server
+  namespace: mcp-gateway
+  labels:
+    app.kubernetes.io/name: github-mcp-server
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  path: /mcp
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: github-mcp-server-mcp
+    namespace: doc-gen-demo
+---
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: compliance-mcp-server
+  namespace: mcp-gateway
+  labels:
+    app.kubernetes.io/name: compliance-mcp-server
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  path: /mcp
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: compliance-mcp-server-mcp
+    namespace: doc-gen-demo

@@ -41,7 +41,15 @@ from mlflow_telemetry import get_mcp_tool_span_tracker, mlflow_outbound_trace_he
 logger = logging.getLogger(__name__)
 
 OGX_BASE_URL = os.getenv("OGX_BASE_URL", "http://localhost:8321")
-GITHUB_MCP_URL = os.getenv("GITHUB_MCP_URL", "http://github-mcp-server.doc-gen-demo.svc.cluster.local:8080/mcp")
+# MCP tool traffic goes through the Connectivity Link MCP Gateway
+# (virtual server github-tools). Empty URL fails closed — no fallback to
+# the direct github-mcp-server Service. REST stays on GITHUB_MCP_SERVER_URL
+# in app.py.
+MCP_GATEWAY_URL = os.getenv("MCP_GATEWAY_URL", "").strip()
+MCP_VIRTUAL_SERVER = os.getenv("MCP_VIRTUAL_SERVER", "mcp-gateway/github-tools")
+MCP_GATEWAY_TOKEN_PATH = os.getenv(
+    "MCP_GATEWAY_TOKEN_PATH", "/var/run/secrets/mcp-gateway/token"
+)
 MODEL_NAME = os.getenv("MODEL_NAME", "granite-3.1-8b-instruct")
 # Each file here is a focused, independently-maintained guideline mounted
 # from a ConfigMap (see build-and-deploy.sh) — keeping them separate (rather
@@ -49,6 +57,33 @@ MODEL_NAME = os.getenv("MODEL_NAME", "granite-3.1-8b-instruct")
 # rationale as compliance-scan-agent's GUIDELINE_FILES.
 GUIDELINES_DIR = os.getenv("GUIDELINES_DIR", "/etc/agent-knowledge/guidelines")
 GUIDELINE_FILES = ("catalog-component.md", "api-detection.md")
+
+
+def _mcp_gateway_tool() -> dict:
+    """Build the OGX Responses MCP tool pointing at the gateway."""
+    if not MCP_GATEWAY_URL:
+        raise RuntimeError(
+            "MCP_GATEWAY_URL is empty — run ./install-mcp-gateway.sh after "
+            "Gateway mcp-gateway is Programmed so cluster-config "
+            "mcp_gateway_url is set."
+        )
+    try:
+        with open(MCP_GATEWAY_TOKEN_PATH, encoding="utf-8") as fh:
+            token = fh.read().strip()
+    except OSError as exc:
+        raise RuntimeError(
+            f"Could not read MCP gateway token at {MCP_GATEWAY_TOKEN_PATH}: {exc}"
+        ) from exc
+    if not token:
+        raise RuntimeError(f"MCP gateway token file {MCP_GATEWAY_TOKEN_PATH} is empty")
+    return {
+        "type": "mcp",
+        "server_label": "GitHub MCP",
+        "server_url": MCP_GATEWAY_URL,
+        "authorization": token,
+        "headers": {"X-Mcp-Virtualserver": MCP_VIRTUAL_SERVER},
+        "require_approval": "never",
+    }
 
 AGENT_TIMEOUT_SECONDS = int(os.getenv("AGENT_TIMEOUT_SECONDS", "600"))
 # Same tight budget profile as compliance-scan-agent/openapi-gen-agent: this
@@ -448,19 +483,19 @@ async def run_agent(repo_url: str, repo_structure: dict | None = None) -> AsyncI
     tool_spans = get_mcp_tool_span_tracker()
 
     try:
+        mcp_tool = _mcp_gateway_tool()
+    except RuntimeError as exc:
+        logger.error("%s", exc)
+        yield f"\n\n⚠️ **Error:** {exc}\n"
+        return
+
+    try:
         stream = await asyncio.wait_for(
             client.responses.create(
                 model=MODEL_NAME,
                 input=user_message,
                 instructions=instructions,
-                tools=[
-                    {
-                        "type": "mcp",
-                        "server_label": "GitHub MCP",
-                        "server_url": GITHUB_MCP_URL,
-                        "require_approval": "never",
-                    },
-                ],
+                tools=[mcp_tool],
                 # max_infer_iters is a first-class field on responses.create()
                 # (confirmed in ogx_client's ResponseCreateParamsBase) — pass
                 # it directly, not through extra_body.

@@ -33,3 +33,19 @@ subjects:
   - kind: ServiceAccount
     name: openshift-gitops-argocd-application-controller
     namespace: openshift-gitops
+---
+# MCP Gateway Application (wave 0) lands Gateway / AuthPolicy / registrations
+# here; without this binding OpenShift GitOps 1.22+ cannot patch them.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openshift-gitops-argocd-application-controller-admin
+  namespace: mcp-gateway
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: admin
+subjects:
+  - kind: ServiceAccount
+    name: openshift-gitops-argocd-application-controller
+    namespace: openshift-gitops

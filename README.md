@@ -48,6 +48,10 @@ flowchart TB
             GitHubMCP["GitHub MCP Server\n:8080"]
         end
 
+        subgraph mcp_gw_ns [mcp-gateway namespace]
+            MCPGateway["MCP Gateway\nTokenReview + virtual servers"]
+        end
+
         subgraph keycloak_ns [rhdh-keycloak namespace]
             RHBK["Red Hat Build of Keycloak\nplatform realm\n(isolated from cluster OAuth)"]
         end
@@ -66,13 +70,15 @@ flowchart TB
     Browser -->|"OIDC login"| RHDH
     DocGradio -->|"Responses API"| DocOGX
     ApiGradio -->|"Responses API"| ApiOGX
-    DocOGX -->|"MCP tools"| GitHubMCP
-    ApiOGX -->|"MCP tools"| GitHubMCP
+    DocOGX -->|"MCP tools via gateway"| MCPGateway
+    ApiOGX -->|"MCP tools via gateway"| MCPGateway
+    MCPGateway --> GitHubMCP
     DocOGX -->|"inference (HTTPS)"| InferenceEndpoint
     ApiOGX -->|"inference (HTTPS)"| InferenceEndpoint
     GitHubMCP -->|"GitHub API"| GitHub["github.com"]
     RHDH -->|"OIDC"| RHBK
     AppOfApps -->|deploys| GitHubMCP
+    AppOfApps -->|deploys| MCPGateway
     AppOfApps -->|deploys| demo_ns
     AppOfApps -->|deploys| RHBK
     AppOfApps -->|deploys| RHDH
@@ -114,16 +120,23 @@ user invokes:
 
 - An OpenShift cluster, logged in as `cluster-admin` (`oc login`) —
   no GPU node required
-- **Red Hat OpenShift AI, installed with the `mcplifecycleoperator`
-  component enabled** (see [`install-openshift-ai.sh`](install-openshift-ai.sh))
-  — run this imperatively *before* `gitops/bootstrap.sh`/
-  `build-and-deploy-all.sh`. `github-mcp-server` and
-  `compliance-mcp-server` are deployed as `MCPServer` custom resources
-  (`k8s/mcpserver.yaml`, reconciled by this operator), the same
-  imperative-prerequisite pattern as the CI/CD pipeline's Tekton CRDs —
-  ArgoCD/`oc apply` can't create a custom resource before its CRD
-  exists. This also makes both servers visible under OpenShift AI's
-  AI Hub "Deployed MCP Servers" tab.
+- **Red Hat OpenShift AI + MCP Gateway operators** — run
+  [`install-openshift-ai.sh`](install-openshift-ai.sh) imperatively
+  *before* `gitops/bootstrap.sh` / `build-and-deploy-all.sh`. That
+  script enables `mcplifecycleoperator` (so `github-mcp-server` /
+  `compliance-mcp-server` can deploy as `MCPServer` CRs) and then calls
+  [`install-mcp-gateway.sh`](install-mcp-gateway.sh) for Connectivity
+  Link + the MCP Gateway Operator (Technology Preview;
+  `MCPGatewayExtension` / `AuthPolicy` / virtual servers). Distinct from
+  DataScienceCluster `aigateway` (model gateway — stays `Removed`).
+  After GitOps syncs Gateway `mcp-gateway`, re-run
+  `./install-mcp-gateway.sh` alone if `cluster-config` `mcp_gateway_url`
+  is still empty. The four agents send MCP tools through the gateway
+  (projected SA token, audience `mcp-gateway`,
+  `X-Mcp-Virtualserver: mcp-gateway/github-tools`); REST
+  (`/propose-doc`, `/repo-structure`) stays on the GitHub MCP Service.
+  Gen AI Playground catalog entries keep the direct Service `/mcp` URLs
+  (that ConfigMap cannot present a rotating SA token).
 - An **external OpenAI-compatible inference endpoint** reachable from the
   cluster: a base URL (e.g. `https://api.openai.com/v1`, or your own
   vLLM/Ollama/gateway deployment) and, if required, an API key
@@ -149,12 +162,13 @@ This single command:
 
 1. Installs the OpenShift GitOps operator (if not already present) and
    waits for ArgoCD to come up
-2. Runs **`gitops/preflight.sh`** (checks MCPServer and Tekton CRDs; warns
-   on missing model/github Secrets and OGX ConfigMaps)
+2. Runs **`gitops/preflight.sh`** (checks MCPServer, AuthPolicy,
+   MCPGatewayExtension, and Tekton CRDs; warns on missing model/github
+   Secrets and OGX ConfigMaps)
 3. Applies **`gitops/argocd-namespace-rolebindings.yaml`** so the Argo CD
-   application-controller can reconcile **`doc-gen-demo`** and
-   **`ci-cd-demo`** (required on OpenShift GitOps 1.22+ — see
-   [GitOps RBAC](#gitops-rbac) below)
+   application-controller can reconcile **`doc-gen-demo`**,
+   **`ci-cd-demo`**, and **`mcp-gateway`** (required on OpenShift GitOps
+   1.22+ — see [GitOps RBAC](#gitops-rbac) below)
 4. Optionally creates **`external-model-credentials`** /
    **`github-token`** when **`EXTERNAL_MODEL_API_KEY`** / **`GITHUB_TOKEN`**
    are set in the shell
@@ -162,13 +176,18 @@ This single command:
    repo and applies it
 6. ArgoCD then reconciles every child Application under `gitops/apps/`,
    in dependency order via sync-waves:
-   - **Wave 0** — `doc-gen-demo` namespace + GitHub MCP server
+   - **Wave 0** — `doc-gen-demo` namespace + GitHub MCP server + MCP
+     Gateway (`mcp-gateway` Application: Gateway, extension, AuthPolicy,
+     registrations, virtual servers, HTTPRoutes)
    - **Wave 1** — doc-gen-agent, openapi-gen-agent, catalog-gen-agent,
      compliance-scan-agent, governance-hub, and compliance-mcp-server,
-     applied concurrently — all depend only on wave 0's GitHub MCP
-     server Service DNS name (and, for compliance-mcp-server,
-     governance-hub's, tolerated as briefly unavailable — see
-     `.cursor/rules/gitops-conventions.mdc`)
+     applied concurrently — MCP tools go through the gateway; REST and
+     governance still use wave 0 / peer Service DNS (compliance-mcp
+     tolerates governance-hub briefly unavailable — see
+     `.cursor/rules/gitops-conventions.mdc`). After the Gateway is
+     Programmed, re-run `./install-mcp-gateway.sh` (already pulled in by
+     `./install-openshift-ai.sh`) to set `mcp_gateway_url` if it is
+     still empty.
    - **Wave 2** — CI/CD pipeline (Tekton resources)
 
    **Keycloak and Red Hat Developer Hub are *not* part of this
@@ -208,7 +227,7 @@ with `cannot patch resource … forbidden` even when pods are already running
 from a prior `build-and-deploy-all.sh`.
 
 **`gitops/bootstrap.sh`** applies namespace **`admin`** RoleBindings in
-**`doc-gen-demo`** and **`ci-cd-demo`** via
+**`doc-gen-demo`**, **`ci-cd-demo`**, and **`mcp-gateway`** via
 [`gitops/argocd-namespace-rolebindings.yaml`](gitops/argocd-namespace-rolebindings.yaml).
 That file is **not** part of the App-of-Apps tree (the controller cannot
 bootstrap its own permissions).
@@ -459,7 +478,7 @@ agentic-doc-generation/
 ├── gitops/
 │   ├── bootstrap.sh                     # Install GitOps operator, RBAC, apply root app
 │   ├── preflight.sh                     # CRD/Secret/ConfigMap checks before bootstrap
-│   ├── argocd-namespace-rolebindings.yaml  # Argo CD admin in doc-gen-demo + ci-cd-demo
+│   ├── argocd-namespace-rolebindings.yaml  # Argo CD admin in doc-gen-demo + ci-cd-demo + mcp-gateway
 │   ├── argocd-instance-demo.yaml        # Argo CD UI RBAC + rhdh-local-user token
 │   ├── root-app.yaml                    # ArgoCD App-of-Apps
 │   ├── openshift-gitops-subscription.yaml
@@ -513,8 +532,11 @@ agentic-doc-generation/
 │       └── jobs/                        # configure-rhdh.yaml — ArgoCD Sync hook (wave 18)
 ├── governance-hub-plugin/               # Custom RHDH dynamic plugin — Governance Hub embedded UI
 │   └── dist/                            # Built plugin artifact (OCI image published to quay.io/mcombi/rhdh-gov-hub)
+├── mcp-gateway/                         # Connectivity Link MCP Gateway wiring (GitOps wave 0)
+│   └── k8s/                             # Gateway, extension, AuthPolicy, routes, registrations, virtual servers
 ├── build-and-deploy-all.sh              # Quick-start (non-GitOps) for app components
-├── install-openshift-ai.sh              # One-time: installs OpenShift AI (AI Hub, AI Studio, MLFlow)
+├── install-openshift-ai.sh              # One-time: OpenShift AI + calls install-mcp-gateway.sh
+├── install-mcp-gateway.sh               # RHCL + MCP Gateway Operator; re-run to patch mcp_gateway_url
 ├── generate-mcp-catalog-source.sh       # Regenerates mcp-catalog-source.yaml from every */mcp-catalog.yaml
 ├── register-mcp-catalog.sh              # Registers every */mcp-catalog-entry.yaml in the Gen AI Playground
 ├── mcp-catalog-source.yaml              # GENERATED — import into the AI Hub MCP Catalog
@@ -708,7 +730,11 @@ Every MCP server in this repo (`github-mcp-server` and
 `compliance-mcp-server`) can be registered in OpenShift AI through
 either (or both) of two independent, repo-root orchestrator scripts that
 auto-discover every MCP server component — no need to touch either
-script when a new one is added:
+script when a new one is added. Playground / catalog-entry URLs stay on
+the **direct** in-cluster Service `/mcp` path: the gateway requires a
+TokenReview bearer and optional `X-Mcp-Virtualserver` header that the
+`gen-ai-aa-mcp-servers` ConfigMap cannot supply. The four Gradio agents
+use the gateway instead (see Prerequisites).
 
 1. **AI Hub MCP Catalog** — regenerate and import
    [`mcp-catalog-source.yaml`](mcp-catalog-source.yaml):
