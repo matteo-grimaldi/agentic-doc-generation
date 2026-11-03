@@ -96,9 +96,12 @@ def _apply_mlflow_tls_env(*, tracking_uri: str) -> str:
     return explicit or "(unset)"
 
 
-def configure_mlflow(*, service_name: str) -> bool:
+def configure_mlflow(*, service_name: str, enable_openai_autolog: bool = False) -> bool:
     """
-    Configure MLflow tracking URI, workspace, experiment, and OpenAI autolog.
+    Configure MLflow tracking URI, workspace, and experiment.
+
+    OpenAI autolog (prompts/messages for the MLflow Chat tab) is enabled only
+    from ogx-mlflow-sidecar/start_ogx.py — not from Gradio app.py.
 
     Returns True when tracing is enabled, False when skipped (no URI).
     Safe to call more than once; subsequent calls are no-ops.
@@ -210,15 +213,11 @@ def configure_mlflow(*, service_name: str) -> bool:
         )
         # #endregion
         raise
-    # Gradio agent images use ogx-client, not the OpenAI SDK — autolog belongs
-    # on the OGX sidecar that performs responses.create() to the model endpoint.
-    if importlib.util.find_spec("openai") is not None:
-        # Sidecar must emit LLM spans (messages/tokens) for the MLflow UI Chat tab.
+    if enable_openai_autolog and importlib.util.find_spec("openai") is not None:
         mlflow.openai.autolog(log_traces=True)
-    else:
-        logger.info(
-            "Skipping mlflow.openai.autolog() — openai not installed "
-            "(service=%s); use sidecar autolog for model HTTP spans",
+    elif enable_openai_autolog:
+        logger.warning(
+            "enable_openai_autolog requested but openai package missing (service=%s)",
             service_name,
         )
 
@@ -246,7 +245,7 @@ def mlflow_outbound_trace_headers() -> dict[str, str]:
     """
     if not _ENABLED:
         return {}
-    propagate = (os.getenv("MLFLOW_OGX_TRACE_PROPAGATION") or "true").strip().lower()
+    propagate = (os.getenv("MLFLOW_OGX_TRACE_PROPAGATION") or "false").strip().lower()
     if propagate in ("0", "false", "no", "off"):
         return {}
     try:

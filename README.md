@@ -390,7 +390,7 @@ OpenShift AI MLflow tracking server provisioned by
 | Layer | What is traced |
 |---|---|
 | Gradio agent process | Root `run_agent()` AGENT span; MCP tool calls as child TOOL spans; sends W3C `traceparent` to OGX |
-| OGX sidecar (`ogx-mlflow-sidecar` image) | `mlflow.openai.autolog()` on each `/v1/chat/completions` call — **MLflow UI Chat tab** (model, messages, token usage). Must nest under the agent trace via `traceparent` + `ogx_mlflow_app` middleware (`mlflow_ogx_trace_propagation: "true"` in `cluster-config`) |
+| OGX sidecar (`ogx-mlflow-sidecar` image) | [`start_ogx.py`](ogx-mlflow-sidecar/start_ogx.py) calls `mlflow.openai.autolog()` **before** stock `ogx.core.server.server:create_app` — each `/v1/chat/completions` call becomes its own trace with **Chat tab** (prompts, messages, tokens). Default `mlflow_ogx_trace_propagation: "false"` keeps this behavior |
 
 Each agent pod runs the **`ogx-mlflow-sidecar`** container image (MLflow autolog +
 [`start_ogx.py`](ogx-mlflow-sidecar/start_ogx.py) entrypoint). There are two ways to

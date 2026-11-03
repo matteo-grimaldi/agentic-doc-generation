@@ -48,8 +48,8 @@ data:
   mlflow_tracking_uri: "https://mlflow.redhat-ods-applications.svc.cluster.local:8443/mlflow"
   # Literal "true" disables TLS verify for MLFLOW_TRACKING_URI (demo only).
   mlflow_tracking_insecure_tls: "true"
-  # "true" (default) sends traceparent to OGX so sidecar LLM autolog spans nest
-  # under the agent trace (MLflow UI Chat tab). Set "false" only if using an
-  # ogx-mlflow-sidecar image without ogx_mlflow_app middleware.
-  mlflow_ogx_trace_propagation: "true"
+  # "false" (default): sidecar openai.autolog traces include prompts/Chat tab
+  # (one trace row per model call). Set "true" only with ogx_mlflow_app middleware
+  # to nest LLM spans under the Gradio agent trace (Chat tab may differ).
+  mlflow_ogx_trace_propagation: "false"
   ogx_mlflow_sidecar_image: "quay.io/mgrimald/ogx-mlflow-sidecar:latest"
