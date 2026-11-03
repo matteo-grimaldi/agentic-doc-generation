@@ -9,9 +9,11 @@ runs without a tracking server keep working.
 from __future__ import annotations
 
 import functools
+import importlib.util
 import logging
 import os
 from collections.abc import AsyncIterator, Callable
+from contextvars import ContextVar
 from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
@@ -60,6 +62,9 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 _CONFIGURED = False
 _ENABLED = False
+_mcp_tool_tracker: ContextVar["McpToolSpanTracker | None"] = ContextVar(
+    "mcp_tool_tracker", default=None
+)
 
 
 def _apply_mlflow_tls_env(*, tracking_uri: str) -> str:
@@ -205,7 +210,17 @@ def configure_mlflow(*, service_name: str) -> bool:
         )
         # #endregion
         raise
-    mlflow.openai.autolog()
+    # Gradio agent images use ogx-client, not the OpenAI SDK — autolog belongs
+    # on the OGX sidecar that performs responses.create() to the model endpoint.
+    if importlib.util.find_spec("openai") is not None:
+        # Sidecar must emit LLM spans (messages/tokens) for the MLflow UI Chat tab.
+        mlflow.openai.autolog(log_traces=True)
+    else:
+        logger.info(
+            "Skipping mlflow.openai.autolog() — openai not installed "
+            "(service=%s); use sidecar autolog for model HTTP spans",
+            service_name,
+        )
 
     logger.info(
         "MLflow tracing enabled — uri=%s workspace=%s experiment=%s "
@@ -219,6 +234,150 @@ def configure_mlflow(*, service_name: str) -> bool:
     _CONFIGURED = True
     _ENABLED = True
     return True
+
+
+def mlflow_outbound_trace_headers() -> dict[str, str]:
+    """
+    W3C traceparent headers for outbound HTTP calls (e.g. Gradio → OGX).
+
+    Links sidecar openai.autolog spans (Chat tab: prompts/messages) under the
+    same trace as the Gradio AGENT span. Requires the ogx-mlflow-sidecar image
+    with trace-context middleware (ogx_mlflow_app).
+    """
+    if not _ENABLED:
+        return {}
+    propagate = (os.getenv("MLFLOW_OGX_TRACE_PROPAGATION") or "true").strip().lower()
+    if propagate in ("0", "false", "no", "off"):
+        return {}
+    try:
+        from mlflow.tracing.distributed import (
+            get_tracing_context_headers_for_http_request,
+        )
+
+        return get_tracing_context_headers_for_http_request()
+    except Exception:
+        logger.debug("Could not build MLflow trace propagation headers", exc_info=True)
+        return {}
+
+
+def get_mcp_tool_span_tracker() -> "McpToolSpanTracker":
+    """Per-run tracker; closed automatically at end of trace_agent_run."""
+    tracker = _mcp_tool_tracker.get()
+    if tracker is None:
+        tracker = McpToolSpanTracker()
+        _mcp_tool_tracker.set(tracker)
+    return tracker
+
+
+def _mcp_item_call_id(item: Any) -> str | None:
+    raw = getattr(item, "id", None)
+    if raw is None:
+        return None
+    return str(raw)
+
+
+def _flush_mlflow_traces(*, location: str) -> None:
+    if not _ENABLED:
+        return
+    import mlflow
+
+    # Do not pass terminate=True — Gradio is long-lived; terminating the async
+    # exporter breaks later runs and can drop LLM span payloads.
+    try:
+        mlflow.flush_trace_async_logging()
+    except Exception:
+        logger.debug("MLflow trace flush failed", exc_info=True)
+        return
+    trace_id = None
+    try:
+        trace_id = mlflow.get_last_active_trace_id()
+    except Exception:
+        pass
+    # #region agent log
+    _agent_debug_log(
+        "T1",
+        location,
+        "MLflow trace flush after agent run",
+        {"last_active_trace_id": trace_id or "(none)"},
+    )
+    # #endregion
+
+
+def _tool_span_type() -> str:
+    try:
+        from mlflow.tracing.constant import SpanType
+
+        return getattr(SpanType, "TOOL", "TOOL")
+    except Exception:
+        return "TOOL"
+
+
+class McpToolSpanTracker:
+    """Record MCP tool calls as child spans on the current agent trace."""
+
+    def __init__(self) -> None:
+        self._open: dict[str, Any] = {}
+
+    def on_mcp_call_added(self, item: Any) -> None:
+        if not _ENABLED or item is None:
+            return
+        if getattr(item, "type", None) != "mcp_call":
+            return
+        import mlflow
+
+        call_id = _mcp_item_call_id(item)
+        if not call_id or call_id in self._open:
+            return
+        server = getattr(item, "server_label", "unknown")
+        tool = getattr(item, "name", "unknown")
+        cm = mlflow.start_span(
+            name=f"mcp/{server}/{tool}",
+            span_type=_tool_span_type(),
+        )
+        span = cm.__enter__()
+        try:
+            span.set_inputs({"server": server, "tool": tool, "call_id": call_id})
+        except Exception:
+            logger.debug("Could not set MCP span inputs", exc_info=True)
+        self._open[call_id] = (cm, span)
+
+    def on_mcp_call_done(self, item: Any) -> None:
+        if not _ENABLED or item is None:
+            return
+        if getattr(item, "type", None) != "mcp_call":
+            return
+        call_id = _mcp_item_call_id(item)
+        if not call_id:
+            return
+        entry = self._open.pop(call_id, None)
+        if entry is None:
+            return
+        cm, span = entry
+        error = getattr(item, "error", None)
+        try:
+            span.set_outputs(
+                {
+                    "error": str(error) if error else None,
+                    "status": "failed" if error else "ok",
+                }
+            )
+        except Exception:
+            logger.debug("Could not set MCP span outputs", exc_info=True)
+        cm.__exit__(None, None, None)
+
+    def close_all(self) -> None:
+        while self._open:
+            call_id, (cm, span) = self._open.popitem()
+            try:
+                span.set_outputs({"status": "closed_without_done_event"})
+            except Exception:
+                pass
+            try:
+                cm.__exit__(None, None, None)
+            except Exception:
+                logger.debug(
+                    "Could not close MCP span call_id=%s", call_id, exc_info=True
+                )
 
 
 def trace_agent_run(
@@ -287,6 +446,10 @@ def trace_agent_run(
                     error = str(exc)
                     raise
                 finally:
+                    tracker = _mcp_tool_tracker.get()
+                    if tracker is not None:
+                        tracker.close_all()
+                        _mcp_tool_tracker.set(None)
                     try:
                         span.set_outputs(
                             {
@@ -297,6 +460,9 @@ def trace_agent_run(
                         )
                     except Exception:
                         logger.debug("Could not set span outputs", exc_info=True)
+            _flush_mlflow_traces(
+                location="mlflow_telemetry.py:trace_agent_run:post_span",
+            )
 
         return wrapper  # type: ignore[return-value]
 
