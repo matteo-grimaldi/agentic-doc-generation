@@ -2,14 +2,21 @@
 #
 # One-time cluster prerequisite: installs Red Hat OpenShift AI (latest,
 # `stable-3.x` channel) with AI Hub (Models/MCPs/Agents), AI Studio
-# (Workbenches/AI Pipelines), and MLFlow enabled.
+# (Workbenches/AI Pipelines), and MLFlow enabled, then runs
+# ./install-mcp-gateway.sh for Connectivity Link + the MCP Gateway
+# Operator (agents' MCP tool path — not DataScienceCluster aigateway).
 #
 # This is a platform-level operator installation, run imperatively (like
 # ci-cd-pipeline/install-operator.sh and gitops/bootstrap.sh) because
 # ArgoCD/oc can't apply DataScienceCluster/DSCInitialization custom
 # resources before their CRDs (registered by the rhods-operator CSV)
 # exist. It is independent of this repo's doc-gen-demo GitOps app-of-apps
-# tree — nothing here wires the demo agents to OpenShift AI.
+# tree — nothing here wires the demo agents to OpenShift AI beyond the
+# MCPServer / MCP Gateway CRDs those Applications need.
+#
+# After GitOps syncs Gateway mcp-gateway, re-run ./install-mcp-gateway.sh
+# alone if cluster-config mcp_gateway_url is still empty (that script is
+# idempotent and safe to call without redoing the RHOAI install).
 #
 # Usage:
 #   ./install-openshift-ai.sh
@@ -352,3 +359,14 @@ fi
 echo ""
 echo "    Check component status with:"
 echo "      oc get datasciencecluster default-dsc -o yaml"
+
+# ---------------------------------------------------------------------------
+# Step 8 -- MCP Gateway (Connectivity Link + MCP Gateway Operator)
+# ---------------------------------------------------------------------------
+# Same operator-before-CRD pattern as mcplifecycleoperator above, but the
+# MCP gateway is *not* a DataScienceCluster component (aigateway is the
+# model gateway and stays Removed). Delegate to install-mcp-gateway.sh so
+# the URL-patch / re-run path after GitOps stays a single script.
+echo ""
+echo "==> Installing MCP Gateway prerequisites (Connectivity Link + MCP Gateway Operator)..."
+bash "${SCRIPT_DIR}/install-mcp-gateway.sh"

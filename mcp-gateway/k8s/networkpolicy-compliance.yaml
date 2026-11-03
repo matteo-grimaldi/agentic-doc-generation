@@ -1,0 +1,24 @@
+# Extra NetworkPolicy OR'd with the MCPLifecycleOperator-owned policy.
+# Allows the MCP Gateway namespace to reach compliance-mcp-server on 8080.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: compliance-mcp-server-from-mcp-gateway
+  namespace: doc-gen-demo
+  labels:
+    app.kubernetes.io/name: compliance-mcp-server
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: compliance-mcp-server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: mcp-gateway
+      ports:
+        - protocol: TCP
+          port: 8080

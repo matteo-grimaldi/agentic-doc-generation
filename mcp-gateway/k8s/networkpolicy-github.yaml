@@ -1,0 +1,27 @@
+# Extra NetworkPolicy OR'd with the MCPLifecycleOperator-owned policy.
+# Allows the MCP Gateway namespace to reach github-mcp-server on 8080.
+# Pod selector matches the MCPServer CR label (copied onto operator-owned
+# pods). Do not use an empty podSelector — that would select every pod
+# in doc-gen-demo.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: github-mcp-server-from-mcp-gateway
+  namespace: doc-gen-demo
+  labels:
+    app.kubernetes.io/name: github-mcp-server
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: github-mcp-server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: mcp-gateway
+      ports:
+        - protocol: TCP
+          port: 8080

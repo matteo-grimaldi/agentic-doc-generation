@@ -1,0 +1,21 @@
+# Binds MCP protocol handling to Gateway/mcp-gateway listener `mcp`.
+# Requires the MCP Gateway Operator CRDs from ./install-mcp-gateway.sh
+# (spec.targetRef shape — older gatewayRef-only CRDs are rejected by that
+# install script). httpRouteManagement Enabled lets the controller own
+# the broker /mcp HTTPRoute.
+apiVersion: mcp.kuadrant.io/v1
+kind: MCPGatewayExtension
+metadata:
+  name: mcp-gateway
+  namespace: mcp-gateway
+  labels:
+    app.kubernetes.io/name: mcp-gateway
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  httpRouteManagement: Enabled
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: mcp-gateway
+    namespace: mcp-gateway
+    sectionName: mcp

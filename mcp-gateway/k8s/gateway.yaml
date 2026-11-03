@@ -1,0 +1,22 @@
+# In-cluster MCP Gateway listener. Class openshift-default ships with
+# OpenShift 4.19+; do not create a second GatewayClass. No public
+# hostname — agents reach this via the Gateway status address on port
+# 8080 (HTTP). The MCPGatewayExtension below attaches MCP protocol
+# handling to listener name `mcp`.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: mcp-gateway
+  namespace: mcp-gateway
+  labels:
+    app.kubernetes.io/name: mcp-gateway
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  gatewayClassName: openshift-default
+  listeners:
+    - name: mcp
+      port: 8080
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: All

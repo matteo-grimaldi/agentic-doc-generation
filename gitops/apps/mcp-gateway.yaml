@@ -1,0 +1,48 @@
+# Child Application: OpenShift AI / Connectivity Link MCP Gateway wiring
+# for github-mcp-server and compliance-mcp-server (Gateway,
+# MCPGatewayExtension, AuthPolicy, HTTPRoutes, MCPServerRegistrations,
+# MCPVirtualServers, ReferenceGrants, NetworkPolicies).
+#
+# sync-wave 0 — same wave as github-mcp-server. Agents (wave 1) depend on
+# the gateway URL written into cluster-config by ./install-mcp-gateway.sh
+# after this Gateway is Programmed.
+#
+# PREREQUISITE: AuthPolicy and MCPGatewayExtension CRDs from
+# ./install-openshift-ai.sh (which calls ./install-mcp-gateway.sh —
+# Connectivity Link + MCP Gateway Operator). Distinct from that same
+# script's mcplifecycleoperator (MCPServer CRs) and from
+# DataScienceCluster aigateway (model gateway — stays Removed).
+#
+# Manifests set metadata.namespace explicitly (mcp-gateway and
+# doc-gen-demo). Destination below is the gateway namespace; Argo CD
+# still needs RoleBindings in doc-gen-demo (bootstrap applies them).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mcp-gateway
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/YOUR_ORG/agentic-doc-generation.git
+    targetRevision: HEAD
+    path: mcp-gateway/k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mcp-gateway
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+    syncOptions:
+      - CreateNamespace=true

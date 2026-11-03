@@ -8,7 +8,7 @@
 #   2. Waits for the default ArgoCD instance to come up
 #   3. Runs gitops/preflight.sh (CRD / optional Secret+ConfigMap checks)
 #   4. Applies gitops/argocd-namespace-rolebindings.yaml so Argo CD can
-#      reconcile workloads in doc-gen-demo and ci-cd-demo
+#      reconcile workloads in doc-gen-demo, ci-cd-demo, and mcp-gateway
 #   5. Merges gitops/argocd-instance-demo.yaml (UI RBAC for user admin +
 #      rhdh-local-user API token for Developer Hub)
 #   6. Optionally creates external-model-credentials / github-token Secrets
