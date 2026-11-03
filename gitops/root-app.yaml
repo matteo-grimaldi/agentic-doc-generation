@@ -22,7 +22,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/YOUR_ORG/agentic-doc-generation.git
+    repoURL: https://github.com/matteo-grimaldi/agentic-doc-generation.git
     targetRevision: HEAD
     path: gitops/apps
     directory:

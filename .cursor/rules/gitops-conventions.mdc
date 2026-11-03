@@ -10,16 +10,19 @@ This repo deploys everything through ArgoCD App-of-Apps
 (`gitops/root-app.yaml` → `gitops/apps/*.yaml`). Follow these rules when
 touching any manifest under `gitops/` or a component's `k8s/` directory.
 
-## repoURL placeholder
+## repoURL
 
-Every ArgoCD `Application` resource must use the literal placeholder:
+Every ArgoCD `Application` resource must use this fork's real GitHub URL
+(matching the other child apps already in `gitops/apps/`):
 
 ```yaml
-repoURL: https://github.com/YOUR_ORG/agentic-doc-generation.git
+repoURL: https://github.com/matteo-grimaldi/agentic-doc-generation.git
 ```
 
-Never replace this with a real URL in committed manifests —
-`gitops/bootstrap.sh` substitutes it at bootstrap time via `sed`.
+Do not leave a `YOUR_ORG` placeholder — App-of-Apps syncs child
+Applications from git as-is, so an unsubstituted placeholder fails with
+"Repository not found". `gitops/bootstrap.sh` still rewrites the URL when
+someone bootstraps a different fork.
 
 ## Sync-wave ordering
 

@@ -13,8 +13,8 @@
 #      rhdh-local-user API token for Developer Hub)
 #   6. Optionally creates external-model-credentials / github-token Secrets
 #      when EXTERNAL_MODEL_API_KEY / GITHUB_TOKEN are set in the environment
-#   7. Points the root ArgoCD Application at THIS repo (substituting the
-#      repo URL placeholder) and applies it
+#   7. Points the root ArgoCD Application at THIS repo (rewriting the
+#      committed repoURL if bootstrapping a different fork) and applies it
 #   8. ArgoCD then takes over: child Applications under gitops/apps/, in
 #      dependency order (sync-waves). Model inference is not provisioned by
 #      this branch — see doc-gen-agent/k8s/cluster-config.yaml and README.
@@ -31,6 +31,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 NAMESPACE="${NAMESPACE:-doc-gen-demo}"
+# Committed manifests use this fork's URL. Also rewrite a legacy YOUR_ORG
+# placeholder if any file still has one.
+DEFAULT_REPO_URL="https://github.com/matteo-grimaldi/agentic-doc-generation.git"
 PLACEHOLDER_URL="https://github.com/YOUR_ORG/agentic-doc-generation.git"
 
 REPO_URL="${1:-$(git -C "${REPO_ROOT}" config --get remote.origin.url 2>/dev/null || true)}"
@@ -104,17 +107,28 @@ else
   echo "    GITHUB_TOKEN not set — skipping github-token (search_code / PR steps need it)."
 fi
 
-echo "==> Rendering root Application with repo URL substituted..."
+rewrite_repo_urls() {
+  # Rewrite committed default URL and any leftover YOUR_ORG placeholder.
+  sed -e "s#${PLACEHOLDER_URL}#${REPO_URL}#g" \
+      -e "s#${DEFAULT_REPO_URL}#${REPO_URL}#g" \
+      -e "s#targetRevision: HEAD#targetRevision: ${GIT_REF}#g"
+}
+
+echo "==> Rendering root Application with repo URL..."
 TMP_ROOT_APP="$(mktemp)"
 trap 'rm -f "${TMP_ROOT_APP}"' EXIT
-sed "s#${PLACEHOLDER_URL}#${REPO_URL}#g; s#targetRevision: HEAD#targetRevision: ${GIT_REF}#g" \
-  "${SCRIPT_DIR}/root-app.yaml" > "${TMP_ROOT_APP}"
+rewrite_repo_urls < "${SCRIPT_DIR}/root-app.yaml" > "${TMP_ROOT_APP}"
 
-echo "==> Also substituting repo URL in child Application manifests..."
-for f in "${SCRIPT_DIR}"/apps/*.yaml; do
-  sed -i.bak "s#${PLACEHOLDER_URL}#${REPO_URL}#g; s#targetRevision: HEAD#targetRevision: ${GIT_REF}#g" "$f"
-  rm -f "${f}.bak"
-done
+if [[ "${REPO_URL}" != "${DEFAULT_REPO_URL}" ]]; then
+  echo "==> Rewriting child Application manifests for fork ${REPO_URL}..."
+  for f in "${SCRIPT_DIR}"/apps/*.yaml; do
+    rewrite_repo_urls < "$f" > "${f}.tmp" && mv "${f}.tmp" "$f"
+  done
+  echo "    Commit and push gitops/apps so Argo CD sees the fork URL:"
+  echo "      git add gitops/apps && git commit -m 'gitops: point apps at fork' && git push"
+else
+  echo "    Child Application repoURLs already match ${DEFAULT_REPO_URL} — leaving apps/ unchanged."
+fi
 
 echo "==> Applying root Application (App-of-Apps)..."
 oc apply -f "${TMP_ROOT_APP}"
@@ -128,9 +142,3 @@ ARGOCD_ROUTE=$(oc get route openshift-gitops-server -n openshift-gitops -o jsonp
 if [[ -n "${ARGOCD_ROUTE}" ]]; then
   echo "    ArgoCD UI: ${ARGOCD_ROUTE}"
 fi
-echo ""
-echo "    IMPORTANT: this script edited gitops/apps/*.yaml in place to point"
-echo "    at your repo URL. Commit and push that change so ArgoCD (which"
-echo "    reads from git) sees the same content it was bootstrapped with:"
-echo ""
-echo "      git add gitops/apps && git commit -m 'gitops: point apps at repo' && git push"
