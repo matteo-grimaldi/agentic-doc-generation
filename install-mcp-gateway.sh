@@ -45,6 +45,38 @@ fail() {
   exit 1
 }
 
+# Under `set -o pipefail`, `oc … | awk '…; exit'` dies with SIGPIPE (141)
+# once awk closes the pipe early — which aborted this script before the MCP
+# Gateway Operator Subscription was ever applied. Buffer the oc output first.
+csv_phase_matching() {
+  local namespace="${1:-}"
+  local pattern="${2:-}"
+  local lines name phase
+  if [[ -n "${namespace}" ]]; then
+    lines="$(oc get csv -n "${namespace}" -o jsonpath='{range .items[*]}{.metadata.name}{"|"}{.status.phase}{"\n"}{end}' 2>/dev/null || true)"
+  else
+    lines="$(oc get csv -A -o jsonpath='{range .items[*]}{.metadata.namespace}{"|"}{.metadata.name}{"|"}{.spec.displayName}{"|"}{.status.phase}{"\n"}{end}' 2>/dev/null || true)"
+  fi
+  while IFS='|' read -r col1 col2 col3 col4; do
+    [[ -z "${col1}" ]] && continue
+    if [[ -n "${namespace}" ]]; then
+      name="${col1}"
+      phase="${col2}"
+      if [[ "${name}" =~ ${pattern} ]]; then
+        echo "${phase}"
+        return 0
+      fi
+    else
+      # cluster-wide: ns|name|displayName|phase
+      if [[ "$(echo "${col3}" | tr '[:upper:]' '[:lower:]')" =~ ${pattern} ]]; then
+        echo "${col4}"
+        return 0
+      fi
+    fi
+  done <<< "${lines}"
+  return 0
+}
+
 echo "==> Checking cluster login..."
 oc whoami >/dev/null || fail "not logged into an OpenShift cluster (run 'oc login' first)"
 
@@ -145,8 +177,7 @@ echo "==> Waiting for a Connectivity Link / Kuadrant CSV to Succeeded (if presen
 # matching CSV reaches Succeeded when one is installed.
 _waited=0
 while true; do
-  csv_phase="$(oc get csv -A -o jsonpath='{range .items[?(@.spec.displayName)]}{.metadata.namespace}{"|"}{.metadata.name}{"|"}{.spec.displayName}{"|"}{.status.phase}{"\n"}{end}' 2>/dev/null \
-    | awk -F'|' 'tolower($3) ~ /connectivity link|kuadrant/ {print $4; exit}')"
+  csv_phase="$(csv_phase_matching "" "connectivity link|kuadrant")"
   if [[ -z "${csv_phase}" || "${csv_phase}" == "Succeeded" ]]; then
     break
   fi
@@ -156,6 +187,7 @@ while true; do
   sleep 5
   _waited=$((_waited + 5))
 done
+echo "    Connectivity Link / Kuadrant CSV ready (or not yet installed; AuthPolicy CRD already present)."
 
 # ---------------------------------------------------------------------------
 # Step 3 -- MCP Gateway Operator (MCPGatewayExtension CRD)
@@ -207,35 +239,34 @@ fi
 echo "==> Waiting for MCP Gateway CSV to Succeeded..."
 _waited=0
 while true; do
-  phase="$(oc get csv -n "${MCP_SYSTEM_NS}" -l "operators.coreos.com/mcp-gateway.${MCP_SYSTEM_NS}"="" \
-    -o jsonpath='{.items[0].status.phase}' 2>/dev/null || true)"
-  if [[ "${phase}" == "Succeeded" ]]; then
-    break
-  fi
-  # Fallback: any CSV whose name starts with mcp-gateway in the namespace.
-  phase="$(oc get csv -n "${MCP_SYSTEM_NS}" -o jsonpath='{range .items[*]}{.metadata.name}{"|"}{.status.phase}{"\n"}{end}' 2>/dev/null \
-    | awk -F'|' '$1 ~ /^mcp-gateway/ {print $2; exit}')"
+  phase="$(csv_phase_matching "${MCP_SYSTEM_NS}" "^mcp-gateway")"
   if [[ "${phase}" == "Succeeded" ]]; then
     break
   fi
   if (( _waited >= 600 )); then
-    fail "timed out waiting for MCP Gateway CSV in ${MCP_SYSTEM_NS}"
+    fail "timed out waiting for MCP Gateway CSV in ${MCP_SYSTEM_NS} (phase=${phase:-unset}). Check: oc get csv,subscription,installplan -n ${MCP_SYSTEM_NS}"
   fi
   sleep 5
   _waited=$((_waited + 5))
 done
+echo "    MCP Gateway CSV Succeeded."
 
 # Fail early if this cluster only has the older gatewayRef-shaped CRD,
 # which would reject the GitOps MCPGatewayExtension (targetRef).
 echo "==> Validating MCPGatewayExtension CRD supports spec.targetRef..."
-if ! oc get crd mcpgatewayextensions.mcp.kuadrant.io -o jsonpath='{.spec.versions[*].schema.openAPIV3Schema.properties.spec.properties}' 2>/dev/null \
-  | grep -q 'targetRef'; then
-  # Some CRDs nest properties differently; also accept if OpenAPI has targetRef anywhere under spec.
-  if ! oc get crd mcpgatewayextensions.mcp.kuadrant.io -o yaml 2>/dev/null | grep -q 'targetRef'; then
-    fail "MCPGatewayExtension CRD on this cluster does not expose spec.targetRef (older gatewayRef-only shape). Upgrade the MCP Gateway Operator before applying GitOps manifests."
-  fi
+_crd_yaml="$(oc get crd mcpgatewayextensions.mcp.kuadrant.io -o yaml 2>/dev/null || true)"
+if [[ -z "${_crd_yaml}" ]]; then
+  fail "MCPGatewayExtension CRD missing after CSV Succeeded."
+fi
+if ! grep -q 'targetRef' <<< "${_crd_yaml}"; then
+  fail "MCPGatewayExtension CRD on this cluster does not expose spec.targetRef (older gatewayRef-only shape). Upgrade the MCP Gateway Operator before applying GitOps manifests."
 fi
 echo "    MCPGatewayExtension CRD looks compatible (targetRef present)."
+# Catalog CSV for mcp-gateway.v0.7.1 owns mcp.kuadrant.io/v1alpha1 — warn if
+# only that version exists so GitOps manifests stay aligned.
+if ! grep -qE 'name: v1$' <<< "${_crd_yaml}" && grep -q 'name: v1alpha1' <<< "${_crd_yaml}"; then
+  echo "    note: CRD serves v1alpha1 (not v1) — mcp-gateway/k8s manifests must use mcp.kuadrant.io/v1alpha1."
+fi
 
 # ---------------------------------------------------------------------------
 # Step 4 -- Kuadrant singleton (AuthPolicy enforcement)
