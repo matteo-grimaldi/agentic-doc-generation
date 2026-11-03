@@ -6,6 +6,11 @@
 # MCP Gateway Operator package (preview / mcp-gateway.v0.7.1) registers
 # this CRD as mcp.kuadrant.io/v1alpha1 (Connectivity Link 1.5 docs may
 # show /v1 — prefer the version the installed CRD actually serves).
+#
+# publicHost mirrors the Gateway listener hostname (required when that
+# hostname is the ClusterIP Service FQDN). privateHost overrides the
+# operator default (<gateway>-istio.…), which is wrong for OpenShift's
+# {gateway}-openshift-default Service naming.
 apiVersion: mcp.kuadrant.io/v1alpha1
 kind: MCPGatewayExtension
 metadata:
@@ -16,6 +21,8 @@ metadata:
     app.kubernetes.io/part-of: agentic-doc-generation
 spec:
   httpRouteManagement: Enabled
+  publicHost: mcp-gateway-openshift-default.mcp-gateway.svc.cluster.local
+  privateHost: mcp-gateway-openshift-default.mcp-gateway.svc.cluster.local:8080
   targetRef:
     group: gateway.networking.k8s.io
     kind: Gateway
