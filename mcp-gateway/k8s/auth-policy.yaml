@@ -1,0 +1,24 @@
+# Kubernetes TokenReview on the MCP Gateway listener. Audience must match
+# the projected ServiceAccount token mounted into the four agent pods
+# (audience: mcp-gateway). Authentication only — no per-tool role filter;
+# MCPVirtualServer allowlists constrain the tool list instead.
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: mcp-gateway-tokenreview
+  namespace: mcp-gateway
+  labels:
+    app.kubernetes.io/name: mcp-gateway
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: mcp-gateway
+    sectionName: mcp
+  rules:
+    authentication:
+      k8s-token:
+        kubernetesTokenReview:
+          audiences:
+            - mcp-gateway

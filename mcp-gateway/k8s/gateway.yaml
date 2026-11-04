@@ -1,0 +1,46 @@
+# In-cluster MCP Gateway. Class openshift-default is the Ingress Operator's
+# Gateway API class (controller openshift.io/gateway-controller/v1).
+# ./install-mcp-gateway.sh creates that GatewayClass if missing.
+#
+# infrastructure.parametersRef → mcp-gateway-options forces ClusterIP (no
+# cloud LoadBalancer; otherwise Programmed stays False on this cluster).
+#
+# Two listeners on :8080:
+#   mcp          — client / broker Host (Service DNS); MCPGatewayExtension
+#                  sectionName + agents' MCP_GATEWAY_URL.
+#   mcp-backends — wildcard for MCPServerRegistration HTTPRoutes, which
+#                  require distinct hostnames (github-mcp-server.mcp.local,
+#                  …). A single precise listener hostname rejects those
+#                  routes (NoMatchingListenerHostname).
+# kuadrant.io/gateway enables RHCL policy attachment.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: mcp-gateway
+  namespace: mcp-gateway
+  labels:
+    app.kubernetes.io/name: mcp-gateway
+    app.kubernetes.io/part-of: agentic-doc-generation
+    kuadrant.io/gateway: "true"
+spec:
+  gatewayClassName: openshift-default
+  infrastructure:
+    parametersRef:
+      group: ""
+      kind: ConfigMap
+      name: mcp-gateway-options
+  listeners:
+    - name: mcp
+      hostname: mcp-gateway-openshift-default.mcp-gateway.svc.cluster.local
+      port: 8080
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: All
+    - name: mcp-backends
+      hostname: "*.mcp.local"
+      port: 8080
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: All

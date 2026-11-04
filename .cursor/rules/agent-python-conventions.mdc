@@ -15,8 +15,12 @@ alwaysApply: false
   preserve streaming behavior (don't buffer the full response before
   returning) so the Gradio UI can render incrementally.
 - All config comes from environment variables with sensible defaults
-  (`OGX_BASE_URL`, `GITHUB_MCP_URL`, `MODEL_NAME`, `KNOWLEDGE_FILE`) —
-  never hardcode a cluster-internal URL inline; add a new env var instead.
+  (`OGX_BASE_URL`, `MCP_GATEWAY_URL`, `MCP_VIRTUAL_SERVER`,
+  `MCP_GATEWAY_TOKEN_PATH`, `MODEL_NAME`, `KNOWLEDGE_FILE`) — never
+  hardcode a cluster-internal URL inline; add a new env var instead.
+  MCP tools go through the gateway (`authorization` +
+  `X-Mcp-Virtualserver`); fail closed when `MCP_GATEWAY_URL` is empty.
+  REST helpers in `app.py` keep using `GITHUB_MCP_SERVER_URL`.
 - Keep the token-budget guardrails in the system prompt in sync with
   `MAX_INFER_ITERS` — if you change one, reconsider the other.
 - Wrap OGX stream consumption in the existing `asyncio.timeout` /

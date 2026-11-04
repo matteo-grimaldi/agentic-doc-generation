@@ -22,6 +22,14 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: doc-gen-demo
+  # mcp_gateway_url is patched live by ./install-mcp-gateway.sh once the
+  # Gateway is Programmed — ignore that key so selfHeal does not revert it.
+  ignoreDifferences:
+    - group: ""
+      kind: ConfigMap
+      name: cluster-config
+      jsonPointers:
+        - /data/mcp_gateway_url
   syncPolicy:
     automated:
       prune: true

@@ -3,7 +3,10 @@
 # One-time cluster prerequisite: installs Red Hat OpenShift AI (latest,
 # `stable-3.x` channel) with AI Hub (Models/MCPs/Agents), AI Studio
 # (Workbenches/AI Pipelines), MLFlow, and AI Gateway / Models-as-a-Service
-# so every demo agent reaches the model through the in-cluster gateway.
+# so every demo agent reaches the model through the in-cluster gateway
+# then runs
+# ./install-mcp-gateway.sh for Connectivity Link + the MCP Gateway
+# Operator (agents' MCP tool path — not DataScienceCluster aigateway).
 #
 # This is a platform-level operator installation, run imperatively (like
 # ci-cd-pipeline/install-operator.sh and gitops/bootstrap.sh) because
@@ -24,6 +27,13 @@
 #                           skips minting and leaves your MaaS key alone.
 #   NAMESPACE               Agent namespace for external-model-credentials
 #                           (default: doc-gen-demo).
+# It is independent of this repo's doc-gen-demo GitOps app-of-apps
+# tree — nothing here wires the demo agents to OpenShift AI beyond the
+# MCPServer / MCP Gateway CRDs those Applications need.
+#
+# After GitOps syncs Gateway mcp-gateway, re-run ./install-mcp-gateway.sh
+# alone if cluster-config mcp_gateway_url is still empty (that script is
+# idempotent and safe to call without redoing the RHOAI install).
 #
 # Usage:
 #   UPSTREAM_MODEL_API_KEY=sk-... ./install-openshift-ai.sh
@@ -837,3 +847,14 @@ echo "    Check component status with:"
 echo "      oc get datasciencecluster default-dsc -o yaml"
 echo "      oc get externalmodel,externalprovider,maasmodelref -n llm"
 echo "      oc get maassubscription,maasauthpolicy -n models-as-a-service"
+
+# ---------------------------------------------------------------------------
+# Step 8 -- MCP Gateway (Connectivity Link + MCP Gateway Operator)
+# ---------------------------------------------------------------------------
+# Same operator-before-CRD pattern as mcplifecycleoperator above, but the
+# MCP gateway is *not* a DataScienceCluster component (aigateway is the
+# model gateway and stays Removed). Delegate to install-mcp-gateway.sh so
+# the URL-patch / re-run path after GitOps stays a single script.
+echo ""
+echo "==> Installing MCP Gateway prerequisites (Connectivity Link + MCP Gateway Operator)..."
+bash "${SCRIPT_DIR}/install-mcp-gateway.sh"

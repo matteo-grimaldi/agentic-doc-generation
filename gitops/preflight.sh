@@ -37,6 +37,12 @@ oc whoami >/dev/null || fail "not logged into an OpenShift cluster (run 'oc logi
 require_crd "mcpservers.mcp.x-k8s.io" \
   "MCPServer CRD not found — run ./install-openshift-ai.sh before GitOps bootstrap."
 
+require_crd "authpolicies.kuadrant.io" \
+  "AuthPolicy CRD not found — run ./install-openshift-ai.sh (or ./install-mcp-gateway.sh) before GitOps bootstrap (Red Hat Connectivity Link)."
+
+require_crd "mcpgatewayextensions.mcp.kuadrant.io" \
+  "MCPGatewayExtension CRD not found — run ./install-openshift-ai.sh (or ./install-mcp-gateway.sh) before GitOps bootstrap (MCP Gateway Operator)."
+
 require_crd "pipelines.tekton.dev" \
   "Tekton Pipeline CRD not found — run ./ci-cd-pipeline/install-operator.sh before GitOps bootstrap (or set GITOPS_PREFLIGHT_WARN_ONLY=1 to continue)."
 

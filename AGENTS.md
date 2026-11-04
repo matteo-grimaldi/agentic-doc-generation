@@ -40,6 +40,7 @@ gitops/                 # ArgoCD App-of-Apps: bootstrap.sh is the entry point
   preflight.sh           # CRD/optional runtime checks before bootstrap
   apps/                  # Child ArgoCD Application manifests (one per component)
 github-mcp-server/       # FastMCP server exposing GitHub repo browsing as MCP tools
+mcp-gateway/             # Connectivity Link MCP Gateway wiring (Gateway, AuthPolicy, registrations)
 ogx-mlflow-sidecar/      # MLflow sidecar image (Dockerfile + cluster build-and-deploy.sh)
 ai-gateway/              # MaaS/AI Gateway manifests (ExternalModel, Gateway, demo Postgres); applied by install-openshift-ai.sh
 doc-gen-agent/           # OGX sidecar (agentic loop) + Gradio UI — architecture docs & diagrams
@@ -48,7 +49,8 @@ compliance-scan-agent/   # OGX sidecar (agentic loop) + Gradio UI — architectu
 catalog-gen-agent/       # OGX sidecar (agentic loop) + Gradio UI — Backstage catalog-info.yaml generation
 governance-hub/          # FastAPI compliance dashboard + REST API
 compliance-mcp-server/   # Standalone, read-only Compliance MCP server (proxies governance-hub's REST API)
-install-openshift-ai.sh  # Imperative RHOAI + AI Gateway / MaaS bootstrap (run before GitOps)
+install-openshift-ai.sh  # Imperative RHOAI + calls install-mcp-gateway.sh + AI Gateway / MaaS bootstrap (run before GitOps)
+install-mcp-gateway.sh   # RHCL + MCP Gateway Operator; re-run to patch mcp_gateway_url
 build-and-deploy-all.sh  # Non-GitOps quick-start for the app components
 ```
 
@@ -91,23 +93,27 @@ governance-hub's storage layer instead of its public API.
   resource must live under a component's `k8s/` directory so ArgoCD picks
   it up. Don't hand-apply one-off resources without also committing the
   manifest.
-- **ArgoCD Application `repoURL` fields contain a placeholder**
-  (`https://github.com/YOUR_ORG/agentic-doc-generation.git`). Never
-  hardcode a real URL in a manifest — `gitops/bootstrap.sh` substitutes it
-  at bootstrap time via `sed`.
+- **ArgoCD Application `repoURL` fields use this fork's real GitHub URL**
+  (`https://github.com/matteo-grimaldi/agentic-doc-generation.git`), same
+  as the other child apps. App-of-Apps syncs those manifests as-is — a
+  `YOUR_ORG` placeholder left in git never gets rewritten and breaks
+  sync. `gitops/bootstrap.sh` can still rewrite the URL when bootstrapping
+  a different fork.
 - **OpenShift GitOps RBAC:** `gitops/bootstrap.sh` applies
   `gitops/argocd-namespace-rolebindings.yaml` imperatively (not via ArgoCD)
-  so the application-controller can patch workloads in `doc-gen-demo` and
-  `ci-cd-demo`. Don't remove those RoleBindings on clusters using GitOps.
-- **Sync-wave ordering matters.** `github-mcp-server` (wave 0) must land
-  before `doc-gen-agent`, `openapi-gen-agent`, `compliance-scan-agent`,
-  `governance-hub`, and `compliance-mcp-server` (all five wave 1, applied
-  concurrently), because of the Service DNS dependency.
-  `compliance-mcp-server` depends on `governance-hub`'s Service DNS name
-  too but stays wave 1 rather than a stricter wave 2 — it tolerates
-  governance-hub being briefly unavailable (each tool returns an
-  `"error"` key until reachable), the same tolerance governance-hub
-  itself has for all three agents. Preserve the
+  so the application-controller can patch workloads in `doc-gen-demo`,
+  `ci-cd-demo`, and `mcp-gateway`. Don't remove those RoleBindings on
+  clusters using GitOps.
+- **Sync-wave ordering matters.** Wave 0 is `github-mcp-server` and
+  `mcp-gateway` (Connectivity Link MCP Gateway wiring). Wave 1 is
+  `doc-gen-agent`, `openapi-gen-agent`, `compliance-scan-agent`,
+  `catalog-gen-agent`, `governance-hub`, and `compliance-mcp-server`
+  (applied concurrently). Agents use the gateway for MCP tools
+  (`MCP_GATEWAY_URL` + projected SA token + virtual server
+  `mcp-gateway/github-tools`) and the GitHub MCP Service DNS for REST
+  (`GITHUB_MCP_SERVER_URL`). `compliance-mcp-server` depends on
+  `governance-hub`'s Service DNS name too but stays wave 1 — it
+  tolerates governance-hub being briefly unavailable. Preserve the
   `argocd.argoproj.io/sync-wave` annotations when adding resources.
 - **`github-mcp-server` and `compliance-mcp-server` are deployed as
   `MCPServer` custom resources** (`k8s/mcpserver.yaml`), not a
@@ -125,6 +131,15 @@ governance-hub's storage layer instead of its public API.
   resource first). Every other component in this repo still uses plain
   `Deployment`/`Service` manifests; don't convert them without the same
   explicit tradeoff discussion.
+- **MCP Gateway** (Technology Preview) is installed by
+  `./install-openshift-ai.sh` via a call to `./install-mcp-gateway.sh`
+  (Connectivity Link + MCP Gateway Operator). Re-run
+  `./install-mcp-gateway.sh` alone after GitOps syncs `mcp-gateway/k8s`
+  to patch `cluster-config` `mcp_gateway_url` if still empty. The
+  DataScienceCluster `aigateway` component is the *model* gateway and
+  stays `Removed`. Gen AI Playground `mcp-catalog-entry.yaml` URLs stay
+  on the direct MCP Service — that ConfigMap cannot send a TokenReview
+  bearer or `X-Mcp-Virtualserver`.
 - **ConfigMaps generated from files are not committed as inline YAML.**
   `ogx-stack-config` and `agent-knowledge`/`openapi-agent-knowledge`/
   `compliance-scan-knowledge` (per component) are created by each

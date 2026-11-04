@@ -33,3 +33,63 @@ subjects:
   - kind: ServiceAccount
     name: openshift-gitops-argocd-application-controller
     namespace: openshift-gitops
+---
+# MCP Gateway Application (wave 0) lands Gateway / AuthPolicy / registrations
+# here; without this binding OpenShift GitOps 1.22+ cannot patch them.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openshift-gitops-argocd-application-controller-admin
+  namespace: mcp-gateway
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: admin
+subjects:
+  - kind: ServiceAccount
+    name: openshift-gitops-argocd-application-controller
+    namespace: openshift-gitops
+---
+# mcp-system holds the operator's hardcoded MCPVirtualServer config Secret
+# (see mcp-gateway/k8s/virtualserver-config-sync.yaml). Argo creates the
+# namespace + a small Role for the sync Job SA.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openshift-gitops-argocd-application-controller-admin
+  namespace: mcp-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: admin
+subjects:
+  - kind: ServiceAccount
+    name: openshift-gitops-argocd-application-controller
+    namespace: openshift-gitops
+---
+# OpenShift's aggregated ClusterRole/admin only allows get/list/watch on
+# gateways.gateway.networking.k8s.io (HTTPRoutes are fully writable). The
+# mcp-gateway Application must create/update the Gateway CR itself.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openshift-gitops-argocd-gateway-api
+  namespace: mcp-gateway
+rules:
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gateways"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openshift-gitops-argocd-gateway-api
+  namespace: mcp-gateway
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: openshift-gitops-argocd-gateway-api
+subjects:
+  - kind: ServiceAccount
+    name: openshift-gitops-argocd-application-controller
+    namespace: openshift-gitops

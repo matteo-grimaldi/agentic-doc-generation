@@ -10,24 +10,29 @@ This repo deploys everything through ArgoCD App-of-Apps
 (`gitops/root-app.yaml` → `gitops/apps/*.yaml`). Follow these rules when
 touching any manifest under `gitops/` or a component's `k8s/` directory.
 
-## repoURL placeholder
+## repoURL
 
-Every ArgoCD `Application` resource must use the literal placeholder:
+Every ArgoCD `Application` resource must use this fork's real GitHub URL
+(matching the other child apps already in `gitops/apps/`):
 
 ```yaml
-repoURL: https://github.com/YOUR_ORG/agentic-doc-generation.git
+repoURL: https://github.com/matteo-grimaldi/agentic-doc-generation.git
 ```
 
-Never replace this with a real URL in committed manifests —
-`gitops/bootstrap.sh` substitutes it at bootstrap time via `sed`.
+Do not leave a `YOUR_ORG` placeholder — App-of-Apps syncs child
+Applications from git as-is, so an unsubstituted placeholder fails with
+"Repository not found". `gitops/bootstrap.sh` still rewrites the URL when
+someone bootstraps a different fork.
 
 ## Sync-wave ordering
 
 Preserve `argocd.argoproj.io/sync-wave` annotations:
 
-- Wave 0 — `github-mcp-server`
-- Wave 1 — `doc-gen-agent` (depends on wave 0's Service DNS name),
-  `compliance-mcp-server`
+- Wave 0 — `github-mcp-server`, `mcp-gateway` (Connectivity Link MCP
+  Gateway: Gateway, MCPGatewayExtension, AuthPolicy, HTTPRoutes,
+  MCPServerRegistrations, MCPVirtualServers)
+- Wave 1 — `doc-gen-agent` and the other agents / governance-hub /
+  `compliance-mcp-server` (MCP tools via gateway; REST via Service DNS)
 
 Model inference on this branch goes through the in-cluster OpenShift AI
 AI Gateway / Models-as-a-Service (imperative install via
@@ -53,6 +58,14 @@ git history for the original hand-written Deployment+Service shape if
 you ever need to revert). Do not put AI Gateway platform CRs
 (Gateway, ExternalModel, Kuadrant) into the App-of-Apps tree — they are
 cluster-admin prerequisites applied by the install script.
+
+**MCP Gateway** CRDs come from `./install-openshift-ai.sh`, which calls
+`./install-mcp-gateway.sh` (Connectivity Link + MCP Gateway Operator)
+before GitOps syncs `gitops/apps/mcp-gateway.yaml`. Re-run
+`./install-mcp-gateway.sh` alone after the Gateway is Programmed to
+patch `cluster-config` `mcp_gateway_url` (the doc-gen-agent Application
+`ignoreDifferences` that key). DataScienceCluster `aigateway` is the
+model gateway and stays `Removed`.
 
 If you add a resource that depends on another wave's output (a CRD, a
 Service DNS name, a ConfigMap), give it a sync-wave annotation at least

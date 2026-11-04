@@ -143,12 +143,21 @@ spec:
               value: "False"
             - name: OGX_BASE_URL
               value: "http://localhost:8321"
-            - name: GITHUB_MCP_URL
-              value: "http://github-mcp-server.doc-gen-demo.svc.cluster.local:8080/mcp"
-            # Base URL (no /mcp suffix) of the same GitHub MCP server, used
-            # only by the /invoke background task to POST the generated
-            # document to its plain REST /propose-doc route (which opens a
-            # PR rather than committing directly) — see app.py.
+            # Federated MCP endpoint (Connectivity Link MCP Gateway).
+            # Populated by ./install-mcp-gateway.sh into cluster-config;
+            # empty until then — agent.py fails closed (no direct-Service fallback).
+            - name: MCP_GATEWAY_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: cluster-config
+                  key: mcp_gateway_url
+            - name: MCP_VIRTUAL_SERVER
+              value: "mcp-gateway/github-tools"
+            - name: MCP_GATEWAY_TOKEN_PATH
+              value: "/var/run/secrets/mcp-gateway/token"
+            # Base URL (no /mcp suffix) of the GitHub MCP server Service —
+            # REST only (/propose-doc). MCP tool traffic goes through the
+            # gateway above, not this URL.
             - name: GITHUB_MCP_SERVER_URL
               value: "http://github-mcp-server.doc-gen-demo.svc.cluster.local:8080"
             - name: MODEL_NAME
@@ -224,6 +233,9 @@ spec:
             - name: agent-knowledge
               mountPath: /etc/agent-knowledge
               readOnly: true
+            - name: mcp-gateway-token
+              mountPath: /var/run/secrets/mcp-gateway
+              readOnly: true
       volumes:
         - name: ogx-config
           configMap:
@@ -233,6 +245,15 @@ spec:
         - name: agent-knowledge
           configMap:
             name: agent-knowledge
+        # Projected SA token with audience matching AuthPolicy
+        # (mcp-gateway/k8s/auth-policy.yaml). TokenReview needs no RoleBinding.
+        - name: mcp-gateway-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  audience: mcp-gateway
+                  expirationSeconds: 3600
 ---
 apiVersion: v1
 kind: Service

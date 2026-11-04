@@ -1,0 +1,32 @@
+# Discovery route for github-mcp-server /mcp. Lives in mcp-gateway (same
+# namespace as MCPServerRegistration) because the MCP Gateway Operator's
+# OwnNamespace OperatorGroup cannot see HTTPRoutes in doc-gen-demo.
+# hostname is required by the registration controller; parentRef uses the
+# Gateway mcp-backends wildcard listener. Cross-namespace Service ref is
+# allowed by referencegrant-mcpsr.yaml. REST routes stay on Service DNS
+# (GITHUB_MCP_SERVER_URL) — not this HTTPRoute.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: github-mcp-server-mcp
+  namespace: mcp-gateway
+  labels:
+    app.kubernetes.io/name: github-mcp-server
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  hostnames:
+    - github-mcp-server.mcp.local
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: mcp-gateway
+      sectionName: mcp-backends
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /mcp
+      backendRefs:
+        - name: github-mcp-server
+          namespace: doc-gen-demo
+          port: 8080
