@@ -1,0 +1,20 @@
+# Demo overlay: MaaSAuthPolicy with a group that has no members.
+# The minted sk-oai- key for subscription doc-gen-agents then loses
+# Authorino access (403). Do not commit this as the GitOps baseline —
+# scripts re-apply ai-gateway/k8s/maas-auth-policy.yaml to restore.
+---
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSAuthPolicy
+metadata:
+  name: doc-gen-agents
+  namespace: models-as-a-service
+  labels:
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  modelRefs:
+    - name: qwen38-27b
+      namespace: llm
+  subjects:
+    groups:
+      - name: demo-no-access
+    users: []
