@@ -1,0 +1,24 @@
+# Demo overlay: 2 requests / 1m on the MCP Gateway listener so a third
+# curl in the same minute gets 429 from Limitador. Leave Gradio agents
+# idle during this act so they do not consume the two requests.
+# Scripts re-apply mcp-gateway/k8s/rate-limit-policy.yaml to restore.
+apiVersion: kuadrant.io/v1
+kind: RateLimitPolicy
+metadata:
+  name: mcp-gateway-budget
+  namespace: mcp-gateway
+  labels:
+    app.kubernetes.io/name: mcp-gateway
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: mcp-gateway
+    sectionName: mcp
+  defaults:
+    limits:
+      mcp-tight-budget:
+        rates:
+          - limit: 2
+            window: 1m

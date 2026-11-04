@@ -1,0 +1,22 @@
+# Demo overlay: 1 token / 1h quota so the next model call(s) hit Limitador
+# (429). Scripts re-apply ai-gateway/k8s/maas-subscription.yaml (10M/1h)
+# to restore. Keep MaaSAuthPolicy present — subscription alone → 403.
+---
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSSubscription
+metadata:
+  name: doc-gen-agents
+  namespace: models-as-a-service
+  labels:
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  owner:
+    groups:
+      - name: doc-gen-agents
+    users: []
+  modelRefs:
+    - name: qwen38-27b
+      namespace: llm
+      tokenRateLimits:
+        - limit: 1
+          window: 1h
