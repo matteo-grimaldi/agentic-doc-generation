@@ -22,6 +22,48 @@ logger = logging.getLogger("ogx-mlflow-sidecar")
 _STOCK_OGX_APP = "ogx.core.server.server:create_app"
 
 
+def _patch_ogx_mcp_httpx_timeouts() -> None:
+    """
+    OGX MCPSessionManager builds httpx2.AsyncClient(headers=...) with no
+    timeout, so httpx2's default 5s applies to MCP tool POST+SSE reads.
+    MCP SDK defaults are 30s connect/write and 300s SSE read.
+
+    Must stay a real AsyncClient subclass: assigning a factory function to
+    httpx2.AsyncClient breaks OGX inference imports
+    (httpx2.AsyncClient | DefaultAsyncHttpxClient type hints).
+    """
+    try:
+        import httpx2
+        from mcp.shared._httpx_utils import (
+            MCP_DEFAULT_SSE_READ_TIMEOUT,
+            MCP_DEFAULT_TIMEOUT,
+        )
+    except ImportError as exc:
+        logger.warning("OGX MCP httpx timeout patch skipped (import failed): %s", exc)
+        return
+    if getattr(httpx2, "_MCP_HTTPX_TIMEOUT_PATCHED", False):
+        return
+
+    _orig_async_client = httpx2.AsyncClient
+
+    class _MCPDefaultTimeoutAsyncClient(_orig_async_client):
+        def __init__(self, *args, **kwargs):
+            if not args and kwargs.get("timeout") is None:
+                kwargs = dict(kwargs)
+                kwargs["timeout"] = httpx2.Timeout(
+                    MCP_DEFAULT_TIMEOUT,
+                    read=MCP_DEFAULT_SSE_READ_TIMEOUT,
+                )
+            super().__init__(*args, **kwargs)
+
+    httpx2.AsyncClient = _MCPDefaultTimeoutAsyncClient
+    httpx2._MCP_HTTPX_TIMEOUT_PATCHED = True
+    logger.info(
+        "Patched httpx2.AsyncClient default timeouts: 30s connect/write, "
+        "300s SSE read (was httpx2 default 5s)"
+    )
+
+
 def _propagation_enabled() -> bool:
     return (os.getenv("MLFLOW_OGX_TRACE_PROPAGATION") or "false").strip().lower() in (
         "1",
@@ -73,6 +115,8 @@ def main() -> None:
             "MLflow openai.autolog active — inference requests export prompts/"
             "messages to the tracking server (Chat tab in MLflow UI)"
         )
+    # Before any ogx import (ogx_mlflow_app / uvicorn factory load httpx2 type hints).
+    _patch_ogx_mcp_httpx_timeouts()
     app_factory = _resolve_app_factory(mlflow_enabled=enabled)
     logger.info(
         "Starting OGX uvicorn (mlflow_tracing=%s, service=%s, app=%s)",
