@@ -297,6 +297,22 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Step 4.5 -- MCP Gateway Authorino TLS + drop ODH llminferenceservice AuthPolicy
+# ---------------------------------------------------------------------------
+MCP_GATEWAY_MANIFEST_DIR="${SCRIPT_DIR}/mcp-gateway/k8s"
+if oc get gateway mcp-gateway -n "${MCP_SYSTEM_NS}" >/dev/null 2>&1; then
+  echo "==> MCP Gateway: Authorino upstream TLS (EnvoyFilter) and TokenReview-only auth..."
+  oc annotate gateway mcp-gateway -n "${MCP_SYSTEM_NS}" \
+    security.opendatahub.io/authorino-tls-bootstrap- >/dev/null 2>&1 || true
+  if oc get authpolicy mcp-gateway-authn -n "${MCP_SYSTEM_NS}" >/dev/null 2>&1; then
+    oc delete authpolicy mcp-gateway-authn -n "${MCP_SYSTEM_NS}" \
+      || fail "Could not delete ODH AuthPolicy mcp-gateway-authn (breaks MCP tool calls)"
+    echo "    Removed AuthPolicy/mcp-gateway-authn (llminferenceservice JWT on MCP gateway)."
+  fi
+  oc apply -f "${MCP_GATEWAY_MANIFEST_DIR}/authorino-tls-envoyfilter.yaml"
+fi
+
+# ---------------------------------------------------------------------------
 # Step 5 -- Patch mcp_gateway_url once Gateway is Programmed (optional here)
 # ---------------------------------------------------------------------------
 # The Gateway itself is GitOps-managed (mcp-gateway/k8s). If it is already
