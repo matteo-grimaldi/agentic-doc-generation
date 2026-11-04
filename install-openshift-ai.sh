@@ -168,6 +168,8 @@ EOF
 # Fresh installs omit deprecated kserve.modelsAsService. Re-runs leave that
 # field alone when already Managed (immutable through OpenShift AI 3.6).
 # aigateway stays Removed until platform prereqs (Step 5) are in place.
+# trainer/trainingoperator stay Removed (trainer needs the JobSet operator;
+# this demo does not use Kubeflow Trainer).
 # ---------------------------------------------------------------------------
 echo "==> Ensuring DataScienceCluster (default-dsc) base components..."
 if ! oc get datasciencecluster default-dsc >/dev/null 2>&1; then
@@ -204,10 +206,12 @@ spec:
       managementState: Managed
     ray:
       managementState: Managed
-    trainer:
-      managementState: Managed
     trustyai:
       managementState: Managed
+    trainer:
+      managementState: Removed
+    trainingoperator:
+      managementState: Removed
     kueue:
       managementState: Removed
     feastoperator:
@@ -234,16 +238,27 @@ else
         "aipipelines": {"managementState": "Managed"},
         "mlflowoperator": {"managementState": "Managed"},
         "ray": {"managementState": "Managed"},
-        "trainer": {"managementState": "Managed"},
-        "trustyai": {"managementState": "Managed"}
+        "trustyai": {"managementState": "Managed"},
+        "trainer": {"managementState": "Removed"},
+        "trainingoperator": {"managementState": "Removed"}
       }
     }
   }'
 fi
 
 echo "==> Waiting for DataScienceCluster to report Ready..."
-until [[ "$(oc get datasciencecluster default-dsc -o jsonpath='{.status.phase}' 2>/dev/null)" == "Ready" ]]; do
+_dsc_ready_waited=0
+while [[ "$(oc get datasciencecluster default-dsc -o jsonpath='{.status.phase}' 2>/dev/null)" != "Ready" ]]; do
+  if (( _dsc_ready_waited >= 1800 )); then
+    _ready_msg="$(oc get datasciencecluster default-dsc \
+      -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}' 2>/dev/null || true)"
+    echo "error: timed out waiting for default-dsc phase Ready (30m)."
+    echo "       ${_ready_msg:-Check component conditions on the DataScienceCluster.}"
+    echo "       Hint: oc get datasciencecluster default-dsc -o yaml"
+    exit 1
+  fi
   sleep 10
+  _dsc_ready_waited=$((_dsc_ready_waited + 10))
 done
 
 _ensure_dsc_component_managed() {
@@ -362,18 +377,31 @@ else
 fi
 
 echo "==> Waiting for Connectivity Link / Kuadrant CSV to succeed..."
+# Do not chain grep -q after oc get csv -A with pipefail: grep -q exits after the
+# first match, SIGPIPEs the upstream grep, and the pipeline returns 141 so the
+# loop never breaks even when rhcl-operator CSVs are Succeeded.
 _rhcl_waited=0
 while true; do
-  if oc get csv -A 2>/dev/null | grep -E 'rhcl-operator|kuadrant' | grep -q Succeeded; then
+  if oc get crd authpolicies.kuadrant.io >/dev/null 2>&1; then
+    break
+  fi
+  _rhcl_phase="$(oc get csv -n openshift-operators \
+    -o jsonpath='{.items[?(@.spec.displayName=="Red Hat Connectivity Link")].status.phase}' 2>/dev/null || true)"
+  if [[ "${_rhcl_phase}" == "Succeeded" ]]; then
     break
   fi
   if (( _rhcl_waited >= 600 )); then
-    echo "error: timed out waiting for rhcl-operator CSV Succeeded."
+    echo "error: timed out waiting for rhcl-operator CSV Succeeded (phase=${_rhcl_phase:-unset})."
+    echo "       Check: oc get csv,subscription rhcl-operator -n openshift-operators"
     exit 1
+  fi
+  if (( _rhcl_waited > 0 && _rhcl_waited % 30 == 0 )); then
+    echo "    still waiting (authpolicies CRD absent, rhcl CSV phase=${_rhcl_phase:-unset})..."
   fi
   sleep 5
   _rhcl_waited=$((_rhcl_waited + 5))
 done
+echo "    Connectivity Link / AuthPolicy CRD ready."
 
 echo "==> Waiting for Kuadrant CRD..."
 until oc get crd kuadrants.kuadrant.io >/dev/null 2>&1; do
@@ -547,6 +575,11 @@ if [[ -n "${AUTHORINO_NS}" ]]; then
   fi
   oc annotate gateway maas-default-gateway -n openshift-ingress \
     security.opendatahub.io/authorino-tls-bootstrap="true" --overwrite >/dev/null
+  if oc get gateway mcp-gateway -n mcp-gateway >/dev/null 2>&1; then
+    oc annotate gateway mcp-gateway -n mcp-gateway \
+      security.opendatahub.io/authorino-tls-bootstrap="true" --overwrite >/dev/null
+    echo "    Annotated mcp-gateway for Envoy↔Authorino TLS (MCP TokenReview auth)."
+  fi
 else
   echo "warning: Authorino CR not found yet — TLS bootstrap skipped; re-run after Kuadrant reconciles."
 fi

@@ -13,6 +13,10 @@
 #                  …). A single precise listener hostname rejects those
 #                  routes (NoMatchingListenerHostname).
 # kuadrant.io/gateway enables RHCL policy attachment.
+#
+# After install-openshift-ai.sh enables Authorino listener TLS for MaaS, Envoy
+# must use TLS to Authorino:50051 (kuadrant-auth-service). Same annotation as
+# ai-gateway/k8s/gateway.yaml — without it TokenReview auth returns 500.
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -22,6 +26,8 @@ metadata:
     app.kubernetes.io/name: mcp-gateway
     app.kubernetes.io/part-of: agentic-doc-generation
     kuadrant.io/gateway: "true"
+  annotations:
+    security.opendatahub.io/authorino-tls-bootstrap: "true"
 spec:
   gatewayClassName: openshift-default
   infrastructure:
