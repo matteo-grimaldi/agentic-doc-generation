@@ -60,9 +60,12 @@ data:
   # to nest LLM spans under the Gradio agent trace (Chat tab may differ).
   mlflow_ogx_trace_propagation: "false"
   ogx_mlflow_sidecar_image: "quay.io/mgrimald/ogx-mlflow-sidecar:latest"
-  # In-cluster MCP Gateway /mcp URL for the four agents' OGX MCP tool.
-  # Left empty in git; ./install-mcp-gateway.sh patches this after
-  # Gateway mcp-gateway is Programmed (Argo CD ignoreDifferences on
-  # doc-gen-agent Application keeps the live value). Agents fail closed
-  # when empty rather than falling back to the direct MCP Service URL.
+  # mcp_gateway_url is patched live by ./install-mcp-gateway.sh once the
+  # Gateway is Programmed (Argo CD ignoreDifferences on the doc-gen-agent
+  # Application keeps the live value). model_base_url is patched live by
+  # ./install-openshift-ai.sh after maas-default-gateway is Programmed — same
+  # ignoreDifferences entry. All four agents read this ConfigMap.
+  # Left empty in git; ./install-mcp-gateway.sh patches after Gateway
+  # mcp-gateway is Programmed. Agents fail closed when empty rather than
+  # falling back to the direct MCP Service URL.
   mcp_gateway_url: ""

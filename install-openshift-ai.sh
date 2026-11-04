@@ -40,8 +40,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib-demo-agents.sh
+source "${SCRIPT_DIR}/scripts/lib-demo-agents.sh"
 AI_GATEWAY_DIR="${SCRIPT_DIR}/ai-gateway/k8s"
-NAMESPACE="${NAMESPACE:-doc-gen-demo}"
+NAMESPACE="${NAMESPACE:-${DEMO_NS}}"
 INFRA_NAMESPACE="${INFRA_NAMESPACE:-redhat-ai-gateway-infra}"
 
 echo "==> Checking cluster login..."
@@ -439,6 +441,7 @@ fi
 echo "==> Applying maas-default-gateway (hostname maas.${CLUSTER_DOMAIN})..."
 TMP_GW="$(mktemp)"
 sed "s/__CLUSTER_DOMAIN__/${CLUSTER_DOMAIN}/g" "${AI_GATEWAY_DIR}/gateway.yaml" > "${TMP_GW}"
+oc apply -f "${AI_GATEWAY_DIR}/gateway-options.yaml"
 oc apply -f "${TMP_GW}"
 rm -f "${TMP_GW}"
 
@@ -737,6 +740,14 @@ else
   oc create secret generic external-model-credentials \
     --from-literal=api_key="${MAAS_KEY}" \
     -n "${NAMESPACE}" --dry-run=client -o yaml | oc apply -f -
+fi
+
+# Shared by all four agents (doc-gen, openapi-gen, compliance-scan, catalog-gen).
+INCLUSTER_MODEL_URL="https://${GW_SVC}.openshift-ingress.svc.cluster.local:443/v1"
+echo "==> Patching cluster-config model_base_url for all demo agents..."
+if patch_cluster_config_data "${NAMESPACE}" "{\"data\":{\"model_base_url\":\"${INCLUSTER_MODEL_URL}\"}}"; then
+  echo "    In-cluster MaaS base URL: ${INCLUSTER_MODEL_URL}"
+  restart_demo_agent_deployments "${NAMESPACE}"
 fi
 
 # ---------------------------------------------------------------------------

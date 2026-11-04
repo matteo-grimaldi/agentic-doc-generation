@@ -22,14 +22,17 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: doc-gen-demo
-  # mcp_gateway_url is patched live by ./install-mcp-gateway.sh once the
-  # Gateway is Programmed — ignore that key so selfHeal does not revert it.
+  # mcp_gateway_url and model_base_url are patched live by install scripts
+  # (see doc-gen-agent/k8s/cluster-config.yaml). ignoreDifferences below
+  # keeps Argo from reverting those keys for all four agents that share
+  # cluster-config.
   ignoreDifferences:
     - group: ""
       kind: ConfigMap
       name: cluster-config
       jsonPointers:
         - /data/mcp_gateway_url
+        - /data/model_base_url
   syncPolicy:
     automated:
       prune: true
