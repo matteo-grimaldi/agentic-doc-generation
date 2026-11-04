@@ -1,0 +1,50 @@
+# Kuadrant's kuadrant-auth-service cluster talks to Authorino on :50051 with TLS
+# once install-openshift-ai.sh enables the Authorino listener certificate. The
+# odh-model-controller creates mcp-gateway-authn-ssl for mcp-gateway when
+# security.opendatahub.io/authorino-tls-bootstrap is set; MaaS Gateway in
+# openshift-ingress does not get that controller hook, so apply this filter
+# explicitly (same patch shape as mcp-gateway-authn-ssl).
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: maas-default-gateway-authn-ssl
+  namespace: openshift-ingress
+  labels:
+    app.kubernetes.io/name: maas-gateway
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  priority: -1
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: maas-default-gateway
+  configPatches:
+    - applyTo: CLUSTER
+      match:
+        cluster:
+          service: authorino-authorino-authorization.kuadrant-system.svc.cluster.local
+      patch:
+        operation: ADD
+        value:
+          name: kuadrant-auth-service
+          type: STRICT_DNS
+          connect_timeout: 1s
+          http2_protocol_options: {}
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: kuadrant-auth-service
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: authorino-authorino-authorization.kuadrant-system.svc.cluster.local
+                          port_value: 50051
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+              common_tls_context:
+                validation_context:
+                  trusted_ca:
+                    filename: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt

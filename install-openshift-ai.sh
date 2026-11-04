@@ -575,10 +575,14 @@ if [[ -n "${AUTHORINO_NS}" ]]; then
   fi
   oc annotate gateway maas-default-gateway -n openshift-ingress \
     security.opendatahub.io/authorino-tls-bootstrap="true" --overwrite >/dev/null
+  echo "==> Applying MaaS Gateway Authorino upstream TLS EnvoyFilter..."
+  oc apply -f "${AI_GATEWAY_DIR}/maas-gateway-authorino-tls-envoyfilter.yaml"
   if oc get gateway mcp-gateway -n mcp-gateway >/dev/null 2>&1; then
     oc annotate gateway mcp-gateway -n mcp-gateway \
-      security.opendatahub.io/authorino-tls-bootstrap="true" --overwrite >/dev/null
-    echo "    Annotated mcp-gateway for Envoy↔Authorino TLS (MCP TokenReview auth)."
+      security.opendatahub.io/authorino-tls-bootstrap- >/dev/null 2>&1 || true
+    oc delete authpolicy mcp-gateway-authn -n mcp-gateway --ignore-not-found >/dev/null 2>&1 || true
+    echo "==> Applying MCP Gateway Authorino upstream TLS EnvoyFilter (no ODH authorino-tls-bootstrap)..."
+    oc apply -f "${SCRIPT_DIR}/mcp-gateway/k8s/authorino-tls-envoyfilter.yaml"
   fi
 else
   echo "warning: Authorino CR not found yet — TLS bootstrap skipped; re-run after Kuadrant reconciles."
@@ -716,54 +720,34 @@ if [[ -n "${EXTERNAL_MODEL_API_KEY:-}" ]]; then
     -n "${NAMESPACE}" --dry-run=client -o yaml | oc apply -f -
 else
   echo "==> Minting MaaS API key for subscription doc-gen-agents..."
-  MAAS_API_SVC="$(oc get svc -n "${INFRA_NAMESPACE}" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
-    | grep -E '^maas-api' | head -1 || true)"
-  if [[ -z "${MAAS_API_SVC}" ]]; then
-    echo "error: could not find maas-api Service in ${INFRA_NAMESPACE}"
-    exit 1
+  if [[ -z "${GW_SVC:-}" ]]; then
+    GW_SVC="$(oc get svc -n openshift-ingress -l gateway.networking.k8s.io/gateway-name=maas-default-gateway \
+      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
   fi
-  MAAS_API_PORT="$(oc get svc "${MAAS_API_SVC}" -n "${INFRA_NAMESPACE}" -o jsonpath='{.spec.ports[0].port}')"
+  if [[ -z "${GW_SVC}" ]]; then
+    GW_SVC="maas-default-gateway-openshift-default"
+  fi
+  # Admin API keys are exposed on the MaaS *gateway* at /v1/api-keys (HTTPRoute
+  # maas-api-route), not on the maas-api Service root. The maas-api pod listens
+  # on HTTPS :8443 only — port-forward + http:// yields "Client sent an HTTP
+  # request to an HTTPS server". Mint in-cluster via the gateway Service DNS.
+  INCLUSTER_MAAS_API_URL="https://${GW_SVC}.openshift-ingress.svc.cluster.local/v1/api-keys"
   OC_TOKEN="$(oc whoami -t)"
-  PF_LOCAL_PORT=18080
-  oc port-forward -n "${INFRA_NAMESPACE}" "svc/${MAAS_API_SVC}" "${PF_LOCAL_PORT}:${MAAS_API_PORT}" >/tmp/maas-pf.log 2>&1 &
-  PF_PID=$!
-  cleanup_pf() { kill "${PF_PID}" >/dev/null 2>&1 || true; }
-  trap cleanup_pf EXIT
-  # Wait for port-forward to accept connections.
-  _pf_waited=0
-  until curl -sf "http://127.0.0.1:${PF_LOCAL_PORT}/" >/dev/null 2>&1 \
-     || curl -sf "http://127.0.0.1:${PF_LOCAL_PORT}/health" >/dev/null 2>&1 \
-     || curl -sf "http://127.0.0.1:${PF_LOCAL_PORT}/v1/models" >/dev/null 2>&1 \
-     || nc -z 127.0.0.1 "${PF_LOCAL_PORT}" >/dev/null 2>&1; do
-    if (( _pf_waited >= 30 )); then
-      echo "error: port-forward to maas-api did not become ready."
-      cat /tmp/maas-pf.log >&2 || true
-      exit 1
-    fi
-    sleep 1
-    _pf_waited=$((_pf_waited + 1))
-  done
-
-  mint_key() {
-    local path="$1"
-    curl -sS -X POST "http://127.0.0.1:${PF_LOCAL_PORT}${path}" \
-      -H "Authorization: Bearer ${OC_TOKEN}" \
-      -H "Content-Type: application/json" \
-      -d '{"name":"doc-gen-agents","description":"Demo agents inference key","expiresIn":"90d","subscription":"doc-gen-agents"}'
-  }
-
-  API_KEY_RESPONSE="$(mint_key /maas-api/v1/api-keys 2>/dev/null || true)"
+  _mint_payload='{"name":"doc-gen-agents","description":"Demo agents inference key","expiresIn":"90d","subscription":"doc-gen-agents"}'
+  echo "    POST ${INCLUSTER_MAAS_API_URL} (ephemeral curl pod in ${NAMESPACE})..."
+  API_KEY_RESPONSE="$(oc run "maas-key-mint-$$" --rm -i --restart=Never -n "${NAMESPACE}" \
+    --image=curlimages/curl:8.5.0 \
+    --command -- curl -sS -k -X POST "${INCLUSTER_MAAS_API_URL}" \
+    -H "Authorization: Bearer ${OC_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "${_mint_payload}" 2>/dev/null || true)"
   MAAS_KEY="$(printf '%s' "${API_KEY_RESPONSE}" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("key") or d.get("apiKey") or "")' 2>/dev/null || true)"
-  if [[ -z "${MAAS_KEY}" ]]; then
-    API_KEY_RESPONSE="$(mint_key /v1/api-keys 2>/dev/null || true)"
-    MAAS_KEY="$(printf '%s' "${API_KEY_RESPONSE}" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("key") or d.get("apiKey") or "")' 2>/dev/null || true)"
-  fi
-  cleanup_pf
-  trap - EXIT
 
   if [[ -z "${MAAS_KEY}" || "${MAAS_KEY}" == "None" ]]; then
     echo "error: failed to mint MaaS API key. Response was:"
     echo "${API_KEY_RESPONSE}"
+    echo "       The admin API is POST https://${GW_SVC}.openshift-ingress.svc.cluster.local/v1/api-keys"
+    echo "       (not http://maas-api:8443 — that Service is HTTPS-only)."
     echo "       Create one in the OpenShift AI dashboard (Gen AI studio → API keys)"
     echo "       and set EXTERNAL_MODEL_API_KEY / create secret external-model-credentials."
     exit 1
