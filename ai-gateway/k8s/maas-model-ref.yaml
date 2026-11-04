@@ -1,0 +1,14 @@
+# Publishes the ExternalModel into MaaS so subscriptions / auth policies
+# can grant access.
+---
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSModelRef
+metadata:
+  name: qwen38-27b
+  namespace: llm
+  labels:
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  modelRef:
+    kind: ExternalModel
+    name: qwen38-27b

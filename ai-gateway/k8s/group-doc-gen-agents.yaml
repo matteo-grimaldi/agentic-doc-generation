@@ -1,0 +1,10 @@
+# OpenShift group bound by MaaSSubscription / MaaSAuthPolicy. The install
+# script adds the current oc user to this group after apply.
+---
+apiVersion: user.openshift.io/v1
+kind: Group
+metadata:
+  name: doc-gen-agents
+  labels:
+    app.kubernetes.io/part-of: agentic-doc-generation
+users: []

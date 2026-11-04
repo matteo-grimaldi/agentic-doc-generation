@@ -4,11 +4,10 @@
 # ArgoCD to watch gitops/apps/ and create one child Application per
 # component found there (GitHub MCP server, doc-gen agent). Each child
 # Application then manages its own Kubernetes resources independently.
-# Model inference is NOT provisioned by this repo on this branch — the
-# doc-gen agent calls a configurable external OpenAI-compatible endpoint
-# (see doc-gen-agent/k8s/cluster-config.yaml). For the original design
-# that serves the model in-cluster via vLLM on OpenShift AI (GPU
-# required), see the `local-model` branch.
+# Model inference goes through the in-cluster AI Gateway / MaaS (platform
+# install via ./install-openshift-ai.sh + ai-gateway/k8s/; agents use
+# doc-gen-agent/k8s/cluster-config.yaml). No in-cluster vLLM / GPU serving
+# on this branch — that design lives on `local-model`.
 #
 # NOTE: `repoURL` below is replaced by gitops/bootstrap.sh with the
 # actual git remote URL of this repository before being applied.

@@ -1,0 +1,18 @@
+# Upstream OpenAI-compatible provider (workshop MaaS host). The provider
+# API key Secret (workshop-model-api-key) is created by
+# install-openshift-ai.sh from $UPSTREAM_MODEL_API_KEY — never committed.
+---
+apiVersion: inference.opendatahub.io/v1alpha1
+kind: ExternalProvider
+metadata:
+  name: workshop-maas
+  namespace: llm
+  labels:
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  provider: openai
+  endpoint: maas-rhdp.apps.maas.redhatworkshops.io
+  auth:
+    type: apikey
+    secretRef:
+      name: workshop-model-api-key

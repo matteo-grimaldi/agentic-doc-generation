@@ -78,7 +78,7 @@ EXAMPLE_PROMPTS = [
 HEADER_HTML = f"""
 <div style="text-align:center; margin-bottom: 0.5rem;">
   <h1>🗂️ Agentic Catalog Generation</h1>
-  <p style="color:#666;">Powered by {MODEL_NAME} (external OpenAI-compatible endpoint) · GitHub MCP · OGX</p>
+  <p style="color:#666;">Powered by {MODEL_NAME} (OpenShift AI AI Gateway) · GitHub MCP · OGX</p>
 </div>
 """
 
@@ -415,7 +415,7 @@ def build_ui() -> gr.Blocks:
                    signals (REST, gRPC, GraphQL, AsyncAPI)
                 3. The agent queries the **GitHub MCP server** for the handful of files that evidence
                    actually points to
-                4. **{MODEL_NAME}**, served via a configurable external OpenAI-compatible endpoint,
+                4. **{MODEL_NAME}**, reached via the in-cluster OpenShift AI AI Gateway,
                    synthesizes the findings into a `catalog-info.yaml` — a `Component` entity plus any
                    `API` entities the repo's code actually supports, never inventing values it has no
                    evidence for

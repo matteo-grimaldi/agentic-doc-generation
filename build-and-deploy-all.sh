@@ -74,9 +74,17 @@ MODEL_BASE_URL_SET=$(oc get configmap cluster-config -n "${NAMESPACE}" -o jsonpa
 if [[ -z "${MODEL_BASE_URL_SET}" || "${MODEL_BASE_URL_SET}" == REPLACE_WITH_* ]]; then
   echo ""
   echo "    NOTE: doc-gen-agent/k8s/cluster-config.yaml's model_base_url still looks"
-  echo "    unset or is the placeholder value. Edit it to point at your external"
-  echo "    OpenAI-compatible endpoint before (or right after) deploying doc-gen-agent,"
-  echo "    and set \$EXTERNAL_MODEL_API_KEY if that endpoint requires auth."
+  echo "    unset or is the placeholder value. It should be the in-cluster AI Gateway"
+  echo "    /v1 Service URL (see install-openshift-ai.sh). Ensure"
+  echo "    secret/external-model-credentials holds a MaaS sk-oai- key"
+  echo "    (minted by the install script, or set \$EXTERNAL_MODEL_API_KEY)."
+  echo ""
+fi
+if ! oc get gateway maas-default-gateway -n openshift-ingress >/dev/null 2>&1; then
+  echo ""
+  echo "    NOTE: Gateway/maas-default-gateway is missing — run"
+  echo "    UPSTREAM_MODEL_API_KEY=... ./install-openshift-ai.sh before agents"
+  echo "    can reach the model through the AI Gateway."
   echo ""
 fi
 

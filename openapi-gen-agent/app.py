@@ -78,7 +78,7 @@ EXAMPLE_PROMPTS = [
 HEADER_HTML = f"""
 <div style="text-align:center; margin-bottom: 0.5rem;">
   <h1>🧩 Agentic OpenAPI Generation</h1>
-  <p style="color:#666;">Powered by {MODEL_NAME} (external OpenAI-compatible endpoint) · GitHub MCP · OGX</p>
+  <p style="color:#666;">Powered by {MODEL_NAME} (OpenShift AI AI Gateway) · GitHub MCP · OGX</p>
 </div>
 """
 
@@ -447,7 +447,7 @@ def build_ui() -> gr.Blocks:
                    already ships an OpenAPI/Swagger spec, or looks like an HTTP API service without one
                 3. If so, it queries the **GitHub MCP server** to find route/controller/handler files
                    and request/response models
-                4. **{MODEL_NAME}**, served via a configurable external OpenAI-compatible endpoint,
+                4. **{MODEL_NAME}**, reached via the in-cluster OpenShift AI AI Gateway,
                    synthesizes the findings into a valid OpenAPI 3.0.x specification (YAML)
                 5. You can review the generated spec and click **"Propose as PR"** to open a pull
                    request against the source repo — this never happens automatically from the chat UI
