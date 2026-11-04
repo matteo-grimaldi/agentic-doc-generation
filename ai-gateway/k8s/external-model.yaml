@@ -1,0 +1,21 @@
+# Client-facing model name must match the bare provider_model_id OGX sends
+# (qwen38-27b). Agents still use the OGX-prefixed model_name
+# external-model/qwen38-27b; OGX strips the provider prefix before the
+# gateway call.
+---
+apiVersion: inference.opendatahub.io/v1alpha1
+kind: ExternalModel
+metadata:
+  name: qwen38-27b
+  namespace: llm
+  labels:
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  modelName: qwen38-27b
+  externalProviderRefs:
+    - ref:
+        name: workshop-maas
+      targetModel: qwen38-27b
+      apiFormat: openai-chat
+      path: /v1/chat/completions
+      weight: 100

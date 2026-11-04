@@ -48,7 +48,7 @@ alwaysApply: false
 - No test suite exists yet; after edits, at minimum run
   `python3 -m py_compile <file>`.
 - Inference always goes through the OGX sidecar's `remote::vllm`-protocol
-  provider (OpenAI-compatible), pointed at the endpoint configured in
-  `doc-gen-agent/k8s/cluster-config.yaml` — never call an LLM API (OpenAI,
-  Anthropic, etc.) directly from `agent.py`/`app.py`; add/adjust OGX
-  provider config instead.
+  provider (OpenAI-compatible), pointed at the in-cluster AI Gateway URL
+  in `doc-gen-agent/k8s/cluster-config.yaml` — never call an LLM API
+  (OpenAI, Anthropic, upstream provider, etc.) directly from
+  `agent.py`/`app.py`; add/adjust OGX provider config instead.

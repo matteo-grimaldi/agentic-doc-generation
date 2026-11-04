@@ -1,8 +1,10 @@
-# Central place for the external model endpoint config consumed by the
-# Deployment. This branch serves inference from an external, configurable
-# OpenAI-compatible endpoint (no in-cluster model serving) — point
-# model_base_url at your provider's OpenAI-compatible `/v1` base URL
-# (vLLM, Ollama, Azure OpenAI gateway, OpenAI itself, etc.).
+# Central place for the model endpoint config consumed by the Deployment.
+# Inference goes through the in-cluster OpenShift AI AI Gateway
+# (Models-as-a-Service). model_base_url is the gateway Service's
+# OpenAI-compatible `/v1` base URL — not the upstream provider. The
+# gateway routes by bare model id (qwen38-27b) to ExternalModel/qwen38-27b
+# in the llm namespace (see ai-gateway/k8s/). No in-cluster model serving
+# (no vLLM / InferenceService / GPU) on this branch.
 #
 # model_name must be the FULL id the OGX sidecar publishes at /v1/models —
 # i.e. "<provider_id>/<model_id>" from
@@ -13,10 +15,12 @@
 # exact match against a registered model's published id, or (as a
 # fallback) a "<provider_id>/<provider_resource_id>" string it can split
 # on "/" — a bare model_id matches neither and fails with
-# ModelNotFoundError mid-stream.
-# The API key for the endpoint is supplied separately via the
-# external-model-credentials Secret (see k8s/deployment.yaml and the
-# README) — never put it in this ConfigMap.
+# ModelNotFoundError mid-stream. OGX strips the provider prefix before
+# calling the gateway, so ExternalModel.metadata.name / modelName stays
+# the bare id (qwen38-27b).
+# The API key is a MaaS key (sk-oai-...), supplied via the
+# external-model-credentials Secret (minted by install-openshift-ai.sh or
+# set via EXTERNAL_MODEL_API_KEY) — never put it in this ConfigMap.
 #
 # ogx_mlflow_sidecar_image: default ogx-server image (must match all four agent
 # Deployments' ogx-server container image). Override at deploy time with
@@ -36,7 +40,10 @@ metadata:
   namespace: doc-gen-demo
 data:
   model_name: "external-model/qwen38-27b"
-  model_base_url: "https://maas-rhdp.apps.maas.redhatworkshops.io/v1"
+  # In-cluster MaaS gateway Service (<gateway>-<gatewayclass>). Confirm the
+  # Service name after Gateway is Programmed if this 404s:
+  #   oc get svc -n openshift-ingress -l gateway.networking.k8s.io/gateway-name=maas-default-gateway
+  model_base_url: "https://maas-default-gateway-openshift-default.openshift-ingress.svc.cluster.local:443/v1"
   # Empty = MLflow tracing off. Example in-cluster form after
   # ./install-openshift-ai.sh creates the Mlflow CR:
   #   http://mlflow.redhat-ods-applications.svc.cluster.local:5000

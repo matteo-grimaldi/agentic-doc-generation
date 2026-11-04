@@ -12,10 +12,11 @@ produces architecture documentation with Mermaid C4 diagrams,
 like HTTP API services, and `compliance-scan-agent` scans K8s/OpenShift
 manifests, project structure, and `pom.xml` content for bad practices
 against separately-maintained guideline files and reports findings (it
-never opens a PR). All three use a model served by an external,
-configurable OpenAI-compatible endpoint (no GPU or in-cluster model
-serving on this branch) and a shared GitHub MCP server for code
-exploration. It is a simplified take on
+never opens a PR). All three (plus `catalog-gen-agent`) reach the model
+through the in-cluster OpenShift AI AI Gateway / Models-as-a-Service
+(no GPU or in-cluster vLLM serving on this branch — the gateway fronts
+an upstream OpenAI-compatible endpoint) and a shared GitHub MCP server
+for code exploration. It is a simplified take on
 [opendatahub-io/architecture-context](https://github.com/opendatahub-io/architecture-context).
 The three agents are fully independent — separate pods, UIs, and
 budgets; none of them trigger each other.
@@ -23,8 +24,9 @@ budgets; none of them trigger each other.
 > This is the `main` branch. The [`local-model`](../../tree/local-model)
 > branch preserves the original design where the model is served
 > in-cluster by vLLM on OpenShift AI (GPU required) — its own `AGENTS.md`
-> documents that architecture's conventions. Don't port vLLM/RHOAI/GPU
-> conventions from there back onto `main`.
+> documents that architecture's conventions. Don't port vLLM/GPU
+> serving conventions from there back onto `main`. AI Gateway / MaaS
+> (routing/governance only, no local weights) is intentional on `main`.
 
 Read [`README.md`](README.md) first for the full architecture diagram and
 component breakdown before making changes.
@@ -40,13 +42,14 @@ gitops/                 # ArgoCD App-of-Apps: bootstrap.sh is the entry point
 github-mcp-server/       # FastMCP server exposing GitHub repo browsing as MCP tools
 mcp-gateway/             # Connectivity Link MCP Gateway wiring (Gateway, AuthPolicy, registrations)
 ogx-mlflow-sidecar/      # MLflow sidecar image (Dockerfile + cluster build-and-deploy.sh)
+ai-gateway/              # MaaS/AI Gateway manifests (ExternalModel, Gateway, demo Postgres); applied by install-openshift-ai.sh
 doc-gen-agent/           # OGX sidecar (agentic loop) + Gradio UI — architecture docs & diagrams
 openapi-gen-agent/       # OGX sidecar (agentic loop) + Gradio UI — OpenAPI spec generation (independent)
 compliance-scan-agent/   # OGX sidecar (agentic loop) + Gradio UI — architectural compliance scan (independent, report-only)
 catalog-gen-agent/       # OGX sidecar (agentic loop) + Gradio UI — Backstage catalog-info.yaml generation
 governance-hub/          # FastAPI compliance dashboard + REST API
 compliance-mcp-server/   # Standalone, read-only Compliance MCP server (proxies governance-hub's REST API)
-install-openshift-ai.sh  # One-time: OpenShift AI + calls install-mcp-gateway.sh
+install-openshift-ai.sh  # Imperative RHOAI + calls install-mcp-gateway.sh + AI Gateway / MaaS bootstrap (run before GitOps)
 install-mcp-gateway.sh   # RHCL + MCP Gateway Operator; re-run to patch mcp_gateway_url
 build-and-deploy-all.sh  # Non-GitOps quick-start for the app components
 ```
@@ -159,16 +162,16 @@ governance-hub's storage layer instead of its public API.
   `DATABASE_PATH` env var), not a ConfigMap — it's a SQLite file that the
   app itself writes to, not a static file checked into git. Don't swap
   this for a ConfigMap/Secret-backed approach.
-- **Model identity must stay in sync across four files** when pointing
-  at a different model or endpoint: `doc-gen-agent/k8s/cluster-config.yaml`
-  (`model_base_url`, `model_name` — shared by all three agents), and
-  **each** agent's own `ogx/stack_run_config.yaml`
-  (`registered_resources.models[0].model_id`/`provider_model_id` in
-  `doc-gen-agent/ogx/stack_run_config.yaml`,
-  `openapi-gen-agent/ogx/stack_run_config.yaml`, AND
-  `compliance-scan-agent/ogx/stack_run_config.yaml`). The endpoint's API
-  key goes in the `external-model-credentials` Secret (created
-  out-of-band, never committed), not in any of those files.
+- **Model identity must stay in sync** when pointing at a different
+  model: `doc-gen-agent/k8s/cluster-config.yaml` (`model_base_url` =
+  in-cluster AI Gateway `/v1` Service URL, `model_name` =
+  `external-model/<id>` — shared by all four agents), **each** agent's
+  `ogx/stack_run_config.yaml` (`model_id` / `provider_model_id` = bare
+  id), and the `ExternalModel` / `MaaSModelRef` under `ai-gateway/k8s/`
+  (same bare id). The MaaS API key (`sk-oai-...`) goes in
+  `external-model-credentials` (minted by `install-openshift-ai.sh` or
+  set via `EXTERNAL_MODEL_API_KEY`); the upstream provider key stays in
+  `llm/workshop-model-api-key` from `UPSTREAM_MODEL_API_KEY`.
 - **OGX MLflow sidecar image** defaults to Quay: keep
   `cluster-config` `ogx_mlflow_sidecar_image` in sync with the
   `ogx-server` `image` field in all four agent `k8s/deployment.yaml`
@@ -207,10 +210,12 @@ governance-hub's storage layer instead of its public API.
 
 - Don't call an LLM API directly from `agent.py`/`app.py` — inference
   must always go through the OGX sidecar's `remote::vllm`-protocol
-  provider, configured to point at whatever external OpenAI-compatible
-  endpoint `cluster-config.yaml` specifies. The sidecar is the only
-  component that should talk to the model endpoint.
-- Don't reintroduce an in-cluster model-serving dependency (RHOAI
-  operator, KServe, vLLM `ServingRuntime`/`InferenceService`, GPU
-  resource requests) on `main` — that design lives on the `local-model`
-  branch. If a change needs it, it belongs on that branch instead.
+  provider, which talks to the OpenShift AI AI Gateway URL in
+  `cluster-config.yaml` (not the upstream provider). The sidecar is the
+  only agent component that should open an inference connection; the
+  gateway is the only path to the upstream model.
+- Don't reintroduce in-cluster model *serving* (vLLM
+  `ServingRuntime`/`InferenceService`, GPU resource requests) on `main`
+  — that design lives on the `local-model` branch. AI Gateway / MaaS
+  (routing and governance in front of an external endpoint) is expected
+  on `main`.

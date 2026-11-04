@@ -43,12 +43,12 @@ if [[ -n "${EXTERNAL_MODEL_API_KEY:-}" ]]; then
   oc create secret generic external-model-credentials --from-literal=api_key="${EXTERNAL_MODEL_API_KEY}" \
     -n "${NAMESPACE}" --dry-run=client -o yaml | oc apply -f -
 else
-  echo "==> \$EXTERNAL_MODEL_API_KEY not set — skipping secret creation (fine for endpoints that don't require auth)."
+  echo "==> \$EXTERNAL_MODEL_API_KEY not set — skipping secret creation (install-openshift-ai.sh should have minted a MaaS key into external-model-credentials)."
 fi
 
-echo "==> NOTE: edit k8s/cluster-config.yaml (model_base_url, model_name) and"
-echo "    ogx/stack_run_config.yaml (model_id/provider_model_id) to point at"
-echo "    your external OpenAI-compatible endpoint before/after this deploy."
+echo "==> NOTE: model_base_url in k8s/cluster-config.yaml should be the in-cluster"
+echo "    AI Gateway /v1 Service URL; EXTERNAL_MODEL_API_KEY is a MaaS sk-oai- key."
+echo "    Run UPSTREAM_MODEL_API_KEY=... ./install-openshift-ai.sh first."
 echo "==> MLflow OGX sidecar: default Quay (${OGX_MLFLOW_SIDECAR_IMAGE:-quay.io/mgrimald/ogx-mlflow-sidecar:latest})"
 echo "    Use OGX_MLFLOW_SIDECAR_MODE=cluster for in-cluster ImageStream build."
 

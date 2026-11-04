@@ -61,8 +61,12 @@ flowchart TB
         end
     end
 
+    subgraph rhoai [OpenShift AI]
+        AIGateway["AI Gateway / MaaS\nmaas-default-gateway"]
+    end
+
     subgraph external [External Infrastructure]
-        InferenceEndpoint["OpenAI-compatible\nInference Endpoint\n(configurable base URL)"]
+        InferenceEndpoint["Upstream OpenAI-compatible\nendpoint (ExternalProvider)"]
     end
 
     Browser -->|"repo URL"| DocGradio
@@ -72,9 +76,10 @@ flowchart TB
     ApiGradio -->|"Responses API"| ApiOGX
     DocOGX -->|"MCP tools via gateway"| MCPGateway
     ApiOGX -->|"MCP tools via gateway"| MCPGateway
+    DocOGX -->|"inference (MaaS key)"| AIGateway
+    ApiOGX -->|"inference (MaaS key)"| AIGateway
+    AIGateway -->|"upstream key"| InferenceEndpoint
     MCPGateway --> GitHubMCP
-    DocOGX -->|"inference (HTTPS)"| InferenceEndpoint
-    ApiOGX -->|"inference (HTTPS)"| InferenceEndpoint
     GitHubMCP -->|"GitHub API"| GitHub["github.com"]
     RHDH -->|"OIDC"| RHBK
     AppOfApps -->|deploys| GitHubMCP
@@ -94,11 +99,11 @@ user invokes:
    `get_repo_structure` (filtered file tree) on the GitHub MCP server
 3. Agent reads the ~15-20 most architecturally relevant files (README,
    entry points, manifests, Dockerfiles, k8s/CI configs)
-4. The configured model (served by an external OpenAI-compatible
-   endpoint — your own vLLM/Ollama deployment, OpenAI, an Azure OpenAI
-   gateway, etc.) synthesizes a structured architecture document:
-   overview, tech stack, components, data flow, external dependencies,
-   deployment, security
+4. The configured model (reached through the in-cluster OpenShift AI
+   AI Gateway / Models-as-a-Service, which fronts an upstream
+   OpenAI-compatible endpoint) synthesizes a structured architecture
+   document: overview, tech stack, components, data flow, external
+   dependencies, deployment, security
 5. The model generates three Mermaid C4 diagrams (context, container,
    component), embedded directly in the Markdown response
 6. Everything streams back into the chat UI
@@ -120,11 +125,15 @@ user invokes:
 
 - An OpenShift cluster, logged in as `cluster-admin` (`oc login`) —
   no GPU node required
-- **Red Hat OpenShift AI + MCP Gateway operators** — run
-  [`install-openshift-ai.sh`](install-openshift-ai.sh) imperatively
-  *before* `gitops/bootstrap.sh` / `build-and-deploy-all.sh`. That
-  script enables `mcplifecycleoperator` (so `github-mcp-server` /
-  `compliance-mcp-server` can deploy as `MCPServer` CRs) and then calls
+- **Red Hat OpenShift AI, installed with `mcplifecycleoperator` + MCP Gateway operators** and
+  AI Gateway / Models-as-a-Service enabled** (see
+  [`install-openshift-ai.sh`](install-openshift-ai.sh)) — run this
+  imperatively *before* `gitops/bootstrap.sh` /
+  `build-and-deploy-all.sh`. Pass `UPSTREAM_MODEL_API_KEY` so the script
+  can register the workshop `ExternalProvider` and mint a MaaS API key
+  into `external-model-credentials`. `github-mcp-server` and
+  `compliance-mcp-server` are deployed as `MCPServer` custom resources
+  (`k8s/mcpserver.yaml`, reconciled by this operator), and then calls
   [`install-mcp-gateway.sh`](install-mcp-gateway.sh) for Connectivity
   Link + the MCP Gateway Operator (Technology Preview;
   `MCPGatewayExtension` / `AuthPolicy` / virtual servers). Distinct from
@@ -136,10 +145,15 @@ user invokes:
   `X-Mcp-Virtualserver: mcp-gateway/github-tools`); REST
   (`/propose-doc`, `/repo-structure`) stays on the GitHub MCP Service.
   Gen AI Playground catalog entries keep the direct Service `/mcp` URLs
-  (that ConfigMap cannot present a rotating SA token).
-- An **external OpenAI-compatible inference endpoint** reachable from the
-  cluster: a base URL (e.g. `https://api.openai.com/v1`, or your own
-  vLLM/Ollama/gateway deployment) and, if required, an API key
+  (that ConfigMap cannot present a rotating SA token). The same
+  imperative-prerequisite pattern as the CI/CD pipeline's Tekton CRDs —
+  ArgoCD/`oc apply` can't create a custom resource before its CRD
+  exists. This also makes both servers visible under OpenShift AI's
+  AI Hub "Deployed MCP Servers" tab.
+- An **upstream OpenAI-compatible inference endpoint** reachable from the
+  cluster (registered as an `ExternalProvider` behind the AI Gateway) and
+  its API key (`UPSTREAM_MODEL_API_KEY`). Agents never call this URL
+  directly — they call the in-cluster gateway with a MaaS `sk-oai-` key.
 - `oc` CLI
 - This repo pushed to a git remote reachable by the cluster (GitHub,
   GitLab, or an internal git server) — ArgoCD needs to clone it
@@ -155,16 +169,19 @@ user invokes:
 ```bash
 git clone <your-fork-of-this-repo>
 cd agentic-doc-generation
+UPSTREAM_MODEL_API_KEY=sk-... ./install-openshift-ai.sh   # RHOAI + AI Gateway / MaaS
 ./gitops/bootstrap.sh
 ```
 
-This single command:
+`install-openshift-ai.sh` installs OpenShift AI (including AI Gateway /
+Models-as-a-Service), registers the upstream model, and mints a MaaS key
+into `external-model-credentials`. Then `gitops/bootstrap.sh`:
 
 1. Installs the OpenShift GitOps operator (if not already present) and
    waits for ArgoCD to come up
 2. Runs **`gitops/preflight.sh`** (checks MCPServer, AuthPolicy,
-   MCPGatewayExtension, and Tekton CRDs; warns on missing model/github
-   Secrets and OGX ConfigMaps)
+   MCPGatewayExtension, and Tekton CRDs; warns
+   on missing AI Gateway / model Secrets and OGX ConfigMaps)
 3. Applies **`gitops/argocd-namespace-rolebindings.yaml`** so the Argo CD
    application-controller can reconcile **`doc-gen-demo`**,
    **`ci-cd-demo`**, and **`mcp-gateway`** (required on OpenShift GitOps
@@ -373,31 +390,37 @@ bash developer-hub/build-and-deploy.sh     # waits for Keycloak, then brings up 
 
 ## Model configuration
 
-Both agents call whatever OpenAI-compatible endpoint you point them
-at — your own vLLM/Ollama deployment, a hosted provider like OpenAI, or
-an internal gateway. They share the same endpoint configuration, set in
-two places:
+All four agents call the **in-cluster OpenShift AI AI Gateway**
+(Models-as-a-Service). The gateway fronts an upstream OpenAI-compatible
+endpoint registered as `ExternalProvider` / `ExternalModel` under
+[`ai-gateway/k8s/`](ai-gateway/k8s/) (applied by
+[`install-openshift-ai.sh`](install-openshift-ai.sh)). Shared agent
+config lives in two places:
 
 | File | What to set |
 |---|---|
-| [`doc-gen-agent/k8s/cluster-config.yaml`](doc-gen-agent/k8s/cluster-config.yaml) | `data.model_base_url` (the endpoint's OpenAI-compatible `/v1` base URL) and `data.model_name` — read by **both** doc-gen-agent and openapi-gen-agent |
-| [`doc-gen-agent/ogx/stack_run_config.yaml`](doc-gen-agent/ogx/stack_run_config.yaml) and [`openapi-gen-agent/ogx/stack_run_config.yaml`](openapi-gen-agent/ogx/stack_run_config.yaml) | `registered_resources.models[0].model_id` / `provider_model_id` in **each** file (must match `model_name` above and the identifier your endpoint expects) |
+| [`doc-gen-agent/k8s/cluster-config.yaml`](doc-gen-agent/k8s/cluster-config.yaml) | `data.model_base_url` (in-cluster gateway `/v1` Service URL) and `data.model_name` (`external-model/<id>`) — shared by all four agents |
+| Each agent's `ogx/stack_run_config.yaml` | `registered_resources.models[0].model_id` / `provider_model_id` (bare id, must match `ExternalModel` name / `modelName`) |
+| [`ai-gateway/k8s/`](ai-gateway/k8s/) | `ExternalProvider`, `ExternalModel`, `MaaSModelRef`, subscription, and auth policy for the upstream model |
 
-If the endpoint requires an API key, create a Secret (not committed to
-git) — both agents' Deployments reference the same Secret name:
+The Secret holds a **MaaS** API key (`sk-oai-...`), not the upstream
+provider key. `install-openshift-ai.sh` mints one into
+`external-model-credentials` after MaaS is up; you can also create or
+override it yourself:
 
 ```bash
+# Optional override (bootstrap.sh also honors this env var):
+export EXTERNAL_MODEL_API_KEY=sk-oai-...
 oc create secret generic external-model-credentials \
-  --from-literal=api_key=<your-api-key> -n doc-gen-demo
+  --from-literal=api_key="${EXTERNAL_MODEL_API_KEY}" -n doc-gen-demo
 ```
 
-Both agents' `k8s/deployment.yaml` read this Secret optionally — leave it
-unset for endpoints that don't require auth.
+Upstream provider credentials stay in Secret `workshop-model-api-key` in
+namespace `llm` (from `UPSTREAM_MODEL_API_KEY`) — never committed.
 
 If using GitOps, commit and push the `cluster-config.yaml` /
 `stack_run_config.yaml` changes — ArgoCD's `selfHeal` will roll them out
-automatically. The Secret itself should never be committed; create it
-directly with `oc` as shown above.
+automatically. Secrets themselves should never be committed.
 
 ## Observability (MLflow tracing)
 
@@ -542,7 +565,8 @@ agentic-doc-generation/
 ├── mcp-gateway/                         # Connectivity Link MCP Gateway wiring (GitOps wave 0)
 │   └── k8s/                             # Gateway, extension, AuthPolicy, routes, registrations, virtual servers
 ├── build-and-deploy-all.sh              # Quick-start (non-GitOps) for app components
-├── install-openshift-ai.sh              # One-time: OpenShift AI + calls install-mcp-gateway.sh
+├── install-openshift-ai.sh              # One-time: OpenShift AI + AI Gateway/MaaS (needs UPSTREAM_MODEL_API_KEY) + calls install-mcp-gateway.sh
+├── ai-gateway/k8s/                      # Gateway, ExternalModel, subscription manifests (applied by install script)
 ├── install-mcp-gateway.sh               # RHCL + MCP Gateway Operator; re-run to patch mcp_gateway_url
 ├── generate-mcp-catalog-source.sh       # Regenerates mcp-catalog-source.yaml from every */mcp-catalog.yaml
 ├── register-mcp-catalog.sh              # Registers every */mcp-catalog-entry.yaml in the Gen AI Playground
@@ -832,5 +856,6 @@ server(s) already deployed in `doc-gen-demo`.
   cheap pre-filter, not authoritative — the agent's own system prompt
   re-confirms and bails out with `NOT_AN_API` if it disagrees, so a wrong
   heuristic trigger costs one extra bounded agent run, never a bogus PR.
-- Inference quality and latency depend entirely on the external endpoint
-  you configure — this repo does not provision or manage that endpoint.
+- Inference quality and latency depend on the upstream endpoint registered
+  behind the AI Gateway — this repo provisions the gateway and ExternalModel
+  wiring, not the upstream model weights or GPU serving.

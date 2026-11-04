@@ -5,10 +5,9 @@ Given a GitHub repository URL, explore it via the shared GitHub MCP server
 and generate (or augment) a Backstage `catalog-info.yaml` — a Component
 entity with correct metadata/annotations/tags plus any API entities the
 repo's code actually evidences (REST/OpenAPI, gRPC, GraphQL, AsyncAPI) —
-synthesized by a model served via a configurable external OpenAI-compatible
-endpoint (base url + API key set via the shared cluster-config ConfigMap
-and the external-model-credentials Secret — no in-cluster model serving or
-GPU required).
+synthesized by a model reached via the in-cluster OpenShift AI AI Gateway
+(base URL + MaaS API key set via the shared cluster-config ConfigMap and
+the external-model-credentials Secret — no in-cluster vLLM / GPU required).
 
 This is the fourth, independent agent in this repo (alongside doc-gen-agent,
 openapi-gen-agent, and compliance-scan-agent): it helps when a repo is
@@ -22,7 +21,7 @@ Uses the OGX Responses API (server-side agentic loop) instead of
 LangChain/LangGraph, matching the pattern from the other three agents. The
 OGX server runs as a sidecar container in the same pod and handles:
   - Tool calls to the GitHub MCP server
-  - Inference via the external OpenAI-compatible endpoint
+  - Inference via the OpenShift AI AI Gateway
 """
 
 from __future__ import annotations

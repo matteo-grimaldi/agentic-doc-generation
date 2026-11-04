@@ -1,0 +1,10 @@
+# Model namespace for ExternalProvider / ExternalModel / MaaSModelRef.
+# Labeled so HTTPRoutes can attach to maas-default-gateway.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: llm
+  labels:
+    maas.opendatahub.io/gateway-access: "true"
+    app.kubernetes.io/part-of: agentic-doc-generation

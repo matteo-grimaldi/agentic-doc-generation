@@ -49,12 +49,12 @@ spec:
                   key: model_base_url
             - name: INFERENCE_MAX_TOKENS
               value: "8192"
-            # API key for the external OpenAI-compatible endpoint. Create
-            # the Secret with:
+            # MaaS API key (sk-oai-...) for the in-cluster AI Gateway.
+            # install-openshift-ai.sh mints one, or create with:
             #   oc create secret generic external-model-credentials \
-            #     --from-literal=api_key=<your-api-key> -n doc-gen-demo
-            # Optional — leave the Secret absent for endpoints that don't
-            # require auth; stack_run_config.yaml falls back to "unused".
+            #     --from-literal=api_key=sk-oai-... -n doc-gen-demo
+            # Optional only if you override; MaaS normally requires a key.
+            # stack_run_config.yaml falls back to "unused" if absent.
             - name: INFERENCE_API_KEY
               valueFrom:
                 secretKeyRef:

@@ -1,0 +1,21 @@
+# Token quota for the demo agents group. Both this and MaaSAuthPolicy are
+# required (subscription alone → 403; auth alone → 429).
+---
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSSubscription
+metadata:
+  name: doc-gen-agents
+  namespace: models-as-a-service
+  labels:
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  owner:
+    groups:
+      - name: doc-gen-agents
+    users: []
+  modelRefs:
+    - name: qwen38-27b
+      namespace: llm
+      tokenRateLimits:
+        - limit: 2000000
+          window: 1h

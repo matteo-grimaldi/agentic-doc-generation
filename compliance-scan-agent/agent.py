@@ -5,16 +5,15 @@ Given a GitHub repository URL, scan it for architectural bad practices in
 three areas — Kubernetes/OpenShift manifests, overall project structure,
 and (for Java projects) pom.xml content — against a small set of
 separately-maintained guideline Markdown files, and produce a structured
-compliance report, synthesized by a model served via a configurable
-external OpenAI-compatible endpoint (base URL + API key set via
-compliance-scan-agent/k8s/cluster-config.yaml, shared with doc-gen-agent,
-and the external-model-credentials Secret — no in-cluster model serving
-or GPU required).
+compliance report, synthesized by a model reached via the in-cluster
+OpenShift AI AI Gateway (base URL + MaaS API key set via the shared
+cluster-config ConfigMap and external-model-credentials Secret — no
+in-cluster vLLM / GPU required).
 
 This is a third, independent counterpart to doc-gen-agent and
 openapi-gen-agent: it was split out as its own component so compliance
 scanning can be deployed, scaled, and iterated on separately. It shares
-the same GitHub MCP server and (by default) the same external model
+the same GitHub MCP server and (by default) the same AI Gateway
 endpoint, but has its own pod, its own budget, and its own PR-free
 reporting path (this agent never opens a PR — it only reports findings
 back to the Governance Hub for a human to act on).
@@ -24,7 +23,7 @@ LangChain/LangGraph, matching the pattern from doc-gen-agent /
 openapi-gen-agent. The OGX server runs as a sidecar container in the same
 pod and handles:
   - Tool calls to the GitHub MCP server
-  - Inference via the external OpenAI-compatible endpoint
+  - Inference via the OpenShift AI AI Gateway
 """
 
 from __future__ import annotations

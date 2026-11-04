@@ -5,23 +5,22 @@ Given a GitHub repository URL, decide whether it looks like an HTTP API
 service that doesn't already ship an OpenAPI/Swagger spec, and if so,
 explore its structure and source files via the GitHub MCP server and
 produce an OpenAPI 3.0.x specification (YAML), synthesized by a model
-served via a configurable external OpenAI-compatible endpoint (base URL +
-API key set via openapi-gen-agent/k8s/cluster-config.yaml and the
-external-model-credentials Secret — no in-cluster model serving or GPU
-required).
+reached via the in-cluster OpenShift AI AI Gateway (base URL + MaaS API
+key set via the shared cluster-config ConfigMap and
+external-model-credentials Secret — no in-cluster vLLM / GPU required).
 
 This is the independent counterpart to doc-gen-agent: it was split out of
 that component so OpenAPI spec generation can be deployed, scaled, and
 iterated on separately from architecture-documentation generation. It
-shares the same GitHub MCP server and (by default) the same external
-model endpoint, but has its own pod, its own budget, and its own PR.
+shares the same GitHub MCP server and (by default) the same AI Gateway
+endpoint, but has its own pod, its own budget, and its own PR.
 
 Uses the OGX Responses API (server-side agentic loop) instead of
 LangChain/LangGraph, matching the pattern from doc-gen-agent / the
 ocp-troubleshooter-demo. The OGX server runs as a sidecar container in
 the same pod and handles:
  - Tool calls to the GitHub MCP server
- - Inference via the external OpenAI-compatible endpoint
+ - Inference via the OpenShift AI AI Gateway
 """
 
 from __future__ import annotations
