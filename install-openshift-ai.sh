@@ -580,6 +580,8 @@ if [[ -n "${AUTHORINO_NS}" ]]; then
       security.opendatahub.io/authorino-tls-bootstrap="true" --overwrite >/dev/null
     echo "    Annotated mcp-gateway for Envoy↔Authorino TLS (MCP TokenReview auth)."
   fi
+  echo "==> Applying MaaS Gateway Authorino upstream TLS EnvoyFilter..."
+  oc apply -f "${AI_GATEWAY_DIR}/maas-gateway-authorino-tls-envoyfilter.yaml"
 else
   echo "warning: Authorino CR not found yet — TLS bootstrap skipped; re-run after Kuadrant reconciles."
 fi
