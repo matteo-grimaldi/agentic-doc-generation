@@ -14,6 +14,11 @@ demo identity is allowed and the budgets are too high to trip.
 - Secret `external-model-credentials` in `doc-gen-demo` (MaaS `sk-oai-` key).
 - Gateway `maas-default-gateway` Programmed; MCP Gateway Programmed.
 
+Model and MCP probes both go through `oc port-forward` to the **in-cluster**
+Gateway Services (same hosts the agents use). Do not curl the public
+`maas.apps.*` hostname — on workshop clusters that listener is often
+`LoadBalancerPending` / DNS-not-ready and returns an HTML **503**.
+
 ## Talk order
 
 Run from the repo root (or from this directory):
