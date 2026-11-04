@@ -30,15 +30,12 @@
 #   # or via: ./install-openshift-ai.sh
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib-demo-agents.sh
+source "${SCRIPT_DIR}/scripts/lib-demo-agents.sh"
+
 MCP_SYSTEM_NS="${MCP_SYSTEM_NS:-mcp-gateway}"
-DEMO_NS="${DEMO_NS:-doc-gen-demo}"
 MCP_GATEWAY_AUDIENCE="${MCP_GATEWAY_AUDIENCE:-mcp-gateway}"
-AGENT_DEPLOYMENTS=(
-  doc-gen-agent
-  openapi-gen-agent
-  catalog-gen-agent
-  compliance-scan-agent
-)
 
 fail() {
   echo "error: $*" >&2
@@ -327,19 +324,8 @@ if oc get gateway mcp-gateway -n "${MCP_SYSTEM_NS}" >/dev/null 2>&1; then
   fi
   echo "    MCP gateway URL: ${mcp_url} (audience ${MCP_GATEWAY_AUDIENCE})"
 
-  if oc get configmap cluster-config -n "${DEMO_NS}" >/dev/null 2>&1; then
-    oc patch configmap cluster-config -n "${DEMO_NS}" --type=merge \
-      -p "{\"data\":{\"mcp_gateway_url\":\"${mcp_url}\"}}"
-    echo "    Patched configmap/cluster-config mcp_gateway_url."
-
-    for dep in "${AGENT_DEPLOYMENTS[@]}"; do
-      if oc get deployment "${dep}" -n "${DEMO_NS}" >/dev/null 2>&1; then
-        oc rollout restart "deployment/${dep}" -n "${DEMO_NS}"
-        echo "    Restarted deployment/${dep}."
-      fi
-    done
-  else
-    echo "    configmap/cluster-config not in ${DEMO_NS} yet — re-run this script after GitOps syncs doc-gen-agent."
+  if patch_cluster_config_data "${DEMO_NS}" "{\"data\":{\"mcp_gateway_url\":\"${mcp_url}\"}}"; then
+    restart_demo_agent_deployments "${DEMO_NS}"
   fi
 else
   echo "    Gateway mcp-gateway not found yet (expected before first GitOps sync)."

@@ -19,6 +19,11 @@ metadata:
     security.opendatahub.io/authorino-tls-bootstrap: "true"
 spec:
   gatewayClassName: openshift-default
+  infrastructure:
+    parametersRef:
+      group: ""
+      kind: ConfigMap
+      name: maas-default-gateway-options
   listeners:
     - name: https
       hostname: "maas.__CLUSTER_DOMAIN__"
@@ -35,4 +40,22 @@ spec:
         certificateRefs:
           - group: ""
             kind: Secret
-            name: router-certs-default
+            name: maas-default-gateway-service-tls
+    # In-cluster agents (cluster-config model_base_url) TLS SNI must match
+    # this hostname — same pattern as mcp-gateway's Service FQDN listener.
+    - name: https-incluster
+      hostname: "maas-default-gateway-openshift-default.openshift-ingress.svc.cluster.local"
+      port: 443
+      protocol: HTTPS
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              maas.opendatahub.io/gateway-access: "true"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - group: ""
+            kind: Secret
+            name: maas-default-gateway-service-tls

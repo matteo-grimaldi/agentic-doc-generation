@@ -63,8 +63,9 @@ cluster-admin prerequisites applied by the install script.
 `./install-mcp-gateway.sh` (Connectivity Link + MCP Gateway Operator)
 before GitOps syncs `gitops/apps/mcp-gateway.yaml`. Re-run
 `./install-mcp-gateway.sh` alone after the Gateway is Programmed to
-patch `cluster-config` `mcp_gateway_url` (the doc-gen-agent Application
-`ignoreDifferences` that key). DataScienceCluster `aigateway` is the
+patch `cluster-config` `mcp_gateway_url` and `model_base_url` (the
+doc-gen-agent Application `ignoreDifferences` covers both keys for all
+four agents that share cluster-config). DataScienceCluster `aigateway` is the
 model gateway and stays `Removed`.
 
 If you add a resource that depends on another wave's output (a CRD, a
