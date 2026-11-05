@@ -104,7 +104,15 @@ def main() -> None:
     ).strip()
 
     # Import and configure before uvicorn loads OGX (and its OpenAI client).
-    from mlflow_telemetry import configure_mlflow
+    from mlflow_telemetry import (
+        configure_mlflow,
+        install_openai_chat_completions_hooks,
+    )
+
+    # Patch chat.completions.create *before* autolog so autolog wraps our
+    # hooks and they run inside the LLM span (include_usage + prompt link).
+    if (os.getenv("MLFLOW_TRACKING_URI") or "").strip():
+        install_openai_chat_completions_hooks()
 
     enabled = configure_mlflow(
         service_name=service_name,

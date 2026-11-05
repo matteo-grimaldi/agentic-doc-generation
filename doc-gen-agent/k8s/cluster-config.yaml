@@ -59,6 +59,10 @@ data:
   # (one trace row per model call). Set "true" only with ogx_mlflow_app middleware
   # to nest LLM spans under the Gradio agent trace (Chat tab may differ).
   mlflow_ogx_trace_propagation: "false"
+  # LLM USD rates live in the MLflow Model Registry (not this ConfigMap).
+  # Seed / update with ./register-llm-pricing.py — agents read
+  # input_usd_per_million / output_usd_per_million tags from the Registered
+  # Model named after model_name with "/" replaced by "--".
   ogx_mlflow_sidecar_image: "quay.io/mgrimald/ogx-mlflow-sidecar:latest"
   # mcp_gateway_url is patched live by ./install-mcp-gateway.sh once the
   # Gateway is Programmed (Argo CD ignoreDifferences on the doc-gen-agent

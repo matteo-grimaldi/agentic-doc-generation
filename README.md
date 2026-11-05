@@ -431,8 +431,8 @@ OpenShift AI MLflow tracking server provisioned by
 
 | Layer | What is traced |
 |---|---|
-| Gradio agent process | Root `run_agent()` AGENT span; MCP tool calls as child TOOL spans; one UUID per run as MLflow **Session** (`mlflow.trace.session`); sends `X-Mlflow-Trace-Session` (and optional W3C `traceparent`) to OGX |
-| OGX sidecar (`ogx-mlflow-sidecar` image) | [`start_ogx.py`](ogx-mlflow-sidecar/start_ogx.py) calls `mlflow.openai.autolog()` before the OGX app; middleware applies the run Session to sidecar traces. Default `mlflow_ogx_trace_propagation: "false"` keeps **one Chat-tab trace per LLM call** (separate trace IDs, same Session) |
+| Gradio agent process | Root `run_agent()` AGENT span; MCP tool calls as child TOOL spans; one UUID per run as MLflow **Session** (`mlflow.trace.session`); registers `{agent}-instructions` in the Prompt Registry and links it on the AGENT trace; sends `X-Mlflow-Trace-Session`, prompt name/version, and optional W3C `traceparent` to OGX |
+| OGX sidecar (`ogx-mlflow-sidecar` image) | [`start_ogx.py`](ogx-mlflow-sidecar/start_ogx.py) installs chat.completions hooks (force `stream_options.include_usage`) then `mlflow.openai.autolog()`; middleware applies Session + prompt headers; a span processor writes token usage and (when rates are set) cost attributes for Overview charts. Default `mlflow_ogx_trace_propagation: "false"` keeps **one Chat-tab trace per LLM call** (separate trace IDs, same Session) |
 
 Each agent pod runs the **`ogx-mlflow-sidecar`** container image (MLflow autolog +
 [`start_ogx.py`](ogx-mlflow-sidecar/start_ogx.py) entrypoint). There are two ways to
@@ -494,12 +494,41 @@ with metadata key `mlflow.trace.session` equal to that UUID to inspect one run.
 under the AGENT trace ID (propagation on) vs stay separate Chat-tab traces
 (propagation off, the default)—not Session grouping.
 
-**Smoke test.** After setting the URI and rebuilding/rolling agents (and
-republishing `ogx-mlflow-sidecar` when middleware/entrypoint changed): run
+**Cost charts.** The model id (`external-model/qwen38-27b`) is not in
+MLflow's built-in price catalog. Pricing lives in the **MLflow Model
+Registry** (one place for all agents), not in `cluster-config` or agent
+Deployments. Register USD-per-1M rates as tags on a Registered Model named
+after `model_name` with `/` → `--` (e.g. `external-model--qwen38-27b`):
+
+```bash
+# Reads model_name + tracking URI from cluster-config; auto port-forwards
+# when mlflow_tracking_uri is *.svc.cluster.local (typical from a laptop)
+./register-llm-pricing.py --from-cluster \
+  --input-usd-per-million 0.15 \
+  --output-usd-per-million 0.60
+```
+
+The sidecar span processor reads those tags (cached ~5 minutes) and writes
+span attributes (`mlflow.llm.cost`, OpenInference `llm.usage.*`) plus trace
+metadata `mlflow.trace.cost` (needed for Overview **Cost breakdown** /
+**Cost over time** on self-hosted OpenShift AI MLflow — the SDK only
+auto-aggregates cost for Databricks/SageMaker URIs). Skip the script to keep
+cost widgets blank (token usage can still appear once streaming usage is on).
+Rebuild/roll `ogx-mlflow-sidecar` after changing this code.
+
+**Linked prompts.** Each agent registers its `instructions` string as
+`{agent}-instructions` (alias `production`) and links that version on the
+AGENT and sidecar LLM traces. The MLflow **Prompt** column shows the name and
+version; the Chat tab still shows the raw messages from openai.autolog.
+
+**Smoke test.** After setting the URI (and registering rates, if you want
+cost charts) and rebuilding/rolling **both** agent images and
+`ogx-mlflow-sidecar` (Quay push or `OGX_MLFLOW_SIDECAR_MODE=cluster`): run
 one agent against a small repo, open the OpenShift AI MLflow UI, select
-workspace `doc-gen-demo`, open that agent's experiment, and confirm the AGENT
-trace and sidecar Chat traces share the same **Session** value, with MCP tool
-spans under the agent process.
+workspace `doc-gen-demo`, open that agent's experiment, and confirm
+(1) AGENT + sidecar Chat traces share the same **Session**, (2) the
+**Prompt** column shows `{agent}-instructions`, and (3) with registry
+rates set, Overview cost widgets are non-empty after the run.
 
 ## Project structure
 
@@ -569,6 +598,7 @@ agentic-doc-generation/
 ├── ai-gateway/k8s/                      # Gateway, ExternalModel, subscription manifests (applied by install script)
 ├── install-mcp-gateway.sh               # RHCL + MCP Gateway Operator; re-run to patch mcp_gateway_url
 ├── generate-mcp-catalog-source.sh       # Regenerates mcp-catalog-source.yaml from every */mcp-catalog.yaml
+├── register-llm-pricing.py              # Seed MLflow Model Registry USD rates for cost charts
 ├── register-mcp-catalog.sh              # Registers every */mcp-catalog-entry.yaml in the Gen AI Playground
 ├── mcp-catalog-source.yaml              # GENERATED — import into the AI Hub MCP Catalog
 └── README.md
