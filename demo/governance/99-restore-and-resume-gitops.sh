@@ -9,6 +9,7 @@ require_oc
 demo_banner "99 — Restore permissive policies + resume GitOps"
 
 stop_mcp_port_forward
+stop_maas_port_forward
 
 demo_step "Re-apply permissive MaaS + MCP baselines"
 apply_manifest "${AI_GATEWAY_DIR}/maas-auth-policy.yaml"

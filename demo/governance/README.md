@@ -1,5 +1,9 @@
 # Governance demo — Authorino and Limitador
 
+Before the mutate-and-probe acts below, run the read-only wiring tour in
+[`demo/gateways/`](../gateways/) — it walks how agents reach AI Gateway /
+MCP Gateway and how access + cost limits are configured (no applies).
+
 Screen-share runbook. Each script prints the YAML it applies, applies it,
 then curls the model or MCP gateway and prints **only** the HTTP status
 and a short body snippet. Tokens and API keys are never echoed.
@@ -13,6 +17,11 @@ demo identity is allowed and the budgets are too high to trip.
 - `oc` logged in as a user that can patch MaaS and MCP gateway objects.
 - Secret `external-model-credentials` in `doc-gen-demo` (MaaS `sk-oai-` key).
 - Gateway `maas-default-gateway` Programmed; MCP Gateway Programmed.
+
+Model and MCP probes both go through `oc port-forward` to the **in-cluster**
+Gateway Services (same hosts the agents use). Do not curl the public
+`maas.apps.*` hostname — on workshop clusters that listener is often
+`LoadBalancerPending` / DNS-not-ready and returns an HTML **503**.
 
 ## Talk order
 

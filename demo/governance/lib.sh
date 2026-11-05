@@ -21,6 +21,13 @@ MCP_PF_PID_FILE="${DEMO_DIR}/.mcp-port-forward.pid"
 MCP_VIRTUAL_SERVER="${MCP_VIRTUAL_SERVER:-mcp-gateway/github-tools}"
 MODEL_ID="${MODEL_ID:-qwen38-27b}"
 
+# Model probes use the in-cluster MaaS Gateway Service (same host as
+# cluster-config model_base_url). The public maas.apps.* listener is often
+# LoadBalancerPending / DNSNotReady on workshop clusters and returns HTML 503.
+MAAS_LOCAL_PORT="${MAAS_LOCAL_PORT:-18443}"
+MAAS_PF_PID_FILE="${DEMO_DIR}/.maas-port-forward.pid"
+MAAS_GATEWAY_NS="${MAAS_GATEWAY_NS:-openshift-ingress}"
+
 TRUSTED_SA="${TRUSTED_SA:-doc-gen-agent-sa}"
 UNTRUSTED_SA="${UNTRUSTED_SA:-demo-untrusted}"
 UNTRUSTED_SA_NS="${UNTRUSTED_SA_NS:-${MCP_NS}}"
@@ -100,15 +107,32 @@ require_oc() {
   }
 }
 
-maas_hostname() {
+# Public apps hostname — informational only; do not probe with it.
+maas_public_hostname() {
+  oc get gateway maas-default-gateway -n "${MAAS_GATEWAY_NS}" \
+    -o jsonpath='{.spec.listeners[?(@.name=="https")].hostname}' 2>/dev/null || true
+}
+
+# In-cluster listener hostname — matches agents' cluster-config model_base_url.
+maas_incluster_hostname() {
   local host
-  host="$(oc get gateway maas-default-gateway -n openshift-ingress \
-    -o jsonpath='{.spec.listeners[?(@.name=="https")].hostname}' 2>/dev/null || true)"
+  host="$(oc get gateway maas-default-gateway -n "${MAAS_GATEWAY_NS}" \
+    -o jsonpath='{.spec.listeners[?(@.name=="https-incluster")].hostname}' 2>/dev/null || true)"
   if [[ -z "${host}" ]]; then
-    echo "error: could not read MaaS Gateway https hostname" >&2
-    exit 1
+    host="maas-default-gateway-openshift-default.openshift-ingress.svc.cluster.local"
   fi
   printf '%s' "${host}"
+}
+
+maas_svc_name() {
+  local svc
+  svc="$(oc get svc -n "${MAAS_GATEWAY_NS}" \
+    -l gateway.networking.k8s.io/gateway-name=maas-default-gateway \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  if [[ -z "${svc}" ]]; then
+    svc="maas-default-gateway-openshift-default"
+  fi
+  printf '%s' "${svc}"
 }
 
 maas_api_key() {
@@ -120,6 +144,60 @@ maas_api_key() {
     exit 1
   fi
   printf '%s' "${key}"
+}
+
+_tcp_port_open() {
+  local port="$1"
+  # Plain TCP only — do not HTTPS-probe 127.0.0.1 without the in-cluster
+  # SNI; that can reset Envoy and kill oc port-forward.
+  (echo >/dev/tcp/127.0.0.1/"${port}") >/dev/null 2>&1
+}
+
+_maas_pf_ready() {
+  _tcp_port_open "${MAAS_LOCAL_PORT}"
+}
+
+start_maas_port_forward() {
+  local svc pid
+  svc="$(maas_svc_name)"
+  if [[ -f "${MAAS_PF_PID_FILE}" ]]; then
+    pid="$(cat "${MAAS_PF_PID_FILE}" 2>/dev/null || true)"
+    if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null && _maas_pf_ready; then
+      return 0
+    fi
+    stop_maas_port_forward
+  fi
+  demo_step "Port-forward ${MAAS_GATEWAY_NS}/svc/${svc} → localhost:${MAAS_LOCAL_PORT}"
+  oc port-forward -n "${MAAS_GATEWAY_NS}" "svc/${svc}" "${MAAS_LOCAL_PORT}:443" \
+    >/dev/null 2>&1 &
+  echo $! >"${MAAS_PF_PID_FILE}"
+  local i
+  for i in $(seq 1 20); do
+    pid="$(cat "${MAAS_PF_PID_FILE}" 2>/dev/null || true)"
+    if [[ -z "${pid}" ]] || ! kill -0 "${pid}" 2>/dev/null; then
+      sleep 0.3
+      continue
+    fi
+    if _maas_pf_ready; then
+      return 0
+    fi
+    sleep 0.3
+  done
+  echo "error: MaaS port-forward failed to become ready on :${MAAS_LOCAL_PORT}" >&2
+  stop_maas_port_forward
+  exit 1
+}
+
+stop_maas_port_forward() {
+  if [[ -f "${MAAS_PF_PID_FILE}" ]]; then
+    local pid
+    pid="$(cat "${MAAS_PF_PID_FILE}" 2>/dev/null || true)"
+    if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+      kill "${pid}" 2>/dev/null || true
+      wait "${pid}" 2>/dev/null || true
+    fi
+    rm -f "${MAAS_PF_PID_FILE}"
+  fi
 }
 
 ensure_untrusted_sa() {
@@ -158,30 +236,38 @@ mcp_listener_host() {
   printf '%s' "${host}"
 }
 
+_mcp_pf_ready() {
+  _tcp_port_open "${MCP_LOCAL_PORT}"
+}
+
 start_mcp_port_forward() {
-  local svc
+  local svc pid
   svc="$(mcp_svc_name)"
-  stop_mcp_port_forward
+  if [[ -f "${MCP_PF_PID_FILE}" ]]; then
+    pid="$(cat "${MCP_PF_PID_FILE}" 2>/dev/null || true)"
+    if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null && _mcp_pf_ready; then
+      return 0
+    fi
+    stop_mcp_port_forward
+  fi
   demo_step "Port-forward ${MCP_NS}/svc/${svc} → localhost:${MCP_LOCAL_PORT}"
   oc port-forward -n "${MCP_NS}" "svc/${svc}" "${MCP_LOCAL_PORT}:8080" \
     >/dev/null 2>&1 &
   echo $! >"${MCP_PF_PID_FILE}"
-  # Wait until the local port accepts connections.
   local i
-  for i in 1 2 3 4 5 6 7 8 9 10; do
-    if curl -sS -o /dev/null --connect-timeout 1 "http://127.0.0.1:${MCP_LOCAL_PORT}/" 2>/dev/null \
-      || true; then
-      # Even a refused-with-connection-reset after accept means PF is up;
-      # prefer a short sleep then continue.
-      :
+  for i in $(seq 1 20); do
+    pid="$(cat "${MCP_PF_PID_FILE}" 2>/dev/null || true)"
+    if [[ -z "${pid}" ]] || ! kill -0 "${pid}" 2>/dev/null; then
+      sleep 0.3
+      continue
     fi
-    if kill -0 "$(cat "${MCP_PF_PID_FILE}")" 2>/dev/null; then
-      sleep 1
+    if _mcp_pf_ready; then
       return 0
     fi
-    sleep 0.5
+    sleep 0.3
   done
-  echo "error: MCP port-forward failed to start" >&2
+  echo "error: MCP port-forward failed to become ready on :${MCP_LOCAL_PORT}" >&2
+  stop_mcp_port_forward
   exit 1
 }
 
@@ -210,28 +296,37 @@ _print_http_result() {
   local status="$2"
   local body="$3"
   local snippet
-  snippet="$(printf '%s' "${body}" | tr '\n' ' ' | cut -c1-200)"
   DEMO_LAST_HTTP_STATUS="${status}"
   echo
   echo "[${label}] HTTP ${status}"
-  if [[ -n "${snippet}" ]]; then
-    echo "[${label}] body: ${snippet}"
+  if [[ -z "${body}" ]]; then
+    return 0
   fi
+  # Router HTML 503s are noisy — summarize instead of dumping CSS.
+  if printf '%s' "${body}" | grep -qiE '<html|font-family'; then
+    echo "[${label}] body: (HTML error page — usually wrong hostname / gateway not ready)"
+    return 0
+  fi
+  snippet="$(printf '%s' "${body}" | tr '\n' ' ' | cut -c1-200)"
+  echo "[${label}] body: ${snippet}"
 }
 
 call_model() {
   local label="${1:-model}"
-  local host key url
-  host="$(maas_hostname)"
+  local host key
+  host="$(maas_incluster_hostname)"
   key="$(maas_api_key)"
-  url="https://${host}/v1/chat/completions"
+  start_maas_port_forward
 
   local tmp_body tmp_code
   tmp_body="$(mktemp)"
   tmp_code="$(mktemp)"
 
+  # --resolve forces SNI/Host to the in-cluster listener while talking to
+  # the local port-forward (same path agents use via model_base_url).
   curl -sS -k -o "${tmp_body}" -w '%{http_code}' \
-    -X POST "${url}" \
+    --resolve "${host}:${MAAS_LOCAL_PORT}:127.0.0.1" \
+    -X POST "https://${host}:${MAAS_LOCAL_PORT}/v1/chat/completions" \
     -H "Authorization: Bearer ${key}" \
     -H "Content-Type: application/json" \
     -d "{\"model\":\"${MODEL_ID}\",\"max_tokens\":16,\"messages\":[{\"role\":\"user\",\"content\":\"Say hi in three words.\"}]}" \
