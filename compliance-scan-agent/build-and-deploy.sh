@@ -6,10 +6,10 @@
 # demo.
 #
 # This component shares the cluster-config ConfigMap and
-# external-model-credentials Secret with doc-gen-agent/openapi-gen-agent
-# (same external OpenAI-compatible endpoint) — this script applies
-# cluster-config.yaml from doc-gen-agent/k8s/ too, so it works even if run
-# before/without doc-gen-agent/build-and-deploy.sh.
+# external-model-credentials Secret with the other agents (same in-cluster
+# AI Gateway) — this script applies cluster-config.yaml from
+# doc-gen-agent/k8s/ too, so it works even if run before/without
+# doc-gen-agent/build-and-deploy.sh.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -50,12 +50,12 @@ if [[ -n "${EXTERNAL_MODEL_API_KEY:-}" ]]; then
   oc create secret generic external-model-credentials --from-literal=api_key="${EXTERNAL_MODEL_API_KEY}" \
     -n "${NAMESPACE}" --dry-run=client -o yaml | oc apply -f -
 else
-  echo "==> \$EXTERNAL_MODEL_API_KEY not set — skipping secret creation (fine for endpoints that don't require auth)."
+  echo "==> \$EXTERNAL_MODEL_API_KEY not set — skipping secret creation (install-openshift-ai.sh should have minted a MaaS key into external-model-credentials)."
 fi
 
-echo "==> NOTE: edit doc-gen-agent/k8s/cluster-config.yaml (model_base_url, model_name) and"
-echo "    ogx/stack_run_config.yaml (model_id/provider_model_id) to point at"
-echo "    your external OpenAI-compatible endpoint before/after this deploy."
+echo "==> NOTE: model_base_url in doc-gen-agent/k8s/cluster-config.yaml should be the"
+echo "    in-cluster AI Gateway /v1 Service URL; EXTERNAL_MODEL_API_KEY is a MaaS sk-oai- key."
+echo "    Run UPSTREAM_MODEL_API_KEY=... ./install-openshift-ai.sh first."
 
 echo "==> Building image with OpenShift BuildConfig (binary build)..."
 oc project "${NAMESPACE}" >/dev/null

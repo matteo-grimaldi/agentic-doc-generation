@@ -1,0 +1,28 @@
+# Limitador budget on the MCP Gateway listener. 10000 requests / 1h is the
+# governance demo's open budget — high enough that agent tool traffic and
+# screen-share curls never trip it. Demo scripts under demo/governance/
+# temporarily tighten this to show a 429.
+#
+# Authentication stays in AuthPolicy mcp-gateway-tokenreview; this policy
+# only caps request volume. defaults.limits is the Gateway-target shape
+# (mutually exclusive with top-level limits).
+apiVersion: kuadrant.io/v1
+kind: RateLimitPolicy
+metadata:
+  name: mcp-gateway-budget
+  namespace: mcp-gateway
+  labels:
+    app.kubernetes.io/name: mcp-gateway
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: mcp-gateway
+    sectionName: mcp
+  defaults:
+    limits:
+      mcp-open-budget:
+        rates:
+          - limit: 10000
+            window: 1h

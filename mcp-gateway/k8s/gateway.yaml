@@ -13,6 +13,12 @@
 #                  …). A single precise listener hostname rejects those
 #                  routes (NoMatchingListenerHostname).
 # kuadrant.io/gateway enables RHCL policy attachment.
+#
+# Authorino upstream TLS for Kuadrant TokenReview: apply
+# mcp-gateway/k8s/authorino-tls-envoyfilter.yaml (install-mcp-gateway.sh).
+# Do NOT set security.opendatahub.io/authorino-tls-bootstrap on this Gateway —
+# ODH attaches llminferenceservice AuthPolicy mcp-gateway-authn and breaks MCP
+# tool calls (401 authorization_required on github-mcp-server.mcp.local).
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:

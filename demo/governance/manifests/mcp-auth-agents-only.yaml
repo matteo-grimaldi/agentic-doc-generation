@@ -1,0 +1,36 @@
+# Demo overlay: TokenReview plus an Authorino authorization allowlist.
+# Only the four agent ServiceAccounts in doc-gen-demo pass; the demo's
+# untrusted ServiceAccount (mcp-gateway/demo-untrusted) gets 403.
+# Scripts re-apply mcp-gateway/k8s/auth-policy.yaml to restore.
+#
+# Identity path uses the TokenReview shape Authorino exposes
+# (auth.identity.user.username). Agents keep working during this act.
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: mcp-gateway-tokenreview
+  namespace: mcp-gateway
+  labels:
+    app.kubernetes.io/name: mcp-gateway
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: mcp-gateway
+    sectionName: mcp
+  rules:
+    authentication:
+      k8s-token:
+        kubernetesTokenReview:
+          audiences:
+            - mcp-gateway
+    authorization:
+      agents-only:
+        patternMatching:
+          patterns:
+            - predicate: >-
+                auth.identity.user.username == 'system:serviceaccount:doc-gen-demo:doc-gen-agent-sa'
+                || auth.identity.user.username == 'system:serviceaccount:doc-gen-demo:openapi-gen-agent-sa'
+                || auth.identity.user.username == 'system:serviceaccount:doc-gen-demo:compliance-scan-agent-sa'
+                || auth.identity.user.username == 'system:serviceaccount:doc-gen-demo:catalog-gen-agent-sa'

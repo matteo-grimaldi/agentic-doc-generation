@@ -1,10 +1,9 @@
 # Child Application: deploys the doc-gen agent (Gradio UI + OGX sidecar).
 #
 # sync-wave 1 — depends on github-mcp-server (needs its Service DNS name)
-# from wave 0. Inference goes to an external OpenAI-compatible endpoint
-# (configured via the cluster-config ConfigMap and the
-# external-model-credentials Secret — see doc-gen-agent/k8s/), so this
-# Application has no in-cluster model-serving dependency.
+# from wave 0. Inference goes through the in-cluster AI Gateway / MaaS
+# (cluster-config model_base_url + external-model-credentials MaaS key;
+# see doc-gen-agent/k8s/ and ai-gateway/k8s/). No in-cluster vLLM serving.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -23,14 +22,17 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: doc-gen-demo
-  # mcp_gateway_url is patched live by ./install-mcp-gateway.sh once the
-  # Gateway is Programmed — ignore that key so selfHeal does not revert it.
+  # mcp_gateway_url and model_base_url are patched live by install scripts
+  # (see doc-gen-agent/k8s/cluster-config.yaml). ignoreDifferences below
+  # keeps Argo from reverting those keys for all four agents that share
+  # cluster-config.
   ignoreDifferences:
     - group: ""
       kind: ConfigMap
       name: cluster-config
       jsonPointers:
         - /data/mcp_gateway_url
+        - /data/model_base_url
   syncPolicy:
     automated:
       prune: true

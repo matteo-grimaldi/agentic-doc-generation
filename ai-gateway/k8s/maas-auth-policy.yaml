@@ -1,0 +1,17 @@
+# Gateway access for the demo agents group (pairs with MaaSSubscription).
+---
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSAuthPolicy
+metadata:
+  name: doc-gen-agents
+  namespace: models-as-a-service
+  labels:
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  modelRefs:
+    - name: qwen38-27b
+      namespace: llm
+  subjects:
+    groups:
+      - name: doc-gen-agents
+    users: []

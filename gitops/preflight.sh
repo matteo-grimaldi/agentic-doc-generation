@@ -51,7 +51,15 @@ if ! oc get namespace "${NAMESPACE}" >/dev/null 2>&1; then
 fi
 
 if ! oc get secret external-model-credentials -n "${NAMESPACE}" >/dev/null 2>&1; then
-  warn "secret/external-model-credentials missing in ${NAMESPACE} — set EXTERNAL_MODEL_API_KEY before bootstrap or create the Secret (see README Model configuration)."
+  warn "secret/external-model-credentials missing in ${NAMESPACE} — run ./install-openshift-ai.sh with UPSTREAM_MODEL_API_KEY (mints a MaaS key) or set EXTERNAL_MODEL_API_KEY / create the Secret (see README Model configuration)."
+fi
+
+if ! oc get gateway maas-default-gateway -n openshift-ingress >/dev/null 2>&1; then
+  warn "Gateway/maas-default-gateway missing in openshift-ingress — run ./install-openshift-ai.sh so agents can reach the AI Gateway."
+fi
+
+if ! oc get externalmodel qwen38-27b -n llm >/dev/null 2>&1; then
+  warn "ExternalModel/qwen38-27b missing in llm — run ./install-openshift-ai.sh with UPSTREAM_MODEL_API_KEY to register the upstream model behind the gateway."
 fi
 
 for cm in ogx-stack-config agent-knowledge; do

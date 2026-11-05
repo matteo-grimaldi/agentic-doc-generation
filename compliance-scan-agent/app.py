@@ -72,7 +72,7 @@ EXAMPLE_PROMPTS = [
 HEADER_HTML = f"""
 <div style="text-align:center; margin-bottom: 0.5rem;">
   <h1>🛡️ Agentic Compliance Scan</h1>
-  <p style="color:#666;">Powered by {MODEL_NAME} (external OpenAI-compatible endpoint) · GitHub MCP · OGX</p>
+  <p style="color:#666;">Powered by {MODEL_NAME} (OpenShift AI AI Gateway) · GitHub MCP · OGX</p>
 </div>
 """
 
@@ -301,7 +301,7 @@ def build_ui() -> gr.Blocks:
                    relevant to three guideline categories: K8s/OpenShift manifests, project
                    structure, and pom.xml
                 3. It queries the **GitHub MCP server** for just those files' outlines/content
-                4. **{MODEL_NAME}**, served via a configurable external OpenAI-compatible endpoint,
+                4. **{MODEL_NAME}**, reached via the in-cluster OpenShift AI AI Gateway,
                    checks what it found against each guideline and produces a structured compliance
                    report (pass/fail per check, with severity and remediation hints)
                 5. Unlike doc-gen-agent and openapi-gen-agent, this agent never opens a pull

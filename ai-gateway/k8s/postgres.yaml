@@ -1,0 +1,111 @@
+# Demo-grade PostgreSQL for MaaS API key storage (same durability tradeoff
+# as the SQLite MLflow instance). Not for production — swap for a managed
+# Postgres and update the maas-db-config Secret.
+#
+# Applied by install-openshift-ai.sh into redhat-ai-gateway-infra before
+# aigateway.modelsAsAService is enabled. The ServiceAccount is granted
+# anyuid by the install script so the stock Postgres image can start.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: maas-postgres-data
+  namespace: redhat-ai-gateway-infra
+  labels:
+    app: maas-postgres
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: maas-postgres
+  namespace: redhat-ai-gateway-infra
+  labels:
+    app: maas-postgres
+    app.kubernetes.io/part-of: agentic-doc-generation
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maas-postgres
+  namespace: redhat-ai-gateway-infra
+  labels:
+    app: maas-postgres
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: maas-postgres
+  template:
+    metadata:
+      labels:
+        app: maas-postgres
+    spec:
+      serviceAccountName: maas-postgres
+      containers:
+        - name: postgres
+          image: docker.io/library/postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+              name: postgres
+              protocol: TCP
+          env:
+            - name: POSTGRES_USER
+              value: maas
+            - name: POSTGRES_PASSWORD
+              value: maas
+            - name: POSTGRES_DB
+              value: maasdb
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "maas", "-d", "maasdb"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "maas", "-d", "maasdb"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 4
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: maas-postgres-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: maas-postgres
+  namespace: redhat-ai-gateway-infra
+  labels:
+    app: maas-postgres
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  selector:
+    app: maas-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+      protocol: TCP

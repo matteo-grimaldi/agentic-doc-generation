@@ -1,0 +1,19 @@
+# Istio GatewayClass parameters for maas-default-gateway. Without type: ClusterIP
+# the openshift-default controller creates a LoadBalancer Service; on clusters
+# without a cloud LB provider EXTERNAL-IP stays <pending> and the Gateway never
+# reaches Programmed=True (AddressNotAssigned). Same pattern as mcp-gateway.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: maas-default-gateway-options
+  namespace: openshift-ingress
+  labels:
+    app.kubernetes.io/name: maas-gateway
+    app.kubernetes.io/part-of: agentic-doc-generation
+data:
+  service: |
+    metadata:
+      annotations:
+        service.beta.openshift.io/serving-cert-secret-name: maas-default-gateway-service-tls
+    spec:
+      type: ClusterIP

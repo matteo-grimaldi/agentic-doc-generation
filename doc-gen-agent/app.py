@@ -71,7 +71,7 @@ EXAMPLE_PROMPTS = [
 HEADER_HTML = f"""
 <div style="text-align:center; margin-bottom: 0.5rem;">
   <h1>📐 Agentic Doc Generation</h1>
-  <p style="color:#666;">Powered by {MODEL_NAME} (external OpenAI-compatible endpoint) · GitHub MCP · OGX</p>
+  <p style="color:#666;">Powered by {MODEL_NAME} (OpenShift AI AI Gateway) · GitHub MCP · OGX</p>
 </div>
 """
 
@@ -347,7 +347,7 @@ def build_ui() -> gr.Blocks:
                 1. You paste a GitHub repository URL
                 2. The agent queries the **GitHub MCP server** to map the repo structure and read key files
                    (README, entry points, manifests, Dockerfiles, k8s/CI configs)
-                3. **{MODEL_NAME}**, served via a configurable external OpenAI-compatible endpoint, synthesizes the findings into:
+                3. **{MODEL_NAME}**, reached via the in-cluster OpenShift AI AI Gateway, synthesizes the findings into:
                    - A structured architecture document (overview, components, data flow, dependencies, deployment, security)
                    - Three Mermaid diagrams: component, data flow, and dependency diagrams
 

@@ -1,0 +1,25 @@
+# Token quota for the demo agents group. Both this and MaaSAuthPolicy are
+# required (subscription alone → 403; auth alone → 429).
+#
+# 10M tokens / 1h is the governance demo's open budget — high enough that a
+# screen-share curl or a short Gradio run never trips Limitador. Demo scripts
+# under demo/governance/ temporarily tighten this to show a 429.
+---
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSSubscription
+metadata:
+  name: doc-gen-agents
+  namespace: models-as-a-service
+  labels:
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  owner:
+    groups:
+      - name: doc-gen-agents
+    users: []
+  modelRefs:
+    - name: qwen38-27b
+      namespace: llm
+      tokenRateLimits:
+        - limit: 10000000
+          window: 1h

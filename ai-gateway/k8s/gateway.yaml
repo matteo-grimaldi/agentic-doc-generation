@@ -1,0 +1,61 @@
+# Default MaaS Gateway. Hostname is substituted by install-openshift-ai.sh
+# (__CLUSTER_DOMAIN__ → cluster apps domain) before apply.
+#
+# Required annotations:
+#   opendatahub.io/managed: "false" — MaaS owns AuthPolicies on this Gateway
+#   security.opendatahub.io/authorino-tls-bootstrap: "true" — Envoy↔Authorino TLS
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: maas-default-gateway
+  namespace: openshift-ingress
+  labels:
+    kuadrant.io/gateway: "true"
+    app.kubernetes.io/name: maas-gateway
+    app.kubernetes.io/part-of: agentic-doc-generation
+  annotations:
+    opendatahub.io/managed: "false"
+    security.opendatahub.io/authorino-tls-bootstrap: "true"
+spec:
+  gatewayClassName: openshift-default
+  infrastructure:
+    parametersRef:
+      group: ""
+      kind: ConfigMap
+      name: maas-default-gateway-options
+  listeners:
+    - name: https
+      hostname: "maas.__CLUSTER_DOMAIN__"
+      port: 443
+      protocol: HTTPS
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              maas.opendatahub.io/gateway-access: "true"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - group: ""
+            kind: Secret
+            name: maas-default-gateway-service-tls
+    # In-cluster agents (cluster-config model_base_url) TLS SNI must match
+    # this hostname — same pattern as mcp-gateway's Service FQDN listener.
+    - name: https-incluster
+      hostname: "maas-default-gateway-openshift-default.openshift-ingress.svc.cluster.local"
+      port: 443
+      protocol: HTTPS
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              maas.opendatahub.io/gateway-access: "true"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - group: ""
+            kind: Secret
+            name: maas-default-gateway-service-tls

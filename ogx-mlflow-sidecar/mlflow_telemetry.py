@@ -556,7 +556,14 @@ def configure_mlflow(*, service_name: str, enable_openai_autolog: bool = False) 
                 },
             )
             # #endregion
-            raise
+            logger.warning(
+                "MLflow set_workspace failed — tracing disabled (workspace=%s): %s",
+                workspace,
+                exc,
+            )
+            _CONFIGURED = True
+            _ENABLED = False
+            return False
     else:
         # Older SDKs: workspace is still honored via MLFLOW_WORKSPACE env
         # (X-Mlflow-Workspace header) when the server has workspaces enabled.
@@ -594,6 +601,14 @@ def configure_mlflow(*, service_name: str, enable_openai_autolog: bool = False) 
 
     _register_span_processors()
 
+        logger.warning(
+            "MLflow set_experiment failed — tracing disabled (experiment=%s): %s",
+            experiment,
+            exc,
+        )
+        _CONFIGURED = True
+        _ENABLED = False
+        return False
     if enable_openai_autolog and importlib.util.find_spec("openai") is not None:
         mlflow.openai.autolog(log_traces=True)
     elif enable_openai_autolog:
