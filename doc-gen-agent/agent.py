@@ -27,7 +27,12 @@ from typing import AsyncIterator
 import httpx
 from ogx_client import AsyncOgxClient
 
-from mlflow_telemetry import get_mcp_tool_span_tracker, mlflow_ogx_request_headers, trace_agent_run
+from mlflow_telemetry import (
+    ensure_and_link_agent_prompt,
+    get_mcp_tool_span_tracker,
+    mlflow_ogx_request_headers,
+    trace_agent_run,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -369,6 +374,9 @@ async def run_agent(repo_url: str) -> AsyncIterator[str]:
         f"{system_prompt}\n\n---\n## Documentation Style Guide\n\n{knowledge}"
         if knowledge
         else system_prompt
+    )
+    ensure_and_link_agent_prompt(
+        agent_name="doc-gen-agent", instructions=instructions
     )
 
     user_message = f"Generate architecture documentation and diagrams for this repository: {repo_url}"
