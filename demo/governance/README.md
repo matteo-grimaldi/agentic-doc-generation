@@ -1,5 +1,9 @@
 # Governance demo — Authorino and Limitador
 
+Before the mutate-and-probe acts below, run the read-only wiring tour in
+[`demo/gateways/`](../gateways/) — it walks how agents reach AI Gateway /
+MCP Gateway and how access + cost limits are configured (no applies).
+
 Screen-share runbook. Each script prints the YAML it applies, applies it,
 then curls the model or MCP gateway and prints **only** the HTTP status
 and a short body snippet. Tokens and API keys are never echoed.
