@@ -66,7 +66,10 @@ before GitOps syncs `gitops/apps/mcp-gateway.yaml`. Re-run
 patch `cluster-config` `mcp_gateway_url` and `model_base_url` (the
 doc-gen-agent Application `ignoreDifferences` covers both keys for all
 four agents that share cluster-config). DataScienceCluster `aigateway` is the
-model gateway and stays `Removed`.
+model gateway: `install-openshift-ai.sh` step 6 sets it and its nested
+`modelsAsAService` component to `Managed` after platform prerequisites are
+ready. This provides routing/governance for the external model, without
+local model serving or GPU workloads.
 
 If you add a resource that depends on another wave's output (a CRD, a
 Service DNS name, a ConfigMap), give it a sync-wave annotation at least

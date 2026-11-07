@@ -1,22 +1,38 @@
 # Agentic Doc Generation — OpenShift Demo
 
-A GitOps-provisioned demo showing two independent AI agents on
-**OpenShift** automating repository documentation — a simplified take on
+A GitOps-provisioned demo showing four independent AI agents on
+**OpenShift** generating repository documentation and catalog metadata,
+and checking architectural compliance — a simplified take on
 [opendatahub-io/architecture-context](https://github.com/opendatahub-io/architecture-context).
 
-Give either agent a GitHub repository URL. Each explores the repo via a
-shared GitHub MCP server, then a model served by **your own external,
-OpenAI-compatible endpoint** (no GPU or in-cluster model serving required)
-synthesizes its output:
+Give any agent a GitHub repository URL. Each explores the repo via a
+shared GitHub MCP server and synthesizes its output through its OGX
+sidecar and the in-cluster OpenShift AI AI Gateway / Models-as-a-Service.
+The gateway fronts **your own external, OpenAI-compatible endpoint**
+(no GPU or in-cluster model serving required):
 
 - **doc-gen-agent** — an architecture document with embedded Mermaid (C4)
   diagrams, with an opt-in "Propose as PR" button
 - **openapi-gen-agent** — an OpenAPI 3.0.x specification (YAML), for repos
   that look like HTTP API services and don't already ship one, with its
   own opt-in "Propose as PR" button
+- **compliance-scan-agent** — a Markdown report checking Kubernetes/OpenShift
+  manifests, project structure, and Maven `pom.xml` against separate
+  guideline files; never opens a PR
+- **catalog-gen-agent** — generates or augments Backstage `catalog-info.yaml`
+  with a Component and applicable API entities, with its own opt-in
+  "Propose as PR" button
 
-The two agents are fully independent components: separate pods, separate
-UIs/routes, separate budgets, separate PRs. Neither triggers the other.
+The four agents are fully independent components: separate pods,
+UIs/routes, and run budgets. No agent triggers another. The three
+PR-capable agents create separate proposals; compliance scanning only
+reports findings. All four expose their own `POST /invoke` endpoint.
+
+Two supporting services provide governance: **Governance Hub** is an
+independent dashboard and REST API with persistent run history, checks,
+and explicit remediation triggers for doc-gen, OpenAPI, and compliance
+scanning; **Compliance MCP Server** exposes that state as read-only tools.
+The optional Developer Hub plugin embeds the Hub dashboard.
 
 > **Looking for the original, fully in-cluster design?** The
 > [`local-model`](https://github.com/YOUR_ORG/agentic-doc-generation/tree/local-model)
@@ -27,8 +43,10 @@ UIs/routes, separate budgets, separate PRs. Neither triggers the other.
 
 ```mermaid
 flowchart TB
-    subgraph user [User]
+    subgraph user [User / operator workstation]
         Browser
+        PortalDeploy["Imperative portal deploy scripts"]
+        AIInstall["install-openshift-ai.sh"]
     end
 
     subgraph ocp [OpenShift Cluster]
@@ -45,7 +63,18 @@ flowchart TB
                 ApiGradio["Gradio UI\n:7860"]
                 ApiOGX["OGX Sidecar\n:8321"]
             end
+            subgraph scan_pod [Compliance-Scan Agent Pod]
+                ScanGradio["Gradio UI\n:7860"]
+                ScanOGX["OGX Sidecar\n:8321"]
+            end
+            subgraph catalog_pod [Catalog-Gen Agent Pod]
+                CatalogGradio["Gradio UI\n:7860"]
+                CatalogOGX["OGX Sidecar\n:8321"]
+            end
             GitHubMCP["GitHub MCP Server\n:8080"]
+            ComplianceMCP["Compliance MCP Server\n:8080"]
+            GovHub["Governance Hub\nFastAPI dashboard + REST :7860"]
+            GovDB[("SQLite on governance-hub-data PVC")]
         end
 
         subgraph mcp_gw_ns [mcp-gateway namespace]
@@ -59,35 +88,71 @@ flowchart TB
         subgraph rhdh_ns [rhdh namespace]
             RHDH["Red Hat Developer Hub\nBackstage + plugins"]
         end
-    end
 
-    subgraph rhoai [OpenShift AI]
-        AIGateway["AI Gateway / MaaS\nmaas-default-gateway"]
+        subgraph model_gw_ns [openshift-ingress namespace]
+            AIGateway["OpenShift AI AI Gateway / MaaS\nmaas-default-gateway"]
+        end
     end
 
     subgraph external [External Infrastructure]
-        InferenceEndpoint["Upstream OpenAI-compatible\nendpoint (ExternalProvider)"]
+        InferenceEndpoint["Upstream OpenAI-compatible\nendpoint"]
+        GitHub["github.com"]
     end
 
     Browser -->|"repo URL"| DocGradio
     Browser -->|"repo URL"| ApiGradio
+    Browser -->|"repo URL"| ScanGradio
+    Browser -->|"repo URL"| CatalogGradio
+    Browser -->|"dashboard"| GovHub
     Browser -->|"OIDC login"| RHDH
     DocGradio -->|"Responses API"| DocOGX
     ApiGradio -->|"Responses API"| ApiOGX
+    ScanGradio -->|"Responses API"| ScanOGX
+    CatalogGradio -->|"Responses API"| CatalogOGX
     DocOGX -->|"MCP tools via gateway"| MCPGateway
     ApiOGX -->|"MCP tools via gateway"| MCPGateway
+    ScanOGX -->|"MCP tools via gateway"| MCPGateway
+    CatalogOGX -->|"MCP tools via gateway"| MCPGateway
     DocOGX -->|"inference (MaaS key)"| AIGateway
     ApiOGX -->|"inference (MaaS key)"| AIGateway
+    ScanOGX -->|"inference (MaaS key)"| AIGateway
+    CatalogOGX -->|"inference (MaaS key)"| AIGateway
     AIGateway -->|"upstream key"| InferenceEndpoint
     MCPGateway --> GitHubMCP
-    GitHubMCP -->|"GitHub API"| GitHub["github.com"]
+    MCPGateway -->|"compliance-tools"| ComplianceMCP
+    ComplianceMCP -->|"read-only REST"| GovHub
+    GovHub --> GovDB
+    GovHub -->|"file-tree REST checks"| GitHubMCP
+    GovHub -->|"explicit POST /invoke"| DocGradio
+    GovHub -->|"explicit POST /invoke"| ApiGradio
+    GovHub -->|"explicit POST /invoke"| ScanGradio
+    DocGradio -.->|"optional invoke callback"| GovHub
+    ApiGradio -.->|"optional chat / invoke callbacks"| GovHub
+    ScanGradio -.->|"optional chat / invoke callbacks"| GovHub
+    GitHubMCP -->|"GitHub API"| GitHub
     RHDH -->|"OIDC"| RHBK
+    RHDH -->|"Governance Hub plugin iframe"| GovHub
     AppOfApps -->|deploys| GitHubMCP
     AppOfApps -->|deploys| MCPGateway
-    AppOfApps -->|deploys| demo_ns
-    AppOfApps -->|deploys| RHBK
-    AppOfApps -->|deploys| RHDH
+    AppOfApps -->|deploys| doc_pod
+    AppOfApps -->|deploys| api_pod
+    AppOfApps -->|deploys| scan_pod
+    AppOfApps -->|deploys| catalog_pod
+    AppOfApps -->|deploys| GovHub
+    AppOfApps -->|deploys| GovDB
+    AppOfApps -->|deploys| ComplianceMCP
+    PortalDeploy -->|"keycloak/build-and-deploy.sh"| RHBK
+    PortalDeploy -->|"developer-hub/build-and-deploy.sh"| RHDH
+    AIInstall -->|"platform prerequisites + model wiring"| AIGateway
 ```
+
+App-of-Apps owns the application manifests, including the two `MCPServer`
+CRs whose Deployments and Services are reconciled by the lifecycle
+operator. Keycloak and RHDH are deployed by their imperative scripts;
+there are no child Applications for them. The OpenShift AI installer
+enables the model gateway and applies its platform wiring, including
+`ExternalProvider` / `ExternalModel` resources in `llm`. Only the upstream
+inference endpoint and GitHub are external to OpenShift.
 
 Agent workflow, simplified from architecture-context's six-phase pipeline
 down to one agent turn each — run independently by whichever agent the
@@ -121,6 +186,97 @@ user invokes:
    evidence for
 5. Everything streams back into its own chat UI
 
+**compliance-scan-agent:**
+
+1. Its UI or `/invoke` receives a GitHub repository URL independently of
+   the other agents.
+2. The application prefetches the file tree and classifies relevant
+   manifests, build files, and project-structure signals.
+3. The agent reads selected evidence and checks it against
+   [`k8s-manifests.md`](compliance-scan-agent/guidelines/k8s-manifests.md),
+   [`project-structure.md`](compliance-scan-agent/guidelines/project-structure.md),
+   and [`pom-xml.md`](compliance-scan-agent/guidelines/pom-xml.md).
+   These separate files are loaded into the system prompt at runtime.
+4. It produces a Markdown report with PASS/FAIL/SKIP findings, evidence,
+   severity, and suggested remediation. Chat streams the report; `/invoke`
+   runs in the background and sends it to Governance Hub when configured.
+5. The report is the deliverable: this agent never opens a PR or changes
+   the analyzed repository. Chat outcomes also use the optional Hub callback.
+
+**catalog-gen-agent:**
+
+1. Its own UI or `/invoke` receives a GitHub repository URL.
+2. The application prefetches the file tree, identifying an existing
+   catalog file, build/deployment metadata, and API signals.
+3. The agent reads selected files using guidance from
+   [`catalog-component.md`](catalog-gen-agent/guidelines/catalog-component.md)
+   and [`api-detection.md`](catalog-gen-agent/guidelines/api-detection.md),
+   loaded separately into its system prompt.
+4. It generates or augments `catalog-info.yaml` with a Backstage Component
+   and applicable API entities for evidenced REST/OpenAPI, gRPC, GraphQL,
+   or AsyncAPI surfaces. API definitions may reference existing specs;
+   incomplete definitions require review.
+5. Chat streams YAML for review; an explicit **"Propose as PR"** click
+   proposes it on an `agentic-catalog/*` branch. `/invoke` generates and
+   attempts the proposal in the background, independently of other agents.
+
+## Governance services
+
+### Governance Hub (`governance-hub/`)
+
+The Hub is an independent FastAPI service with an HTML dashboard at `/`,
+per-repository pages, and a REST API. It records tracked repositories,
+agent runs, outcomes, PR links, and compliance-scan reports. Repositories
+are discovered through run callbacks or explicit remediation requests;
+there is no automatic organization-wide scan.
+
+Its SQLite database is stored at `DATABASE_PATH` (default
+`/data/governance.db`) on the `governance-hub-data` PVC mounted at `/data`.
+The [models](governance-hub/models.py) and
+[compliance checker](governance-hub/compliance.py) belong to this backend,
+separately from the Developer Hub plugin that embeds its dashboard.
+
+| Interface | Purpose |
+|---|---|
+| `GET /api/repos` | List tracked repositories and their current status |
+| `GET /api/repos/{owner}/{repo}/status` | Read status and recorded run history |
+| `POST /api/runs` | Receive optional agent outcome callbacks |
+| `POST /api/repos/{owner}/{repo}/check` | Refresh artifact checks through the GitHub MCP server's file-tree REST API; no model call |
+| `POST /api/repos/{owner}/{repo}/remediate` | Explicitly trigger doc-gen, OpenAPI generation, or compliance scanning via that agent's `/invoke` |
+
+Artifact checks look for architecture documentation and OpenAPI files on
+the default branch; they check presence, not content quality. Opening a
+PR does not establish that its output has been merged. The `compliant`
+flag reflects architecture-document presence; the separate violations
+list can also include missing OpenAPI or compliance-scan findings.
+
+Agent reporting is optional through `GOVERNANCE_HUB_URL`; an empty value
+disables callbacks, and a Hub outage must not block generation. Doc-gen
+reports `/invoke` outcomes; OpenAPI and compliance scanning also report
+chat outcomes. The current Hub accepts these three agent types only:
+catalog generation attempts callbacks, but `catalog-gen` is rejected and
+the Hub cannot trigger it. The agents remain independent, and the Hub
+uses their public HTTP interfaces rather than their internals.
+
+### Compliance MCP Server (`compliance-mcp-server/`)
+
+This standalone FastMCP service exposes **streamable HTTP at `/mcp`** on
+port 8080. Each tool is a read-only proxy to the Hub's existing REST API:
+
+| Tool | Result |
+|---|---|
+| `get_compliance_status(repo_url)` | A tracked repository's current status, without run history; `tracked: false` if unknown |
+| `list_violations()` | Tracked repositories with a non-empty violations list |
+| `list_tracked_repos()` | All repositories known to the Hub and their status |
+| `get_repo_history(repo_url)` | Recorded runs and PR links for one repository |
+
+`GOVERNANCE_HUB_URL` selects the backend. The server has no database,
+state, or shared PVC: it calls `GET /api/repos` and
+`GET /api/repos/{owner}/{repo}/status`, returning an error when the Hub
+cannot be reached. Clients can use the gateway's `compliance-tools`
+virtual server with appropriate gateway authentication. Catalog and
+Playground entries retain the direct Service `/mcp` URL.
+
 ## Prerequisites
 
 - An OpenShift cluster, logged in as `cluster-admin` (`oc login`) —
@@ -137,7 +293,11 @@ user invokes:
   [`install-mcp-gateway.sh`](install-mcp-gateway.sh) for Connectivity
   Link + the MCP Gateway Operator (Technology Preview;
   `MCPGatewayExtension` / `AuthPolicy` / virtual servers). Distinct from
-  DataScienceCluster `aigateway` (model gateway — stays `Removed`).
+  DataScienceCluster `aigateway`, which is the model gateway: installer
+  step 6 sets both `aigateway.managementState` and its nested
+  `modelsAsAService.managementState` to `Managed` after platform
+  prerequisites are ready. This enables routing and governance for the
+  external model; it does not deploy local model weights or GPU serving.
   After GitOps syncs Gateway `mcp-gateway`, re-run
   `./install-mcp-gateway.sh` alone if `cluster-config` `mcp_gateway_url`
   is still empty. The four agents send MCP tools through the gateway
@@ -159,8 +319,8 @@ user invokes:
   GitLab, or an internal git server) — ArgoCD needs to clone it
 - (Optional) A `GITHUB_TOKEN` with `public_repo` scope, to raise GitHub
   API rate limits and enable the `search_code` tool. Required (with its
-  write access, which `public_repo` already includes) if you want either
-  agent's `/invoke` endpoint to propose its generated output back to its
+  write access, which `public_repo` already includes) if you want a
+  PR-capable agent's `/invoke` endpoint to propose its output back to its
   source repo via PR — see
   [CI/CD pipeline demo](#cicd-pipeline-demo-openshift-pipelines)
 
@@ -316,14 +476,15 @@ Deployment and Service.
 
 Before (or right after) the agents come up, point them at your external
 model endpoint — see [Model configuration](#model-configuration) below
-(both agents share the same `cluster-config` ConfigMap).
+(all four agents share the same `cluster-config` ConfigMap).
 
-Once `doc-gen-agent` and `openapi-gen-agent` are `Synced`/`Healthy`, get
-their UI routes:
+Once the four agent Applications are `Synced`/`Healthy`, get their UI routes:
 
 ```bash
 oc get route doc-gen-agent -n doc-gen-demo -o jsonpath='https://{.spec.host}{"\n"}'
 oc get route openapi-gen-agent -n doc-gen-demo -o jsonpath='https://{.spec.host}{"\n"}'
+oc get route compliance-scan-agent -n doc-gen-demo -o jsonpath='https://{.spec.host}{"\n"}'
+oc get route catalog-gen-agent -n doc-gen-demo -o jsonpath='https://{.spec.host}{"\n"}'
 ```
 
 ## Quick start (without GitOps)
@@ -359,6 +520,7 @@ bash developer-hub/build-and-deploy.sh     # waits for Keycloak, then brings up 
 ## Demo walkthrough
 
 **doc-gen-agent (architecture docs + diagrams):**
+
 1. Open the doc-gen agent route in a browser
 2. Paste a repo URL, e.g. `https://github.com/quarkusio/quarkus-quickstarts`
    (or use one of the example buttons in the UI)
@@ -376,6 +538,7 @@ bash developer-hub/build-and-deploy.sh     # waits for Keycloak, then brings up 
    write access on the GitHub MCP server)
 
 **openapi-gen-agent (OpenAPI spec):**
+
 1. Open the openapi-gen agent route in a browser (separate Route from
    doc-gen-agent's)
 2. Paste a repo URL that exposes an HTTP API, e.g.
@@ -387,6 +550,41 @@ bash developer-hub/build-and-deploy.sh     # waits for Keycloak, then brings up 
    service, the agent reports that and stops — no spec is generated
 5. Click **"Propose as PR"** to open a pull request with the generated
    spec, independent of any doc-gen-agent PR for the same repo
+
+**compliance-scan-agent (report only):**
+
+1. Open the compliance-scan agent route and paste a GitHub repository URL,
+   such as `https://github.com/matteo-grimaldi/agentic-doc-generation`.
+2. Watch it inspect project-structure signals and selected
+   Kubernetes/OpenShift manifests, Dockerfiles, and `pom.xml` when present.
+3. Review its Markdown findings against the three guideline categories;
+   checks that do not apply should be marked SKIP.
+4. Use the report's evidence and suggested fixes to decide what to change.
+   There is no PR button and the scan never modifies the source repository.
+5. When Hub reporting is configured, open Governance Hub to inspect the
+   recorded run and full report. The Hub also offers an explicit scan trigger.
+
+**catalog-gen-agent (Backstage catalog metadata):**
+
+1. Open the catalog-gen agent route and paste a GitHub repository URL.
+   Use a repository you can write to if you plan to propose the result.
+2. Review the streamed `catalog-info.yaml`: the Component should describe
+   the repo, preserve useful existing catalog metadata, and link applicable
+   API entities only where the repository supplies evidence.
+3. Check generated names, owner, annotations, relationships, and API
+   definitions against your Backstage catalog before using the output.
+4. Click **"Propose as PR"** to propose the YAML on its own
+   `agentic-catalog/*` branch. This does not trigger either documentation
+   agent or compliance scanning.
+
+For either new agent, automation can send
+`POST <agent-route>/invoke` with a JSON body
+`{"prompt": "https://github.com/<owner>/<repo>"}`. The response is
+`202 Accepted` with `{"status": "accepted", "job_id": "..."}`.
+Compliance scanning sends its background report through the optional Hub
+callback; catalog generation instead attempts a catalog PR after generation.
+Catalog callbacks are not currently accepted by the Hub (see
+[Governance services](#governance-services)).
 
 ## Model configuration
 
@@ -571,6 +769,30 @@ agentic-doc-generation/
 │   ├── ogx/stack_run_config.yaml        # OGX + external model config
 │   ├── build-and-deploy.sh
 │   └── k8s/
+├── compliance-scan-agent/               # Independent OGX + Gradio agent — Markdown report, no PRs
+│   ├── agent.py                         # Evidence classification + guideline-driven scan
+│   ├── app.py                           # Chat UI + POST /invoke + optional report callback
+│   ├── guidelines/                      # k8s-manifests.md, project-structure.md, pom-xml.md
+│   ├── ogx/stack_run_config.yaml
+│   ├── build-and-deploy.sh
+│   └── k8s/
+├── catalog-gen-agent/                   # Independent OGX + Gradio agent — catalog-info.yaml proposals
+│   ├── agent.py                         # Component + applicable API entities
+│   ├── app.py                           # Chat UI + POST /invoke + agentic-catalog/* PRs
+│   ├── guidelines/                      # catalog-component.md, api-detection.md
+│   ├── ogx/stack_run_config.yaml
+│   ├── build-and-deploy.sh
+│   └── k8s/
+├── governance-hub/                      # Independent FastAPI dashboard + REST API
+│   ├── app.py                           # Run callbacks, history, checks, explicit agent triggers
+│   ├── models.py                        # SQLite database at DATABASE_PATH on /data PVC
+│   ├── compliance.py                    # Default-branch artifact-presence checks via REST
+│   ├── build-and-deploy.sh
+│   └── k8s/                             # Includes governance-hub-data PVC
+├── compliance-mcp-server/               # Stateless, read-only proxy over Governance Hub REST
+│   ├── server.py                        # Four compliance/history tools; streamable HTTP /mcp
+│   ├── build-and-deploy.sh
+│   └── k8s/                             # MCPServer CR + Route; operator owns Deployment/Service
 ├── ci-cd-pipeline/                      # OpenShift Pipelines (Tekton) build/deploy demo
 │   ├── install-operator.sh              # One-time: installs the OpenShift Pipelines operator
 │   ├── build-and-deploy.sh
@@ -704,7 +926,8 @@ bash developer-hub/build-and-deploy.sh
 
 ### Governance Hub plugin (`governance-hub-plugin/`)
 
-A custom RHDH dynamic plugin that embeds the Governance Hub service
+A custom RHDH dynamic plugin that embeds the independent
+[Governance Hub backend](#governance-hub-governance-hub) service
 directly in the developer portal. It is distributed as an OCI image
 (`quay.io/mcombi/rhdh-gov-hub:latest`) and loaded by RHDH at startup via
 the `dynamicPlugins` section of its ConfigMap. Access is gated by the
@@ -715,7 +938,8 @@ the `dynamicPlugins` section of its ConfigMap. Access is gated by the
 
 [`ci-cd-pipeline/`](ci-cd-pipeline/) adds a self-contained Tekton
 `build-deploy-app` Pipeline that demonstrates how an external CI/CD run
-can **trigger both agents without blocking** on either: before building
+can **trigger doc-gen-agent and openapi-gen-agent without waiting for
+generation**: before building
 or deploying anything, the pipeline POSTs to doc-gen-agent's and
 openapi-gen-agent's `/invoke` endpoints in parallel. Each endpoint
 accepts the request (`202 Accepted`) and runs its own generation in the
@@ -864,22 +1088,28 @@ server(s) already deployed in `doc-gen-demo`.
   uses unauthenticated or token-based REST calls, no OAuth flow).
 - `search_code` requires a `GITHUB_TOKEN` (GitHub's code search API does
   not support unauthenticated requests).
-- Proposing generated output back to its source repo (via `/invoke` →
-  `POST /propose-doc`, or via each agent's opt-in "Propose as PR" button)
+- Proposing generated output from doc-gen-agent, openapi-gen-agent, or
+  catalog-gen-agent back to its source repo (via `/invoke` →
+  `POST /propose-doc`, or via their opt-in "Propose as PR" buttons)
   requires a `GITHUB_TOKEN` with write access. It always creates a fresh
   branch (`agentic-docs/<random>` for doc-gen-agent, `agentic-openapi/<random>`
-  for openapi-gen-agent) off the base branch (the repo's default branch,
-  or `ARCHITECTURE_DOC_BASE_BRANCH`/`OPENAPI_SPEC_BASE_BRANCH` if set) and
-  opens a PR into it — neither agent ever pushes directly to an existing
+  for openapi-gen-agent, `agentic-catalog/<random>` for catalog-gen-agent)
+  off the base branch (the repo's default branch, or
+  `ARCHITECTURE_DOC_BASE_BRANCH`/`OPENAPI_SPEC_BASE_BRANCH`/
+  `CATALOG_INFO_BASE_BRANCH` if set) and opens a PR into it — none of
+  these agents ever pushes directly to an existing
   branch, so this is safe against protected branches, but someone still
-  has to review and merge the PR. **Neither agent ever opens a PR
+  has to review and merge the PR. **None of these agents opens a PR
   automatically from its chat UI** — a PR is only ever opened via
-  `/invoke` (the CI/CD trigger path) or an explicit "Propose as PR" click.
+  `/invoke` or an explicit "Propose as PR" click. Compliance scanning
+  never opens a PR.
 - Each agent reads file contents one at a time; very large monorepos will
   hit the `MAX_INFER_ITERS` / token-budget guardrails in
-  [`doc-gen-agent/agent.py`](doc-gen-agent/agent.py) and
-  [`openapi-gen-agent/agent.py`](openapi-gen-agent/agent.py) and produce a
-  partial-but-useful (or, for openapi-gen-agent, no) result rather than
+  [`doc-gen-agent/agent.py`](doc-gen-agent/agent.py),
+  [`openapi-gen-agent/agent.py`](openapi-gen-agent/agent.py),
+  [`compliance-scan-agent/agent.py`](compliance-scan-agent/agent.py), and
+  [`catalog-gen-agent/agent.py`](catalog-gen-agent/agent.py) and produce a
+  partial (or no) result rather than
   exhaustive coverage — this mirrors the token-budget tuning notes in the
   reference ocp-troubleshooter-demo.
 - openapi-gen-agent's file-tree heuristic (`detect_needs_openapi`) is a

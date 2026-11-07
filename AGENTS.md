@@ -4,7 +4,7 @@ Guidance for AI coding agents working in this repository.
 
 ## What this repo is
 
-A GitOps-provisioned OpenShift demo: three independent AI agents (each its
+A GitOps-provisioned OpenShift demo: four independent AI agents (each its
 own Gradio UI + OGX sidecar pod) that generate repo documentation and
 check architectural compliance for a given GitHub repo — `doc-gen-agent`
 produces architecture documentation with Mermaid C4 diagrams,
@@ -12,13 +12,15 @@ produces architecture documentation with Mermaid C4 diagrams,
 like HTTP API services, and `compliance-scan-agent` scans K8s/OpenShift
 manifests, project structure, and `pom.xml` content for bad practices
 against separately-maintained guideline files and reports findings (it
-never opens a PR). All three (plus `catalog-gen-agent`) reach the model
-through the in-cluster OpenShift AI AI Gateway / Models-as-a-Service
+never opens a PR). `catalog-gen-agent` generates or augments Backstage
+`catalog-info.yaml` with a Component and applicable API entities, and
+can propose it as a PR. All four reach the model through the in-cluster
+OpenShift AI AI Gateway / Models-as-a-Service
 (no GPU or in-cluster vLLM serving on this branch — the gateway fronts
 an upstream OpenAI-compatible endpoint) and a shared GitHub MCP server
 for code exploration. It is a simplified take on
 [opendatahub-io/architecture-context](https://github.com/opendatahub-io/architecture-context).
-The three agents are fully independent — separate pods, UIs, and
+The four agents are fully independent — separate pods, UIs, and
 budgets; none of them trigger each other.
 
 > This is the `main` branch. The [`local-model`](../../tree/local-model)
@@ -65,25 +67,31 @@ directory with its manifests. `ogx-mlflow-sidecar/` holds the sidecar
 Agent Deployments default to **`quay.io/mgrimald/ogx-mlflow-sidecar:latest`**
 (`cluster-config` `ogx_mlflow_sidecar_image` must stay in sync). Use
 `OGX_MLFLOW_SIDECAR_MODE=cluster` to build on OpenShift and patch to the
-namespace ImageStream instead. `doc-gen-agent`, `openapi-gen-agent`, and
-`compliance-scan-agent` are three separate agents, not slices of one
-component — don't reintroduce cross-calls between them (e.g. one
+namespace ImageStream instead. `doc-gen-agent`, `openapi-gen-agent`,
+`compliance-scan-agent`, and `catalog-gen-agent` are four separate agents,
+not slices of one component — don't reintroduce cross-calls between them (e.g. one
 triggering another's generation or budget) without the user explicitly
-asking for that coupling back. Unlike the other two, `compliance-scan-agent`
+asking for that coupling back. Unlike the other three, `compliance-scan-agent`
 never opens a PR — its only deliverable is a Markdown report, returned in
 its chat UI and (when invoked via `/invoke`) sent to `governance-hub`'s
-`POST /api/runs` callback. `governance-hub` is a fourth, independent
-component: it only *observes* all three agents (via their optional
-`POST /api/runs` callback, controlled by each agent's
-`GOVERNANCE_HUB_URL` env var) and *triggers* them (via their existing
-`POST /invoke`, exactly like the CI/CD pipeline does for the first two) —
-it never reads any agent's internals, and no agent depends on
-`governance-hub` being present or healthy. `compliance-mcp-server` is a
-fifth, independent component: a standalone MCP server that lets other AI
+`POST /api/runs` callback. Chat outcomes also use this optional callback.
+`governance-hub` is an independent FastAPI dashboard and REST API: it
+*observes* doc-gen, OpenAPI, and compliance-scan outcomes via optional
+`POST /api/runs` callbacks, controlled by each agent's
+`GOVERNANCE_HUB_URL` env var, and explicitly *triggers* those three via
+their existing `POST /invoke` endpoints. Doc-gen chat does not currently
+report outcomes; OpenAPI and compliance chat do. Catalog callbacks use
+`catalog-gen`, which the Hub currently rejects, and the Hub cannot trigger
+catalog generation. Preserve these boundaries until integration changes
+are explicitly requested. The Hub never reads an agent's internals, and
+no agent depends on it being present or healthy. `compliance-mcp-server`
+is another independent component: a standalone MCP server that lets other AI
 agents query governance-hub's compliance state. It holds no state and no
 database of its own — every tool it exposes is a thin read-only proxy
 over governance-hub's existing REST API (`GET /api/repos`,
-`GET /api/repos/{owner}/{repo}/status`). Don't give it direct database
+`GET /api/repos/{owner}/{repo}/status`). Its streamable HTTP `/mcp`
+transport exposes `get_compliance_status`, `list_violations`,
+`list_tracked_repos`, and `get_repo_history`. Don't give it direct database
 access (e.g. a shared PVC mount) — that would couple it to
 governance-hub's storage layer instead of its public API.
 
@@ -136,8 +144,11 @@ governance-hub's storage layer instead of its public API.
   (Connectivity Link + MCP Gateway Operator). Re-run
   `./install-mcp-gateway.sh` alone after GitOps syncs `mcp-gateway/k8s`
   to patch `cluster-config` `mcp_gateway_url` if still empty. The
-  DataScienceCluster `aigateway` component is the *model* gateway and
-  stays `Removed`. Gen AI Playground `mcp-catalog-entry.yaml` URLs stay
+  DataScienceCluster `aigateway` component is the *model* gateway;
+  `install-openshift-ai.sh` step 6 sets it and its nested
+  `modelsAsAService` component to `Managed` after platform prerequisites
+  are ready. This enables external-model routing/governance, not local
+  model serving or GPUs. Gen AI Playground `mcp-catalog-entry.yaml` URLs stay
   on the direct MCP Service — that ConfigMap cannot send a TokenReview
   bearer or `X-Mcp-Virtualserver`.
 - **ConfigMaps generated from files are not committed as inline YAML.**
