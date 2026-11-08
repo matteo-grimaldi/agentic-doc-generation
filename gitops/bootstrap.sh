@@ -20,6 +20,8 @@
 #      this branch — see doc-gen-agent/k8s/cluster-config.yaml and README.
 #
 # Usage:
+#   # First: install-openshift-ai.sh, ci-cd-pipeline/install-operator.sh,
+#   # then bash gitops/prepare.sh (images and generated configuration).
 #   ./gitops/bootstrap.sh [repo-url] [git-ref]
 #
 #   repo-url  Git URL of this repo as ArgoCD should clone it.
@@ -134,6 +136,9 @@ echo "==> Applying root Application (App-of-Apps)..."
 oc apply -f "${TMP_ROOT_APP}"
 
 echo "==> Done. ArgoCD will now reconcile the full stack."
+echo "    Finish MCP URL configuration after wave 0 creates the Gateway:"
+echo "      oc wait --for=create gateway/mcp-gateway -n mcp-gateway --timeout=300s"
+echo "      ./install-mcp-gateway.sh"
 echo ""
 echo "    Watch progress with:"
 echo "      oc get applications -n openshift-gitops -w"

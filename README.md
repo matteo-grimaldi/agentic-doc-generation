@@ -315,6 +315,8 @@ Playground entries retain the direct Service `/mcp` URL.
   its API key (`UPSTREAM_MODEL_API_KEY`). Agents never call this URL
   directly — they call the in-cluster gateway with a MaaS `sk-oai-` key.
 - `oc` CLI
+- Python 3 for configuration merging (and PyYAML for the optional
+  configuration-reading helpers and offline deployment tests)
 - This repo pushed to a git remote reachable by the cluster (GitHub,
   GitLab, or an internal git server) — ArgoCD needs to clone it
 - (Optional) A `GITHUB_TOKEN` with `public_repo` scope, to raise GitHub
@@ -330,18 +332,45 @@ Playground entries retain the direct Service `/mcp` URL.
 git clone <your-fork-of-this-repo>
 cd agentic-doc-generation
 UPSTREAM_MODEL_API_KEY=sk-... ./install-openshift-ai.sh   # RHOAI + AI Gateway / MaaS
+./ci-cd-pipeline/install-operator.sh                    # required Tekton CRDs
+bash gitops/prepare.sh                                 # images + generated ConfigMaps
 ./gitops/bootstrap.sh
+# Complete gateway configuration after Argo CD creates wave 0:
+oc wait --for=create gateway/mcp-gateway -n mcp-gateway --timeout=300s
+./install-mcp-gateway.sh
 ```
 
 `install-openshift-ai.sh` installs OpenShift AI (including AI Gateway /
 Models-as-a-Service), registers the upstream model, and mints a MaaS key
-into `external-model-credentials`. Then `gitops/bootstrap.sh`:
+into `external-model-credentials`. OpenShift Pipelines must also be
+installed before bootstrap because the App-of-Apps includes Tekton resources.
+
+`gitops/prepare.sh` runs the seven application component build scripts with
+`PREPARE_ONLY=true`: it creates/labels `doc-gen-demo`, builds their internal
+`:latest` images, applies prerequisite RBAC and the Hub PVC, and generates
+the OGX/knowledge ConfigMaps and configured agent credentials. It does not
+apply application Deployments, Services, Routes, or `MCPServer` CRs, or
+deploy the portal/pipeline. It reuses the same binary-build helper as normal
+component builds. Quay remains the default sidecar source; a private image
+needs suitable pull credentials. For GitOps, commit any sidecar image
+override in the four Deployments and `cluster-config` before bootstrap;
+setting a shell-only image override during preparation does not update GitOps.
+
+Preparation builds from the local checkout, while Argo CD reads your remote.
+Push manifest changes before bootstrap. Preparation on an existing cluster
+updates mutable image tags/configuration; it is not a read-only audit or a
+workload restart command. For an existing deployment, follow the explicit
+[configuration and rollout instructions](#configuration-updates-and-restarts).
+
+Then `gitops/bootstrap.sh`:
 
 1. Installs the OpenShift GitOps operator (if not already present) and
    waits for ArgoCD to come up
 2. Runs **`gitops/preflight.sh`** (checks MCPServer, AuthPolicy,
-   MCPGatewayExtension, and Tekton CRDs; warns
-   on missing AI Gateway / model Secrets and OGX ConfigMaps)
+   MCPGatewayExtension, and Tekton CRDs plus all seven application image
+   tags and all shared/knowledge ConfigMaps; warns on missing AI Gateway
+   or model Secrets). Missing required preparation stops bootstrap;
+   `GITOPS_PREFLIGHT_WARN_ONLY=1` is an explicit diagnostic bypass.
 3. Applies **`gitops/argocd-namespace-rolebindings.yaml`** so the Argo CD
    application-controller can reconcile **`doc-gen-demo`**,
    **`ci-cd-demo`**, and **`mcp-gateway`** (required on OpenShift GitOps
@@ -362,9 +391,10 @@ into `external-model-credentials`. Then `gitops/bootstrap.sh`:
      governance still use wave 0 / peer Service DNS (compliance-mcp
      tolerates governance-hub briefly unavailable — see
      `.cursor/rules/gitops-conventions.mdc`). After the Gateway is
-     Programmed, re-run `./install-mcp-gateway.sh` (already pulled in by
-     `./install-openshift-ai.sh`) to set `mcp_gateway_url` if it is
-     still empty.
+     created, finish the quick-start URL step above: `install-mcp-gateway.sh`
+     waits for Programmed, sets `mcp_gateway_url`, and restarts existing
+     agents so their environment picks it up. Do this before expecting
+     successful agent runs, even if their UIs are already Healthy.
    - **Wave 2** — CI/CD pipeline (Tekton resources)
 
    **Keycloak and Red Hat Developer Hub are *not* part of this
@@ -489,26 +519,43 @@ oc get route catalog-gen-agent -n doc-gen-demo -o jsonpath='https://{.spec.host}
 
 ## Quick start (without GitOps)
 
-For local iteration on the application components only — **note that
-Keycloak and Developer Hub always deploy this way, GitOps or not**,
-since they have no `gitops/apps/*.yaml` entry (see the GitOps section
-above):
+The default aggregate command deploys the full demo directly with `oc`:
+GitHub MCP server, MCP gateway wiring, four agents, Governance Hub,
+Compliance MCP server, Tekton pipeline resources, Keycloak, then Developer
+Hub. It does not install OpenShift AI or OpenShift Pipelines for you.
+Keycloak and Developer Hub have no `gitops/apps/*.yaml` entry and are
+always deployed imperatively (including when added to a GitOps installation).
 
 ```bash
 export GITHUB_TOKEN=ghp_xxx                 # optional, raises rate limits + enables search_code + propose-doc
-export EXTERNAL_MODEL_API_KEY=sk-xxx        # optional, depends on your endpoint
+UPSTREAM_MODEL_API_KEY=sk-... ./install-openshift-ai.sh
+./ci-cd-pipeline/install-operator.sh
+# Optional MaaS-key override if not using the installer-minted Secret:
+# export EXTERNAL_MODEL_API_KEY=sk-oai-...
 ./build-and-deploy-all.sh
 ```
 
-Or deploy a single component:
+The aggregate command provisions the gateway before the agents. The
+gateway script applies the committed `mcp-gateway/k8s/` resources, recreates
+and waits for the virtual-server compatibility Job, waits for the broker
+rollout, then runs the gateway installer to set `mcp_gateway_url`. Agent
+configuration regeneration preserves this URL. The two MCP backends are
+registered by Service DNS; compliance tools become usable when the later
+Compliance MCP server and Hub are running.
+
+To deploy only application components, select them explicitly (after the
+same OpenShift AI prerequisite; omit Tekton installation when excluding the
+pipeline). For a fresh non-GitOps deployment use this order:
 
 ```bash
 ./build-and-deploy-all.sh github-mcp-server
+./build-and-deploy-all.sh mcp-gateway
 ./build-and-deploy-all.sh doc-gen-agent
 ./build-and-deploy-all.sh openapi-gen-agent
+./build-and-deploy-all.sh catalog-gen-agent compliance-scan-agent governance-hub compliance-mcp-server
 ```
 
-To include the developer portal stack, deploy in this order (Keycloak
+If you excluded the portal above, add it in this order (Keycloak
 **must** be running before Developer Hub's `configure-rhdh` Job can
 provision users and the OIDC client):
 
@@ -598,7 +645,7 @@ config lives in two places:
 | File | What to set |
 |---|---|
 | [`doc-gen-agent/k8s/cluster-config.yaml`](doc-gen-agent/k8s/cluster-config.yaml) | `data.model_base_url` (in-cluster gateway `/v1` Service URL) and `data.model_name` (`external-model/<id>`) — shared by all four agents |
-| Each agent's `ogx/stack_run_config.yaml` | `registered_resources.models[0].model_id` / `provider_model_id` (bare id, must match `ExternalModel` name / `modelName`) |
+| [`doc-gen-agent/ogx/stack_run_config.yaml`](doc-gen-agent/ogx/stack_run_config.yaml) | Canonical source for the shared `ogx-stack-config`; `registered_resources.models[0].model_id` / `provider_model_id` must match the bare `ExternalModel` name / `modelName` |
 | [`ai-gateway/k8s/`](ai-gateway/k8s/) | `ExternalProvider`, `ExternalModel`, `MaaSModelRef`, subscription, and auth policy for the upstream model |
 
 The Secret holds a **MaaS** API key (`sk-oai-...`), not the upstream
@@ -616,9 +663,63 @@ oc create secret generic external-model-credentials \
 Upstream provider credentials stay in Secret `workshop-model-api-key` in
 namespace `llm` (from `UPSTREAM_MODEL_API_KEY`) — never committed.
 
-If using GitOps, commit and push the `cluster-config.yaml` /
-`stack_run_config.yaml` changes — ArgoCD's `selfHeal` will roll them out
-automatically. Secrets themselves should never be committed.
+### Configuration updates and restarts
+
+All four Deployments mount **one `ogx-stack-config` ConfigMap**. Every agent
+build now generates it from the canonical
+`doc-gen-agent/ogx/stack_run_config.yaml`, via
+[`scripts/configure-agents.sh`](scripts/configure-agents.sh). The other
+agents' stack files remain reference copies; deployment scripts do not read
+them. Their current inference/provider configuration is equivalent (only
+the distro label differs for catalog/compliance). Keep model identity in
+those references aligned when changing the canonical configuration.
+This shared configuration does not combine agent runs or budgets. Updating
+it affects every sidecar after restart. Independent stack ConfigMaps would
+be a separate architecture change.
+
+Knowledge remains per agent: `agent-knowledge`, `openapi-agent-knowledge`,
+`catalog-gen-knowledge`, and `compliance-scan-knowledge`. Both the shared
+stack and these maps are generated from files outside watched `k8s/`
+directories. Committing those files does not regenerate the ConfigMaps.
+`cluster-config` is the only committed shared ConfigMap manifest, owned by
+the doc-gen Application; do not duplicate it under the other agents.
+
+| Change | Apply/regenerate | Restart |
+|---|---|---|
+| `cluster-config` model identity or MLflow settings | GitOps: commit/push and wait for the doc-gen Application to sync. Non-GitOps: run `bash scripts/configure-agents.sh`. | All four agents; ConfigMap environment changes do not trigger rollouts. |
+| Canonical OGX stack | Commit/push for reproducibility, then run `bash scripts/configure-agents.sh`. | All four sidecars, by restarting their agent Deployments. |
+| Knowledge/guideline files | Run `bash scripts/configure-agents.sh <agent>` (or omit the argument for all maps). This also regenerates the shared stack and applies committed shared settings. | The selected agent; restart all four if shared settings or stack changed too. |
+| MaaS/upstream model resources or credentials | Keep model IDs aligned, apply the platform changes through `install-openshift-ai.sh` with appropriate credentials; use `EXTERNAL_MODEL_API_KEY` only for a MaaS key. | Installer restarts existing agents for URL changes; explicitly restart after other Secret/model changes. |
+| Installer-managed gateway URLs | `install-openshift-ai.sh` discovers `model_base_url`; `install-mcp-gateway.sh` discovers `mcp_gateway_url` after the relevant Gateway is Programmed. | Installers restart existing agents; wait for their rollouts. |
+| Application source/image | Rebuild with `PREPARE_ONLY=true bash <component>/build-and-deploy.sh` or `bash gitops/prepare.sh`; synchronize any manifest changes. | Explicitly restart affected Deployments to pull the rebuilt `:latest` image. |
+
+The doc-gen Application ignores the two installer-managed URL keys and
+uses `RespectIgnoreDifferences=true` so unrelated syncs retain their live
+values. The configuration generator also preserves both existing URLs
+before applying other committed settings; editing those URL values in git
+alone does not update an existing installation. Regeneration does not
+restart pods. Secrets must never be committed.
+
+For a model change, update the canonical stack's bare model IDs, the
+shared `cluster-config.model_name` (`external-model/<id>`), the reference
+stack files, and the corresponding `ExternalModel`/`MaaSModelRef` plus
+policy references under `ai-gateway/k8s/`. Apply the platform configuration,
+sync the committed settings, then regenerate the file-backed maps:
+
+```bash
+bash scripts/configure-agents.sh
+for agent in doc-gen-agent openapi-gen-agent catalog-gen-agent compliance-scan-agent; do
+  oc rollout restart deployment/"${agent}" -n doc-gen-demo
+  oc rollout status deployment/"${agent}" -n doc-gen-demo --timeout=300s
+done
+```
+
+For rebuild/deploy, the seven application component scripts also accept
+`PREPARE_ONLY=true` to stop before applying workload manifests or waiting
+for rollout. Ordinary deployment explicitly restarts workloads to pick up
+rebuilt image tags and generated configuration, and waits for rollout.
+MCP scripts first wait for the lifecycle operator to create their Deployment.
+The four agents' ordinary mode requires a configured gateway URL.
 
 ## Observability (MLflow tracing)
 
@@ -734,7 +835,8 @@ rates set, Overview cost widgets are non-empty after the run.
 agentic-doc-generation/
 ├── gitops/
 │   ├── bootstrap.sh                     # Install GitOps operator, RBAC, apply root app
-│   ├── preflight.sh                     # CRD/Secret/ConfigMap checks before bootstrap
+│   ├── prepare.sh                       # Build app images + generated maps; no workload apply
+│   ├── preflight.sh                     # CRD/image/ConfigMap prerequisites before bootstrap
 │   ├── argocd-namespace-rolebindings.yaml  # Argo CD admin in doc-gen-demo + ci-cd-demo + mcp-gateway
 │   ├── argocd-instance-demo.yaml        # Argo CD UI RBAC + rhdh-local-user token
 │   ├── root-app.yaml                    # ArgoCD App-of-Apps
@@ -759,28 +861,28 @@ agentic-doc-generation/
 │   ├── mlflow_telemetry.py              # Opt-in MLflow tracing helpers
 │   ├── knowledge.md                     # Documentation style guide injected into the agent prompt
 │   ├── k8s/cluster-config.yaml          # External model + MLflow URI — SHARED by all agents
-│   ├── ogx/stack_run_config.yaml        # OGX + external model config
+│   ├── ogx/stack_run_config.yaml        # Canonical SHARED OGX + external model config
 │   ├── build-and-deploy.sh
 │   └── k8s/
 ├── openapi-gen-agent/                   # OGX sidecar + Gradio UI — OpenAPI spec generation (independent)
 │   ├── agent.py                         # OGX Responses API agent, OpenAPI-focused system prompt
 │   ├── app.py                           # Gradio chat UI + POST /invoke
 │   ├── openapi-knowledge.md             # OpenAPI style guide injected into the agent prompt
-│   ├── ogx/stack_run_config.yaml        # OGX + external model config
+│   ├── ogx/stack_run_config.yaml        # Reference copy; deployment uses doc-gen's source
 │   ├── build-and-deploy.sh
 │   └── k8s/
 ├── compliance-scan-agent/               # Independent OGX + Gradio agent — Markdown report, no PRs
 │   ├── agent.py                         # Evidence classification + guideline-driven scan
 │   ├── app.py                           # Chat UI + POST /invoke + optional report callback
 │   ├── guidelines/                      # k8s-manifests.md, project-structure.md, pom-xml.md
-│   ├── ogx/stack_run_config.yaml
+│   ├── ogx/stack_run_config.yaml        # Reference copy; deployment uses doc-gen's source
 │   ├── build-and-deploy.sh
 │   └── k8s/
 ├── catalog-gen-agent/                   # Independent OGX + Gradio agent — catalog-info.yaml proposals
 │   ├── agent.py                         # Component + applicable API entities
 │   ├── app.py                           # Chat UI + POST /invoke + agentic-catalog/* PRs
 │   ├── guidelines/                      # catalog-component.md, api-detection.md
-│   ├── ogx/stack_run_config.yaml
+│   ├── ogx/stack_run_config.yaml        # Reference copy; deployment uses doc-gen's source
 │   ├── build-and-deploy.sh
 │   └── k8s/
 ├── governance-hub/                      # Independent FastAPI dashboard + REST API
@@ -814,8 +916,10 @@ agentic-doc-generation/
 ├── governance-hub-plugin/               # Custom RHDH dynamic plugin — Governance Hub embedded UI
 │   └── dist/                            # Built plugin artifact (OCI image published to quay.io/mcombi/rhdh-gov-hub)
 ├── mcp-gateway/                         # Connectivity Link MCP Gateway wiring (GitOps wave 0)
+│   ├── build-and-deploy.sh               # Non-GitOps wiring + compatibility Job + URL setup
 │   └── k8s/                             # Gateway, extension, AuthPolicy, routes, registrations, virtual servers
-├── build-and-deploy-all.sh              # Quick-start (non-GitOps) for app components
+├── scripts/configure-agents.sh          # Generate shared stack + per-agent knowledge; preserve URLs
+├── build-and-deploy-all.sh              # Non-GitOps full demo (includes gateways, pipeline, portal)
 ├── install-openshift-ai.sh              # One-time: OpenShift AI + AI Gateway/MaaS (needs UPSTREAM_MODEL_API_KEY) + calls install-mcp-gateway.sh
 ├── ai-gateway/k8s/                      # Gateway, ExternalModel, subscription manifests (applied by install script)
 ├── install-mcp-gateway.sh               # RHCL + MCP Gateway Operator; re-run to patch mcp_gateway_url

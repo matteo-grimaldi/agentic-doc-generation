@@ -12,8 +12,6 @@ IMAGE_NAME="doc-gen-agent"
 
 # shellcheck source=../scripts/lib-openshift-binary-build.sh
 source "${REPO_ROOT}/scripts/lib-openshift-binary-build.sh"
-# shellcheck source=../scripts/lib-mlflow-credentials.sh
-source "${REPO_ROOT}/scripts/lib-mlflow-credentials.sh"
 # shellcheck source=../scripts/lib-ogx-sidecar-deploy.sh
 source "${REPO_ROOT}/scripts/lib-ogx-sidecar-deploy.sh"
 
@@ -21,30 +19,19 @@ echo "==> Ensuring namespace ${NAMESPACE} exists..."
 oc get namespace "${NAMESPACE}" >/dev/null 2>&1 || oc create namespace "${NAMESPACE}"
 oc label namespace "${NAMESPACE}" opendatahub.io/dashboard=true modelmesh-enabled=false --overwrite >/dev/null
 
-echo "==> Applying cluster-config ConfigMap and RBAC..."
-oc apply -f "${SCRIPT_DIR}/k8s/cluster-config.yaml" -n "${NAMESPACE}"
+echo "==> Generating shared stack and agent knowledge configuration..."
+bash "${REPO_ROOT}/scripts/configure-agents.sh" "${IMAGE_NAME}"
 oc apply -f "${SCRIPT_DIR}/k8s/rbac.yaml" -n "${NAMESPACE}"
 
-ensure_mlflow_credentials_secret "${NAMESPACE}" "${REPO_ROOT}"
-ensure_ogx_mlflow_sidecar "${NAMESPACE}" "${REPO_ROOT}"
-
-echo "==> Creating/updating ogx-stack-config ConfigMap from ogx/stack_run_config.yaml..."
-oc create configmap ogx-stack-config \
-  --from-file=stack_run_config.yaml="${SCRIPT_DIR}/ogx/stack_run_config.yaml" \
-  -n "${NAMESPACE}" --dry-run=client -o yaml | oc apply -f -
-
-echo "==> Creating/updating agent-knowledge ConfigMap from knowledge.md..."
-oc create configmap agent-knowledge \
-  --from-file=knowledge.md="${SCRIPT_DIR}/knowledge.md" \
-  -n "${NAMESPACE}" --dry-run=client -o yaml | oc apply -f -
-
-if [[ -n "${EXTERNAL_MODEL_API_KEY:-}" ]]; then
-  echo "==> Creating/updating external-model-credentials secret from \$EXTERNAL_MODEL_API_KEY..."
-  oc create secret generic external-model-credentials --from-literal=api_key="${EXTERNAL_MODEL_API_KEY}" \
-    -n "${NAMESPACE}" --dry-run=client -o yaml | oc apply -f -
-else
-  echo "==> \$EXTERNAL_MODEL_API_KEY not set — skipping secret creation (install-openshift-ai.sh should have minted a MaaS key into external-model-credentials)."
+if [[ "${PREPARE_ONLY:-false}" != true ]]; then
+  mcp_url=$(oc get configmap cluster-config -n "${NAMESPACE}" -o jsonpath='{.data.mcp_gateway_url}')
+  if [[ -z "${mcp_url}" ]]; then
+    echo "error: provision MCP gateway first (bash mcp-gateway/build-and-deploy.sh), or use PREPARE_ONLY=true" >&2
+    exit 1
+  fi
 fi
+
+ensure_ogx_mlflow_sidecar "${NAMESPACE}" "${REPO_ROOT}"
 
 echo "==> NOTE: model_base_url in k8s/cluster-config.yaml should be the in-cluster"
 echo "    AI Gateway /v1 Service URL; EXTERNAL_MODEL_API_KEY is a MaaS sk-oai- key."
@@ -63,11 +50,20 @@ echo "==> Enabling local image lookup on ImageStream ${IMAGE_NAME}..."
 oc patch imagestream "${IMAGE_NAME}" -n "${NAMESPACE}" --type=merge \
   -p '{"spec":{"lookupPolicy":{"local":true}}}'
 
+if [[ "${PREPARE_ONLY:-false}" == true ]]; then
+  echo "==> ${IMAGE_NAME}: image/configuration prepared; workload deployment skipped."
+  exit 0
+fi
+
 echo "==> Applying Deployment, Service, and Route..."
 oc apply -f "${SCRIPT_DIR}/k8s/deployment.yaml" -n "${NAMESPACE}"
 oc apply -f "${SCRIPT_DIR}/k8s/route.yaml" -n "${NAMESPACE}"
 
 maybe_apply_ogx_mlflow_sidecar_image doc-gen-agent "${NAMESPACE}"
+
+# A rebuilt :latest tag or changed ConfigMap does not change the pod template.
+# Normal deployment explicitly replaces pods; PREPARE_ONLY has already exited.
+oc rollout restart deployment/"${IMAGE_NAME}" -n "${NAMESPACE}"
 
 echo "==> Waiting for rollout..."
 oc rollout status deployment/doc-gen-agent -n "${NAMESPACE}" --timeout=300s

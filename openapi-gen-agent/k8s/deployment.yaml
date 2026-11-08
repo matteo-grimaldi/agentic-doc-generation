@@ -1,6 +1,6 @@
-# Note: the ogx-stack-config and openapi-agent-knowledge ConfigMaps are
+# Note: the shared ogx-stack-config and openapi-agent-knowledge ConfigMaps are
 # managed by build-and-deploy.sh via:
-#   oc create configmap ogx-stack-config --from-file=stack_run_config.yaml=ogx/stack_run_config.yaml
+#   oc create configmap ogx-stack-config --from-file=stack_run_config.yaml=doc-gen-agent/ogx/stack_run_config.yaml
 #   oc create configmap openapi-agent-knowledge --from-file=openapi-knowledge.md=openapi-knowledge.md
 # Do NOT inline them here to avoid YAML-within-YAML parsing issues.
 #
@@ -8,6 +8,8 @@
 # Secret with doc-gen-agent (doc-gen-agent/k8s/cluster-config.yaml) — both
 # components point at the same in-cluster AI Gateway.
 ---
+# All agents use the canonical doc-gen-agent/ogx/stack_run_config.yaml source.
+# Regenerate maps without a build: bash scripts/configure-agents.sh; restart pods after updates.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
