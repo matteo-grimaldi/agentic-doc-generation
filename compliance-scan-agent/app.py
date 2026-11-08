@@ -115,6 +115,7 @@ async def _report_to_governance(
     status: str,
     report: str | None = None,
     error: str | None = None,
+    triggered_by: str = "invoke",
 ) -> None:
     """
     Fire-and-forget report of this run's outcome to the Governance Hub's
@@ -136,9 +137,12 @@ async def _report_to_governance(
         "report": report,
         "error": error,
     }
+    if triggered_by != "invoke":
+        payload["triggered_by"] = triggered_by
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
-            await client.post(f"{GOVERNANCE_HUB_URL}/api/runs", json=payload)
+            response = await client.post(f"{GOVERNANCE_HUB_URL}/api/runs", json=payload)
+            response.raise_for_status()
     except Exception as exc:
         logger.warning("Job %s: failed to report run to governance hub: %s", job_id, exc)
 
@@ -178,25 +182,31 @@ async def chat(message: str, history: list[dict]):
             "content": f"⚠️ Could not fetch the repo structure: {structure['error']}",
         }
         await _report_to_governance(
-            job_id, repo_url, "failed", error=f"could not fetch repo structure: {structure['error']}"
-        )
+            job_id, repo_url, "failed", error=f"could not fetch repo structure: {structure['error']}", triggered_by="ui")
         yield history
         return
 
     history[-1] = {"role": "assistant", "content": ""}
     response_so_far = ""
 
-    async for chunk in run_agent(repo_url, repo_structure=structure):
-        response_so_far += chunk
-        history[-1] = {"role": "assistant", "content": response_so_far}
+    try:
+        async for chunk in run_agent(repo_url, repo_structure=structure):
+            response_so_far += chunk
+            history[-1] = {"role": "assistant", "content": response_so_far}
+            yield history
+    except Exception as exc:
+        logger.exception("Chat job %s failed", job_id)
+        await _report_to_governance(job_id, repo_url, "failed", error=str(exc), triggered_by="ui")
+        history[-1] = {"role": "assistant", "content": "⚠️ Generation failed. Please try again."}
         yield history
+        return
 
     report = extract_compliance_report(response_so_far)
     if not report.strip():
         logger.warning("Job %s: agent produced no usable report", job_id)
-        await _report_to_governance(job_id, repo_url, "failed", error="agent produced no usable report")
+        await _report_to_governance(job_id, repo_url, "failed", error="agent produced no usable report", triggered_by="ui")
     else:
-        await _report_to_governance(job_id, repo_url, "completed", report=report)
+        await _report_to_governance(job_id, repo_url, "completed", report=report, triggered_by="ui")
 
     yield history
 

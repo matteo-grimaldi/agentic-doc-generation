@@ -96,7 +96,8 @@ async def chat(message: str, history: list[dict]):
         return
 
     repo_url = message.strip()
-    logger.info("User repo URL: %s", repo_url[:200])
+    job_id = str(uuid.uuid4())
+    logger.info("Job %s: user repo URL: %s", job_id, repo_url[:200])
 
     history = history + [{"role": "user", "content": message}]
     yield history, "", ""
@@ -104,13 +105,26 @@ async def chat(message: str, history: list[dict]):
     response_so_far = ""
     history = history + [{"role": "assistant", "content": ""}]
 
-    async for chunk in run_agent(repo_url):
-        response_so_far += chunk
-        history[-1] = {"role": "assistant", "content": response_so_far}
+    try:
+        async for chunk in run_agent(repo_url):
+            response_so_far += chunk
+            history[-1] = {"role": "assistant", "content": response_so_far}
+            yield history, "", ""
+    except Exception as exc:
+        logger.exception("Chat job %s failed", job_id)
+        await _report_to_governance(job_id, repo_url, "failed", error=str(exc), triggered_by="ui")
+        history[-1] = {"role": "assistant", "content": "⚠️ Generation failed. Please try again."}
         yield history, "", ""
+        return
 
     # Final yield: PR-ready doc only (stream may include tool-status lines).
-    yield history, repo_url, extract_architecture_document(response_so_far)
+    document = extract_architecture_document(response_so_far)
+    await _report_to_governance(
+        job_id, repo_url, "completed" if document.strip() else "failed",
+        error=None if document.strip() else "agent produced no document",
+        triggered_by="ui",
+    )
+    yield history, repo_url, document
 
 
 class InvokeRequest(BaseModel):
@@ -190,6 +204,7 @@ async def _report_to_governance(
     pr_url: str | None = None,
     pr_number: int | None = None,
     error: str | None = None,
+    triggered_by: str = "invoke",
 ) -> None:
     """
     Fire-and-forget report of this run's outcome to the Governance Hub's
@@ -210,9 +225,12 @@ async def _report_to_governance(
         "pr_number": pr_number,
         "error": error,
     }
+    if triggered_by != "invoke":
+        payload["triggered_by"] = triggered_by
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
-            await client.post(f"{GOVERNANCE_HUB_URL}/api/runs", json=payload)
+            response = await client.post(f"{GOVERNANCE_HUB_URL}/api/runs", json=payload)
+            response.raise_for_status()
     except Exception as exc:
         logger.warning("Job %s: failed to report run to governance hub: %s", job_id, exc)
 
@@ -275,6 +293,12 @@ async def propose_pr_clicked(repo_url: str, content: str) -> str:
     job_id = str(uuid.uuid4())
     logger.info("UI-triggered PR proposal job %s for %s", job_id, repo_url)
     result = await _propose_architecture_doc(repo_url, content, job_id)
+
+    await _report_to_governance(
+        job_id, repo_url, "failed" if "error" in result else "completed",
+        pr_url=result.get("pr_url"), pr_number=result.get("pr_number"),
+        error=result.get("error"), triggered_by="ui-pr",
+    )
 
     if "error" in result:
         return f"⚠️ Failed to open PR for `{repo_url}`: {result['error']}"

@@ -78,6 +78,7 @@ class TrackedRepo(Base):
 
     last_doc_gen_run = Column(DateTime, nullable=True)
     last_openapi_gen_run = Column(DateTime, nullable=True)
+    last_catalog_gen_run = Column(DateTime, nullable=True)
     last_compliance_scan_run = Column(DateTime, nullable=True)
 
     # Set from the most recent compliance-scan-agent run's report (see
@@ -94,6 +95,10 @@ class TrackedRepo(Base):
     openapi_pr_url = Column(String, nullable=True)
     openapi_pr_number = Column(Integer, nullable=True)
     openapi_pr_status = Column(String, nullable=True)
+
+    catalog_pr_url = Column(String, nullable=True)
+    catalog_pr_number = Column(Integer, nullable=True)
+    catalog_pr_status = Column(String, nullable=True)
 
     runs = relationship(
         "AgentRun", back_populates="repo", order_by="desc(AgentRun.started_at)",
@@ -112,12 +117,9 @@ class TrackedRepo(Base):
     @property
     def violations(self) -> list[str]:
         """Missing-artifact and compliance-scan violations.
-        `has_openapi_spec is False` only after at least one
-        openapi-gen-agent run has actually attempted generation for this
-        repo (see app.py) -- a repo that's simply never been checked for
-        an OpenAPI spec isn't flagged as violating that rule, since most
-        repos aren't HTTP API services. `compliance_scan_has_violations`
-        follows the same "only after an actual run" rule: it's None until
+        A successful file-tree check sets `has_openapi_spec` whether or not
+        OpenAPI generation has run; False adds an informational violation.
+        `compliance_scan_has_violations` is None until
         compliance-scan-agent has reported at least once."""
         missing = []
         if not self.has_architecture_doc:
@@ -131,7 +133,7 @@ class TrackedRepo(Base):
 
 class AgentRun(Base):
     """
-    One run of doc-gen-agent, openapi-gen-agent, or compliance-scan-agent
+    One run of doc-gen-agent, openapi-gen-agent, catalog-gen-agent, or compliance-scan-agent
     against a tracked repo.
 
     Created either by app.py's remediate handler (status="accepted",
@@ -147,14 +149,14 @@ class AgentRun(Base):
     id = Column(Integer, primary_key=True)
     job_id = Column(String, nullable=False, index=True)
     repo_id = Column(Integer, ForeignKey("tracked_repos.id"), nullable=False)
-    agent_type = Column(String, nullable=False)  # "doc-gen" | "openapi-gen" | "compliance-scan"
+    agent_type = Column(String, nullable=False)  # doc-gen | openapi-gen | catalog-gen | compliance-scan
     status = Column(String, nullable=False)  # "accepted" | "completed" | "failed" | "skipped"
     started_at = Column(DateTime, default=_utcnow, nullable=False)
     completed_at = Column(DateTime, nullable=True)
     pr_url = Column(String, nullable=True)
     pr_number = Column(Integer, nullable=True)
     error_message = Column(Text, nullable=True)
-    triggered_by = Column(String, default="invoke", nullable=False)  # "invoke" | "ui" | "governance-hub"
+    triggered_by = Column(String, default="invoke", nullable=False)  # invoke | ui | ui-pr | governance-hub
     # Full Markdown compliance report, set only for agent_type ==
     # "compliance-scan" runs (see app.py's report_run) -- this agent
     # never opens a PR, so the report itself (rendered on the repo detail

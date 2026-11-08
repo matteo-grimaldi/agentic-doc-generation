@@ -396,8 +396,8 @@ while the other agents use the first-class SDK field.
   happens through OGX's MCP tools; this app has no REST structure prefetch.
 - Test `_propose_architecture_doc()` with `ARCHITECTURE_DOC_PATH` and
   `ARCHITECTURE_DOC_BASE_BRANCH`. Assert background-run governance reports
-  use `agent_type="doc-gen"` and PR metadata. The current chat handler
-  does not send the terminal governance callback used by the other agents.
+  use `agent_type="doc-gen"` and PR metadata. Chat reports terminal outcomes
+  with `triggered_by="ui"`; explicit proposal outcomes use `ui-pr`.
 
 ### openapi-gen-agent
 
@@ -417,10 +417,10 @@ while the other agents use the first-class SDK field.
   tests; keep the real detector when testing the preflight decision.
 - Test `NOT_AN_API:` output, fenced/raw YAML, leading comments/narration,
   empty output, unrelated fenced blocks, and output mixed with backend
-  errors in `extract_openapi_spec()`. Check schema validity separately
-  from extraction; a nonempty returned string is not proof of OpenAPI
-  3.0.x validity. Use PyYAML for parsing and a compatible OpenAPI schema
-  validator in development dependencies when adding validation tests.
+  errors in `extract_openapi_spec()`. Exercise the real YAML/OpenAPI 3.0
+  validator in extraction and immediately before proposals; malformed output
+  must not reach the proposal server. Schema validity does not establish
+  source accuracy.
 - Verify `_propose_openapi_spec()` uses `OPENAPI_SPEC_PATH`, optional
   `OPENAPI_SPEC_BASE_BRANCH`, and `branch_prefix="agentic-openapi"`.
   Both chat and background paths report `agent_type="openapi-gen"` with
@@ -496,8 +496,11 @@ footer, and the background worker proposes any nonempty cleaned result.
 An empty-output test does not prove failed or partial documents are never
 proposed. Add an explicit regression test and address the policy in source
 if that guarantee is required; do not claim it from a passing mock.
-Likewise, OpenAPI extraction can return nonempty content without an
-`openapi:` key, catalog extraction only checks for a `backstage.io`
+OpenAPI extraction now requires YAML and OpenAPI 3.0 schema validity, and
+the proposal helper revalidates the final content before any write request.
+Test rejection of malformed output, external/unresolved refs, and aliases;
+only local JSON-pointer refs are supported. This does not verify endpoints
+against source evidence. Catalog extraction only checks for a `backstage.io`
 apiVersion, and compliance extraction does not verify table content.
 Add explicit malformed-output and error-mixed-output cases rather than
 assuming these extractors are schema validators.

@@ -5,6 +5,11 @@ A GitOps-provisioned demo showing four independent AI agents on
 and checking architectural compliance — a simplified take on
 [opendatahub-io/architecture-context](https://github.com/opendatahub-io/architecture-context).
 
+The demo targets **Java application repositories**. For OpenAPI generation,
+use Java HTTP services with Spring MVC/Spring Boot or JAX-RS-style
+controllers/resources and DTOs. Java-only describes the supported demo
+scope; the application does not currently enforce a repository-language gate.
+
 Give any agent a GitHub repository URL. Each explores the repo via a
 shared GitHub MCP server and synthesizes its output through its OGX
 sidecar and the in-cluster OpenShift AI AI Gateway / Models-as-a-Service.
@@ -13,7 +18,7 @@ The gateway fronts **your own external, OpenAI-compatible endpoint**
 
 - **doc-gen-agent** — an architecture document with embedded Mermaid (C4)
   diagrams, with an opt-in "Propose as PR" button
-- **openapi-gen-agent** — an OpenAPI 3.0.x specification (YAML), for repos
+- **openapi-gen-agent** — an OpenAPI 3.0.x specification (YAML), for Java repos
   that look like HTTP API services and don't already ship one, with its
   own opt-in "Propose as PR" button
 - **compliance-scan-agent** — a Markdown report checking Kubernetes/OpenShift
@@ -30,8 +35,8 @@ reports findings. All four expose their own `POST /invoke` endpoint.
 
 Two supporting services provide governance: **Governance Hub** is an
 independent dashboard and REST API with persistent run history, checks,
-and explicit remediation triggers for doc-gen, OpenAPI, and compliance
-scanning; **Compliance MCP Server** exposes that state as read-only tools.
+and explicit remediation triggers for all four agents;
+**Compliance MCP Server** exposes that state as read-only tools.
 The optional Developer Hub plugin embeds the Hub dashboard.
 
 > **Looking for the original, fully in-cluster design?** The
@@ -126,9 +131,11 @@ flowchart TB
     GovHub -->|"explicit POST /invoke"| DocGradio
     GovHub -->|"explicit POST /invoke"| ApiGradio
     GovHub -->|"explicit POST /invoke"| ScanGradio
-    DocGradio -.->|"optional invoke callback"| GovHub
+    GovHub -->|"explicit POST /invoke"| CatalogGradio
+    DocGradio -.->|"optional chat / invoke callbacks"| GovHub
     ApiGradio -.->|"optional chat / invoke callbacks"| GovHub
     ScanGradio -.->|"optional chat / invoke callbacks"| GovHub
+    CatalogGradio -.->|"optional chat / invoke callbacks"| GovHub
     GitHubMCP -->|"GitHub API"| GitHub
     RHDH -->|"OIDC"| RHBK
     RHDH -->|"Governance Hub plugin iframe"| GovHub
@@ -162,8 +169,11 @@ user invokes:
 1. User pastes a GitHub repo URL into the Gradio chat UI
 2. Agent calls `get_repo_info` (default branch, language) then
    `get_repo_structure` (filtered file tree) on the GitHub MCP server
-3. Agent reads the ~15-20 most architecturally relevant files (README,
-   entry points, manifests, Dockerfiles, k8s/CI configs)
+3. Agent surveys 6–10 relevant files with `get_file_outline`, then reads
+   selected implementations/configuration in full. The prompt budgets at
+   most eight `read_file` calls (`MAX_READ_FILES=8` in the Deployment),
+   including at most one README-style document. It avoids rereading the
+   same path and reserves inference iterations for synthesis.
 4. The configured model (reached through the in-cluster OpenShift AI
    AI Gateway / Models-as-a-Service, which fronts an upstream
    OpenAI-compatible endpoint) synthesizes a structured architecture
@@ -174,17 +184,32 @@ user invokes:
 6. Everything streams back into the chat UI
 
 **openapi-gen-agent:**
-1. User pastes a GitHub repo URL into its own Gradio chat UI
+
+1. User pastes a Java HTTP service's GitHub repo URL into its own Gradio chat UI
 2. Agent fetches the repo's file tree (zero model budget) and checks
    whether it already ships an OpenAPI/Swagger spec, or looks like an
    HTTP API service without one
-3. If so, it calls `get_repo_structure`/`get_file_outline`/`read_file` on
-   the GitHub MCP server to find route/controller/handler files and
-   request/response models
-4. The configured model synthesizes a valid OpenAPI 3.0.x specification
-   (YAML) from what it found — never inventing endpoints it has no
-   evidence for
-5. Everything streams back into its own chat UI
+3. The application classifies `.java` files by controller/resource and
+   DTO/model naming conventions, handing the model at most four controller
+   files and three model files. The model uses `get_file_outline` for
+   signatures and annotations, and `read_file` only for model/DTO details
+   missing from outlines. Its system prompt prohibits further repository
+   discovery and full controller reads.
+4. The configured model is instructed to derive an OpenAPI 3.0.x
+   specification from the observed Java annotations and model signatures.
+5. Output streams to chat. YAML and OpenAPI 3.0 schema validation gate
+   the PR-ready result and both proposal paths. Generated specifications
+   must be self-contained, using local JSON-pointer `$ref` references;
+   YAML aliases and external references are rejected. Schema validation
+   does not prove that endpoints or schemas match the source: review the
+   output before proposing or merging it.
+
+Coverage is bounded by those candidates and the inference budget. Java
+services with unconventional filenames, programmatic route registration,
+or details absent from outlines may be missed or incompletely described.
+The fallback message requesting broader discovery conflicts with the
+system prompt; it is not a supported discovery path. Non-Java discovery
+is outside the demo scope.
 
 **compliance-scan-agent:**
 
@@ -242,7 +267,7 @@ separately from the Developer Hub plugin that embeds its dashboard.
 | `GET /api/repos/{owner}/{repo}/status` | Read status and recorded run history |
 | `POST /api/runs` | Receive optional agent outcome callbacks |
 | `POST /api/repos/{owner}/{repo}/check` | Refresh artifact checks through the GitHub MCP server's file-tree REST API; no model call |
-| `POST /api/repos/{owner}/{repo}/remediate` | Explicitly trigger doc-gen, OpenAPI generation, or compliance scanning via that agent's `/invoke` |
+| `POST /api/repos/{owner}/{repo}/remediate` | Explicitly trigger any of the four agents via its `/invoke`; body selects `doc-gen`, `openapi-gen`, `catalog-gen`, or `compliance-scan` |
 
 Artifact checks look for architecture documentation and OpenAPI files on
 the default branch; they check presence, not content quality. Opening a
@@ -250,12 +275,25 @@ PR does not establish that its output has been merged. The `compliant`
 flag reflects architecture-document presence; the separate violations
 list can also include missing OpenAPI or compliance-scan findings.
 
+These signals are independent: a repository can be `compliant: true`
+while still listing OpenAPI or scan violations. `null` artifact fields
+mean not checked; a successful tree check sets OpenAPI presence even if
+no OpenAPI generation has run. Catalog runs and PR links appear in history
+but do not change the compliance flag or add a catalog requirement.
+
+Checks run after callbacks or an explicit **Refresh compliance check** /
+`POST .../check`; there is no scheduled refresh. A failed refresh retains
+previous artifact values, while `last_compliance_check` records the attempted
+check. The filtered, bounded tree can miss files. PR links/statuses record
+the latest reported proposal; refresh does not query GitHub for PR merge
+status. Merge into the default branch and refresh to update artifact badges.
+
 Agent reporting is optional through `GOVERNANCE_HUB_URL`; an empty value
-disables callbacks, and a Hub outage must not block generation. Doc-gen
-reports `/invoke` outcomes; OpenAPI and compliance scanning also report
-chat outcomes. The current Hub accepts these three agent types only:
-catalog generation attempts callbacks, but `catalog-gen` is rejected and
-the Hub cannot trigger it. The agents remain independent, and the Hub
+disables callbacks, and a Hub outage does not block generation. All four
+agents report chat and `/invoke` outcomes; the three PR-capable agents also
+report explicit UI proposal outcomes with PR links or errors. History
+distinguishes `ui`, `ui-pr`, `invoke`, and Hub-triggered runs. Callback
+failures are logged, without retry or durable delivery. The agents remain independent, and the Hub
 uses their public HTTP interfaces rather than their internals.
 
 ### Compliance MCP Server (`compliance-mcp-server/`)
@@ -319,11 +357,9 @@ Playground entries retain the direct Service `/mcp` URL.
   configuration-reading helpers and offline deployment tests)
 - This repo pushed to a git remote reachable by the cluster (GitHub,
   GitLab, or an internal git server) — ArgoCD needs to clone it
-- (Optional) A `GITHUB_TOKEN` with `public_repo` scope, to raise GitHub
-  API rate limits and enable the `search_code` tool. Required (with its
-  write access, which `public_repo` already includes) if you want a
-  PR-capable agent's `/invoke` endpoint to propose its output back to its
-  source repo via PR — see
+- (Optional) A `GITHUB_TOKEN` to raise GitHub API rate limits and enable
+  the `search_code` tool. Proposing output as a PR requires the token to
+  have write access to the target repository — see
   [CI/CD pipeline demo](#cicd-pipeline-demo-openshift-pipelines)
 
 ## Quick start (GitOps)
@@ -574,11 +610,11 @@ bash developer-hub/build-and-deploy.sh     # waits for Keycloak, then brings up 
 3. Watch the agent:
    - Call `get_repo_info` → learns the default branch and primary language
    - Call `get_repo_structure` → sees the filtered file tree
-   - Call `read_file` repeatedly → reads the README, main source files,
-     build manifests, Dockerfiles, k8s manifests
+   - Survey relevant files with `get_file_outline`, then spend the bounded
+     full-read budget on selected source/configuration and one README if needed
    - Stream back a full architecture document with three embedded Mermaid
      C4 diagrams (context, container, component)
-4. Try a few different repos to see how the output adapts — a small CLI
+4. Try a few different Java repos to see how the output adapts — a small Java CLI
    tool produces a much shorter document than a multi-service platform
 5. Click **"Propose as PR"** to open a pull request with the generated
    document against the analyzed repo (requires a `GITHUB_TOKEN` with
@@ -588,11 +624,12 @@ bash developer-hub/build-and-deploy.sh     # waits for Keycloak, then brings up 
 
 1. Open the openapi-gen agent route in a browser (separate Route from
    doc-gen-agent's)
-2. Paste a repo URL that exposes an HTTP API, e.g.
-   `https://github.com/fastapi/fastapi`
-3. Watch the agent check whether a spec is needed, then (if so) explore
-   route/controller files and stream back a valid OpenAPI 3.0.x YAML
-   document
+2. Paste the URL of a Java HTTP service with Spring MVC/Spring Boot or
+   JAX-RS controllers/resources and no committed OpenAPI/Swagger file.
+   Use your own repository or fork if you plan to propose the result.
+3. Watch the application check whether a spec is needed and preselect Java
+   controllers/DTOs by naming convention. The agent outlines those files,
+   reads DTO details when needed, and streams its OpenAPI YAML for review.
 4. For a repo that already ships a spec, or doesn't look like an API
    service, the agent reports that and stops — no spec is generated
 5. Click **"Propose as PR"** to open a pull request with the generated
@@ -600,8 +637,9 @@ bash developer-hub/build-and-deploy.sh     # waits for Keycloak, then brings up 
 
 **compliance-scan-agent (report only):**
 
-1. Open the compliance-scan agent route and paste a GitHub repository URL,
-   such as `https://github.com/matteo-grimaldi/agentic-doc-generation`.
+1. Open the compliance-scan agent route and paste a Java application's
+   GitHub repository URL, ideally with `pom.xml` and Kubernetes/OpenShift
+   manifests so all three guideline categories can be demonstrated.
 2. Watch it inspect project-structure signals and selected
    Kubernetes/OpenShift manifests, Dockerfiles, and `pom.xml` when present.
 3. Review its Markdown findings against the three guideline categories;
@@ -613,7 +651,8 @@ bash developer-hub/build-and-deploy.sh     # waits for Keycloak, then brings up 
 
 **catalog-gen-agent (Backstage catalog metadata):**
 
-1. Open the catalog-gen agent route and paste a GitHub repository URL.
+1. Open the catalog-gen agent route and paste a Java application's GitHub
+   repository URL.
    Use a repository you can write to if you plan to propose the result.
 2. Review the streamed `catalog-info.yaml`: the Component should describe
    the repo, preserve useful existing catalog metadata, and link applicable
@@ -630,8 +669,35 @@ For either new agent, automation can send
 `202 Accepted` with `{"status": "accepted", "job_id": "..."}`.
 Compliance scanning sends its background report through the optional Hub
 callback; catalog generation instead attempts a catalog PR after generation.
-Catalog callbacks are not currently accepted by the Hub (see
+Both agents report to the Hub when configured (see
 [Governance services](#governance-services)).
+
+### Invocation lifecycle
+
+Each of the four agents accepts the same request contract at its own Route:
+
+```http
+POST /invoke
+Content-Type: application/json
+
+{"prompt": "https://github.com/<owner>/<java-app>"}
+```
+
+The response is `202 Accepted` with
+`{"status": "accepted", "job_id": "<uuid>"}`. A missing/invalid `prompt`
+field returns 422; a blank prompt returns 400. Acceptance means that an
+in-process FastAPI background task was scheduled, not that generation or
+a PR succeeded. Use a repository URL; malformed/non-GitHub prompts may
+not produce a trackable outcome. The `job_id` correlates logs and optional
+Hub history. There is no agent-side job-status endpoint or durable queue:
+pod restarts can lose pending work and callbacks, leaving Hub runs accepted.
+
+Doc-gen, OpenAPI, and catalog invocation attempt a PR after eligible output
+is generated; compliance invocation only produces a report. Chat streams
+results without opening PRs until an explicit button click. The CI/CD
+pipeline invokes only doc-gen and OpenAPI. To monitor background work,
+read the selected agent container's logs and optional Hub history; rerun
+deliberately after failure, since invocation has no deduplication key.
 
 ## Model configuration
 
@@ -1078,8 +1144,8 @@ Deployment/Service/Route for it — so it works with **any public repo
 that has a Dockerfile**, not just this one.
 
 Prerequisites: the Red Hat **OpenShift Pipelines** operator (Tekton), and
-a `GITHUB_TOKEN` (`public_repo` scope is sufficient — it includes write
-access) configured on the GitHub MCP server, so it can open PRs against
+a `GITHUB_TOKEN` with write access to the target repository configured
+on the GitHub MCP server, so it can open PRs against
 the repo you point the pipeline at. Without a token, generation still
 runs for both agents; each PR step just logs a warning and is skipped.
 
@@ -1188,8 +1254,7 @@ server(s) already deployed in `doc-gen-demo`.
   ephemeral storage). Use `OGX_MLFLOW_SIDECAR_MODE=quay` and a pre-built
   [`quay.io/mgrimald/ogx-mlflow-sidecar`](https://quay.io/repository/mgrimald/ogx-mlflow-sidecar)
   image when the in-cluster build cannot run.
-- This demo analyzes **public** GitHub repos only (the GitHub MCP server
-  uses unauthenticated or token-based REST calls, no OAuth flow).
+- The demo uses public GitHub repositories.
 - `search_code` requires a `GITHUB_TOKEN` (GitHub's code search API does
   not support unauthenticated requests).
 - Proposing generated output from doc-gen-agent, openapi-gen-agent, or
@@ -1216,10 +1281,28 @@ server(s) already deployed in `doc-gen-demo`.
   partial (or no) result rather than
   exhaustive coverage — this mirrors the token-budget tuning notes in the
   reference ocp-troubleshooter-demo.
+- The GitHub MCP server also bounds returned evidence:
+
+  | Setting | Default | Effect |
+  |---|---|---|
+  | `MAX_TREE_ENTRIES` | 800 files | Filtered tree entries; GitHub may independently truncate its recursive tree. |
+  | `MAX_FILE_BYTES` | 20,000 bytes | Ordinary full-file reads, truncated before UTF-8 decoding. |
+  | `MAX_DOC_FILE_BYTES` | 8,000 bytes | README/CHANGELOG-style and Markdown/text documentation reads. |
+  | `MAX_OUTLINE_BYTES` | 4,000 characters | Outline string length, despite the setting's name. |
+
+  Responses include a `truncated` flag. Tree limits also affect eligibility
+  detection, candidate selection, and Hub artifact checks, so apparent
+  absence may reflect incomplete coverage. Configure these environment
+  variables in `github-mcp-server/k8s/mcpserver.yaml` under `spec.config.env`
+  and restart the operator-owned server Deployment after applying changes.
+  MCP tree calls and REST `/repo-structure` also accept a `max_entries`
+  override; current agent/Hub prefetches use the server default.
 - openapi-gen-agent's file-tree heuristic (`detect_needs_openapi`) is a
   cheap pre-filter, not authoritative — the agent's own system prompt
   re-confirms and bails out with `NOT_AN_API` if it disagrees, so a wrong
-  heuristic trigger costs one extra bounded agent run, never a bogus PR.
+  heuristic trigger can cost a bounded agent run. YAML/OpenAPI schema
+  validation prevents structurally invalid proposals; source accuracy
+  still requires review.
 - Inference quality and latency depend on the upstream endpoint registered
   behind the AI Gateway — this repo provisions the gateway and ExternalModel
   wiring, not the upstream model weights or GPU serving.

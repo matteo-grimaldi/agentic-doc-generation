@@ -32,8 +32,11 @@ hooks using fake SDK classes. Telemetry tests import this agent's own copy;
 they do not import another agent's application or tests. Workspace setup
 errors retain this agent's existing exception policy.
 
-Extraction tests characterize current behavior; they do not prove model
-quality or schema correctness. OpenAPI background model rejection currently reports failed after empty extraction, whereas chat reports skipped. Unrelated nonempty YAML can also survive extraction; tests explicitly document these limitations.
+Extraction and proposal tests use the real YAML/OpenAPI 3.0 validator and
+reject malformed specs, external or unresolved references, and YAML aliases.
+They do not prove that generated endpoints match repository evidence.
+OpenAPI background model rejection currently reports failed after empty
+extraction, whereas chat reports skipped.
 
 Python 3.11.18 validation uses pytest 9.2.0, pytest-asyncio 1.4.1.post1,
 HTTPX 0.28.1, Gradio 6.31.0, OGX client 1.1.3, MLflow 3.18.0, and PyYAML

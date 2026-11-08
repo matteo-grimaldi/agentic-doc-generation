@@ -50,7 +50,8 @@ async def test_chat_stream_and_pr_state(agent_modules, monkeypatch):
     assert result[-1][0][-1]["content"] == "thinking\n" + DOC
     assert history == original
     proposal.assert_not_awaited()
-    report.assert_not_awaited()
+    assert report.await_args.args[1:3] == (URL, "completed")
+    assert report.await_args.kwargs["triggered_by"] == "ui"
 
 
 @pytest.mark.asyncio

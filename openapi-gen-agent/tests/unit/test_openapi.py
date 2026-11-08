@@ -46,14 +46,31 @@ def test_message_exact_paths_and_ref(agent_modules):
     assert "do not call get_repo_info" in text
 
 
-@pytest.mark.parametrize("raw,expected", [("", ""), (" \n", ""), ("NOT_AN_API: CLI", ""), ("not_an_api: library", ""), ('```yaml\n# comment\nopenapi: "3.0.3"\npaths: {}\n```', 'openapi: "3.0.3"\npaths: {}\n'), ('narration\nopenapi: "3.0.3"\npaths: {}', 'openapi: "3.0.3"\npaths: {}\n')])
-def test_spec_extraction(agent_modules, raw, expected):
-    assert agent_modules[0].extract_openapi_spec(raw) == expected
+@pytest.mark.parametrize("prefix", ["", "# comment\n", "narration\n"])
+def test_spec_extraction(agent_modules, profile, prefix):
+    assert agent_modules[0].extract_openapi_spec(prefix + profile.output) == profile.output
+    assert agent_modules[0].extract_openapi_spec("```yaml\n" + prefix + profile.output + "```") == profile.output
 
 
-def test_extraction_is_not_a_validator(agent_modules):
-    # Current behavior retains unrelated nonempty fenced text; do not call it valid OpenAPI.
-    assert agent_modules[0].extract_openapi_spec('```yaml\nhello: world\n```') == "hello: world\n"
+@pytest.mark.parametrize("raw", ["", " \n", "NOT_AN_API: CLI", "not_an_api: library",
+    "random prose", "```yaml\nhello: world\n```", "openapi: [broken", "openapi: '3.0.3'\npaths: {}"])
+def test_extraction_rejects_invalid_output(agent_modules, raw):
+    assert agent_modules[0].extract_openapi_spec(raw) == ""
+
+
+@pytest.mark.parametrize("suffix", [
+    "components:\n  schemas:\n    Thing:\n      $ref: 'https://example.invalid/schema.yaml'\n",
+    "components:\n  schemas:\n    Thing:\n      $ref: 'file:///etc/passwd'\n",
+    "components:\n  schemas:\n    Thing:\n      $ref: '#/components/schemas/Missing'\n",
+    "extra: &cycle [*cycle]\n",
+])
+def test_validation_rejects_external_unresolved_and_cyclic_refs(agent_modules, profile, suffix):
+    assert agent_modules[0].validate_openapi_spec(profile.output + suffix)
+
+
+def test_validation_accepts_local_reference(agent_modules, profile):
+    spec = profile.output + "components:\n  schemas:\n    Thing: {type: object}\n    Alias: {$ref: '#/components/schemas/Thing'}\n"
+    assert agent_modules[0].validate_openapi_spec(spec) is None
 
 
 def test_fixture_yaml_contract(agent_modules, profile):

@@ -23,6 +23,11 @@ for code exploration. It is a simplified take on
 The four agents are fully independent — separate pods, UIs, and
 budgets; none of them trigger each other.
 
+The supported demo inputs are Java application repositories. OpenAPI
+generation targets Spring MVC/Spring Boot or JAX-RS-style Java services;
+broader language discovery is outside the demo scope. This is a scope
+decision, not a language-validation gate currently enforced by the agents.
+
 > This is the `main` branch. The [`local-model`](../../tree/local-model)
 > branch preserves the original design where the model is served
 > in-cluster by vLLM on OpenShift AI (GPU required) — its own `AGENTS.md`
@@ -77,14 +82,13 @@ never opens a PR — its only deliverable is a Markdown report, returned in
 its chat UI and (when invoked via `/invoke`) sent to `governance-hub`'s
 `POST /api/runs` callback. Chat outcomes also use this optional callback.
 `governance-hub` is an independent FastAPI dashboard and REST API: it
-*observes* doc-gen, OpenAPI, and compliance-scan outcomes via optional
+*observes* doc-gen, OpenAPI, catalog, and compliance-scan outcomes via optional
 `POST /api/runs` callbacks, controlled by each agent's
-`GOVERNANCE_HUB_URL` env var, and explicitly *triggers* those three via
-their existing `POST /invoke` endpoints. Doc-gen chat does not currently
-report outcomes; OpenAPI and compliance chat do. Catalog callbacks use
-`catalog-gen`, which the Hub currently rejects, and the Hub cannot trigger
-catalog generation. Preserve these boundaries until integration changes
-are explicitly requested. The Hub never reads an agent's internals, and
+`GOVERNANCE_HUB_URL` env var, and explicitly *triggers* all four agents via
+their existing `POST /invoke` endpoints. All four report chat outcomes;
+the three PR-capable agents also report UI proposal outcomes. Catalog
+callbacks and triggers use `catalog-gen`. These callbacks are optional
+and failures must never prevent generation. The Hub never reads an agent's internals, and
 no agent depends on it being present or healthy. `compliance-mcp-server`
 is another independent component: a standalone MCP server that lets other AI
 agents query governance-hub's compliance state. It holds no state and no

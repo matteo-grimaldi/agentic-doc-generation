@@ -70,3 +70,10 @@ async def test_button_and_worker_proposal_result(agent_modules, profile, monkeyp
     await app._run_agent_in_background(URL, "job")
     assert proposal.await_count == 2
     assert report.await_args.args[:3] == ("job", URL, "failed" if failed else "completed")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", ["hello", "openapi: [broken", "openapi: '3.0.3'\npaths: {}"])
+async def test_invalid_spec_never_reaches_proposal_server(agent_modules, content):
+    result = await agent_modules[1]._propose_openapi_spec(URL, content, "job")
+    assert "error" in result

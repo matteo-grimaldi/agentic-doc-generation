@@ -30,7 +30,7 @@ import uvicorn
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel
 
-from agent import MODEL_NAME, detect_needs_openapi, extract_openapi_spec, run_agent
+from agent import MODEL_NAME, detect_needs_openapi, extract_openapi_spec, run_agent, validate_openapi_spec
 from mlflow_telemetry import configure_mlflow
 
 # Opt-in MLflow tracing (no-op when MLFLOW_TRACKING_URI is unset).
@@ -133,6 +133,9 @@ async def _propose_openapi_spec(repo_url: str, content: str, job_id: str) -> dic
     on any failure (bad response, network error) — callers decide how to
     surface that to their respective audiences.
     """
+    error = validate_openapi_spec(content)
+    if error:
+        return {"error": error}
     payload = {
         "repo_url": repo_url,
         "path": OPENAPI_SPEC_PATH,
@@ -213,8 +216,7 @@ async def chat(message: str, history: list[dict]):
             "content": f"⚠️ Could not fetch the repo structure: {structure['error']}",
         }
         await _report_to_governance(
-            job_id, repo_url, "failed", error=f"could not fetch repo structure: {structure['error']}"
-        )
+            job_id, repo_url, "failed", error=f"could not fetch repo structure: {structure['error']}", triggered_by="ui")
         yield history, "", ""
         return
 
@@ -225,33 +227,39 @@ async def chat(message: str, history: list[dict]):
         }
         await _report_to_governance(
             job_id, repo_url, "skipped",
-            error="repo already has a spec, or does not look like an HTTP API service",
-        )
+            error="repo already has a spec, or does not look like an HTTP API service", triggered_by="ui")
         yield history, "", ""
         return
 
     history[-1] = {"role": "assistant", "content": ""}
     response_so_far = ""
 
-    async for chunk in run_agent(repo_url, repo_structure=structure):
-        response_so_far += chunk
-        history[-1] = {"role": "assistant", "content": response_so_far}
+    try:
+        async for chunk in run_agent(repo_url, repo_structure=structure):
+            response_so_far += chunk
+            history[-1] = {"role": "assistant", "content": response_so_far}
+            yield history, "", ""
+    except Exception as exc:
+        logger.exception("Chat job %s failed", job_id)
+        await _report_to_governance(job_id, repo_url, "failed", error=str(exc), triggered_by="ui")
+        history[-1] = {"role": "assistant", "content": "⚠️ Generation failed. Please try again."}
         yield history, "", ""
+        return
 
     if response_so_far.strip().upper().startswith("NOT_AN_API"):
         reason = response_so_far.split(":", 1)[1].strip() if ":" in response_so_far else "not an HTTP API"
         logger.info("Job %s: agent bailed out for %s: %s", job_id, repo_url, reason)
         history[-1] = {"role": "assistant", "content": f"ℹ️ No OpenAPI spec generated: {reason}"}
-        await _report_to_governance(job_id, repo_url, "skipped", error=reason)
+        await _report_to_governance(job_id, repo_url, "skipped", error=reason, triggered_by="ui")
         yield history, "", ""
         return
 
     spec = extract_openapi_spec(response_so_far)
     if not spec.strip():
         logger.warning("Job %s: agent produced no usable spec", job_id)
-        await _report_to_governance(job_id, repo_url, "failed", error="agent produced no usable spec")
+        await _report_to_governance(job_id, repo_url, "failed", error="agent produced no usable spec", triggered_by="ui")
     else:
-        await _report_to_governance(job_id, repo_url, "completed")
+        await _report_to_governance(job_id, repo_url, "completed", triggered_by="ui")
 
     # Final yield: PR-ready spec only (stream may include narration if the
     # model deviated from the fenced-block format; extract_openapi_spec
@@ -273,6 +281,7 @@ async def _report_to_governance(
     pr_url: str | None = None,
     pr_number: int | None = None,
     error: str | None = None,
+    triggered_by: str = "invoke",
 ) -> None:
     """
     Fire-and-forget report of this run's outcome to the Governance Hub's
@@ -293,9 +302,12 @@ async def _report_to_governance(
         "pr_number": pr_number,
         "error": error,
     }
+    if triggered_by != "invoke":
+        payload["triggered_by"] = triggered_by
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
-            await client.post(f"{GOVERNANCE_HUB_URL}/api/runs", json=payload)
+            response = await client.post(f"{GOVERNANCE_HUB_URL}/api/runs", json=payload)
+            response.raise_for_status()
     except Exception as exc:
         logger.warning("Job %s: failed to report run to governance hub: %s", job_id, exc)
 
@@ -373,6 +385,12 @@ async def propose_pr_clicked(repo_url: str, content: str) -> str:
     job_id = str(uuid.uuid4())
     logger.info("UI-triggered PR proposal job %s for %s", job_id, repo_url)
     result = await _propose_openapi_spec(repo_url, content, job_id)
+
+    await _report_to_governance(
+        job_id, repo_url, "failed" if "error" in result else "completed",
+        pr_url=result.get("pr_url"), pr_number=result.get("pr_number"),
+        error=result.get("error"), triggered_by="ui-pr",
+    )
 
     if "error" in result:
         return f"⚠️ Failed to open PR for `{repo_url}`: {result['error']}"
