@@ -820,21 +820,24 @@ podman login quay.io
 ./ogx-mlflow-sidecar/build-and-push-quay.sh
 ```
 
-**Opt-in.** Leave `mlflow_tracking_uri` empty in
-[`doc-gen-agent/k8s/cluster-config.yaml`](doc-gen-agent/k8s/cluster-config.yaml)
-(the default) to disable tracing. Set it to the URI shown in the MLflow
-UI quickstart (in-cluster Service URL or Route), for example:
+**Tracing configuration.** The committed demo configuration enables tracing
+through the in-cluster MLflow Service and sets insecure TLS to `"true"`.
+These defaults live in
+[`doc-gen-agent/k8s/cluster-config.yaml`](doc-gen-agent/k8s/cluster-config.yaml):
 
 ```yaml
-mlflow_tracking_uri: "http://mlflow.redhat-ods-applications.svc.cluster.local:5000"
+mlflow_tracking_uri: "https://mlflow.redhat-ods-applications.svc.cluster.local:8443/mlflow"
+mlflow_tracking_insecure_tls: "true"
 ```
 
-Confirm the Service name/namespace/port on your cluster before enabling.
+Confirm the Service URL for your cluster. To disable tracing, set
+`mlflow_tracking_uri: ""`, apply the configuration, and restart the agents
+as described in [Configuration updates and restarts](#configuration-updates-and-restarts).
 
-| Env / config | Default | Notes |
+| Env / config | Committed demo default | Notes |
 |---|---|---|
-| `MLFLOW_TRACKING_URI` ← `cluster-config.mlflow_tracking_uri` | `""` (off) | Required to enable |
-| `MLFLOW_TRACKING_INSECURE_TLS` ← `cluster-config.mlflow_tracking_insecure_tls` | unset | Set to `true` for in-cluster `https://` URIs with a self-signed service cert (demo only); prefer `http://…:5000` when available |
+| `MLFLOW_TRACKING_URI` ← `cluster-config.mlflow_tracking_uri` | `https://mlflow.redhat-ods-applications.svc.cluster.local:8443/mlflow` | Empty disables tracing. |
+| `MLFLOW_TRACKING_INSECURE_TLS` ← `cluster-config.mlflow_tracking_insecure_tls` | `"true"` | Disables TLS verification for this demo; a trusted certificate can be used instead. |
 | `MLFLOW_WORKSPACE` | `doc-gen-demo` | RHOAI workspace (= namespace) |
 | `MLFLOW_EXPERIMENT` | per-agent name | One experiment per agent |
 | `MLFLOW_TRACKING_TOKEN` ← Secret `mlflow-credentials` / `token` | optional | Create if the server requires auth |
@@ -918,13 +921,13 @@ agentic-doc-generation/
 ├── ogx-mlflow-sidecar/                  # MLflow-instrumented OGX sidecar image
 │   ├── start_ogx.py                     # configure_mlflow + uvicorn ENTRYPOINT
 │   ├── build-and-push-quay.sh           # optional publish to quay.io/mgrimald/ogx-mlflow-sidecar
-│   ├── build-and-deploy.sh              # in-cluster binary build (default deploy path)
+│   ├── build-and-deploy.sh              # opt-in in-cluster binary build; Quay is the default
 │   ├── Dockerfile
 │   └── ...
 ├── doc-gen-agent/                       # OGX sidecar + Gradio UI — architecture docs & diagrams
 │   ├── agent.py                         # OGX Responses API agent, architecture-focused system prompt
 │   ├── app.py                           # Gradio chat UI + POST /invoke
-│   ├── mlflow_telemetry.py              # Opt-in MLflow tracing helpers
+│   ├── mlflow_telemetry.py              # MLflow tracing helpers
 │   ├── knowledge.md                     # Documentation style guide injected into the agent prompt
 │   ├── k8s/cluster-config.yaml          # External model + MLflow URI — SHARED by all agents
 │   ├── ogx/stack_run_config.yaml        # Canonical SHARED OGX + external model config
