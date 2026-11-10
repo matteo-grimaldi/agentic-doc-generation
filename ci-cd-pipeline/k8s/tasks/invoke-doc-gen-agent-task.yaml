@@ -19,6 +19,10 @@ spec:
     - name: repo-url
       type: string
       description: Public git repository URL to generate architecture docs for.
+    - name: repo-revision
+      type: string
+      description: Branch, tag, or commit the pipeline built (hinted in the prompt).
+      default: main
     - name: agent-url
       type: string
       description: doc-gen-agent /invoke endpoint URL.
@@ -32,13 +36,13 @@ spec:
         # never fail or stall this Task (and therefore the pipeline).
         set -uo pipefail
 
-        echo "==> Invoking doc-gen-agent at $(params.agent-url) for $(params.repo-url)"
-        # Send the bare repo URL as "prompt" — run_agent() (doc-gen-agent/agent.py)
-        # already wraps it in its own instruction text, and doc-gen-agent's
-        # /invoke handler extracts the github.com URL back out of this same
-        # field to know which repo to commit the result to.
+        # Include revision as a hint. Agents extract the github.com URL from
+        # the prompt; they may still analyze the default branch if their
+        # tooling does not honor an explicit ref (see docs/readme-gap-backlog.md).
+        PROMPT="$(params.repo-url) (revision $(params.repo-revision))"
+        echo "==> Invoking doc-gen-agent at $(params.agent-url) for ${PROMPT}"
         curl -sS -m 5 -X POST "$(params.agent-url)" \
           -H 'Content-Type: application/json' \
-          -d "{\"prompt\": \"$(params.repo-url)\"}" \
+          -d "{\"prompt\": \"${PROMPT}\"}" \
           && echo "" \
           || echo "==> WARNING: doc-gen-agent invocation failed or timed out — continuing pipeline anyway"

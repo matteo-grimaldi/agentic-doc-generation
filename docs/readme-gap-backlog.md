@@ -224,33 +224,42 @@ proposals for supervised work, not instructions to execute immediately.
 
 ## CI/CD
 
-- [ ] **RG-026 — Pipeline compatibility is overstated.** A Dockerfile alone is
+- [x] **RG-026 — Pipeline compatibility is overstated.** A Dockerfile alone is
   insufficient: generic deployment assumes one HTTP container, a configured
   port, TCP probes, and no app-specific dependencies/configuration. Checkout
   defaults to main.
-  Evidence: [pipeline](../ci-cd-pipeline/k8s/pipeline.yaml),
-  [deploy task](../ci-cd-pipeline/k8s/tasks/deploy-app-task.yaml).
-  Completion: qualify compatible applications and explain relevant parameters.
+  Evidence: [pipeline](../ci-cd-pipeline/k8s/pipeline.yaml).
+  Completion: qualify compatible applications and explain relevant parameters
+  (demo pipeline is build + agent invoke only; no deploy).
 
-- [ ] **RG-027 — tkn example references an unprovisioned PVC.** No committed
+- [x] **RG-027 — tkn example references an unprovisioned PVC.** No committed
   resource creates ci-cd-pipeline-workspace. The example PipelineRun instead
   provisions storage with volumeClaimTemplate.
   Evidence: [PipelineRun](../ci-cd-pipeline/pipelinerun-example.yaml),
   [deploy script](../ci-cd-pipeline/build-and-deploy.sh).
   Completion: provide a runnable workspace example or explicit PVC preparation.
 
-- [ ] **RG-028 — Generated documentation is not tied to the built revision.**
+- [x] **RG-028 — Generated documentation is not tied to the built revision.**
   repo-revision controls checkout, while invocation tasks pass only the URL.
   Agents may analyze the default branch rather than the build's branch/commit.
   Evidence: [pipeline](../ci-cd-pipeline/k8s/pipeline.yaml).
   Completion: document this limitation or implement agreed revision propagation.
 
-- [ ] **RG-029 — Immediate pipeline continuation needs qualification.** Checkout
+- [x] **RG-029 — Immediate pipeline continuation needs qualification.** Checkout
   waits for both invocation tasks; generation is asynchronous but invocation
   includes task startup and up to a five-second curl timeout.
   Evidence: [pipeline](../ci-cd-pipeline/k8s/pipeline.yaml),
   [invoke task](../ci-cd-pipeline/k8s/tasks/invoke-doc-gen-agent-task.yaml).
   Completion: distinguish waiting for invocation from waiting for generation.
+
+- [x] **RG-040 — RHDH PetClinic Software Template + build/agent pipeline.**
+  Developer Hub had scaffolder RBAC but no Software Template, and the Tekton
+  demo invoked agents before build (doc + OpenAPI only).
+  Evidence: [template](../developer-hub/k8s/templates/spring-petclinic-rest/),
+  [pipeline](../ci-cd-pipeline/k8s/pipeline.yaml).
+  Completion: register existing spring-petclinic-rest-legacy in the catalog
+  (no new GitHub repo); pipeline builds to the internal registry then invokes
+  doc-gen + compliance in parallel (no Quay, no deploy).
 
 ## Developer portal
 
@@ -331,9 +340,10 @@ proposals for supervised work, not instructions to execute immediately.
 Completed items retain their original finding above; this log describes
 the resulting documentation and implementation. RG-001–RG-023 and RG-025
 are resolved; RG-024 is marked done at the user's request with remediation
-left to the user. RG-026–RG-039 remain pending for their own review. Earlier resolution rows
-describe the state at the time of that batch; later rows supersede any
-integration limitations since addressed.
+left to the user. RG-026–RG-029 and RG-040 are resolved on the
+`feature/rhdh-petclinic-scaffold` work; RG-030–RG-039 remain pending.
+Earlier resolution rows describe the state at the time of that batch; later
+rows supersede any integration limitations since addressed.
 
 | Date | IDs | User direction / decision | Resolution and affected files | Validation | Commit / remaining work |
 | --- | --- | --- | --- | --- | --- |
@@ -362,3 +372,8 @@ integration limitations since addressed.
 | 2026-11-08 | RG-023 | User requested resolution | README now states the committed MLflow Service URI and insecure-TLS=true defaults, shows matching YAML, and explains disabling tracing with an empty URI and agent restarts. Configuration remains unchanged. | Compared README values with doc-gen-agent/k8s/cluster-config.yaml; Markdown links/fences and git diff --check pass. | Uncommitted. Documentation only. |
 | 2026-11-08 | RG-024 | User explicitly requested marking done without work; user will handle later | Checkbox marked done only. No remediation, investigation, cost-chart changes, or platform-fix claim made. | Verified the README smoke-test section and investigation file remain unchanged. | User-owned follow-up; underlying issue is not claimed resolved. |
 | 2026-11-08 | RG-025 | User requested resolution | README project tree identifies the in-cluster sidecar build as opt-in and Quay as the default, matching the existing mode table and aggregate script. | Compared build-and-deploy-all.sh mode/image defaults and cluster-config image; documentation and diff checks pass. | Uncommitted. No image or deployment changes. |
+| 2026-11-10 | RG-026 | Approved as part of PetClinic register + build/agent pipeline | README qualifies apps that need a Dockerfile; pipeline params cover Dockerfile path and revision. Deploy step removed from the demo pipeline. | YAML parse of pipeline/tasks; docs updated. | On feature/rhdh-petclinic-scaffold. |
+| 2026-11-10 | RG-027 | Same batch | pipelinerun-example and build-and-deploy.sh use volumeClaimTemplate only; removed claimName=ci-cd-pipeline-workspace guidance. | Manifest review. | On feature/rhdh-petclinic-scaffold. |
+| 2026-11-10 | RG-028 | Same batch; partial implementation + documentation | Invoke tasks pass `repo-url (revision …)` in the prompt. Agents still extract the github.com URL and may analyze the default branch if tooling ignores the hint — README documents that residual limit. | Compared invoke task scripts. | Residual: true ref-pinning inside agents not implemented. |
+| 2026-11-10 | RG-029 | Same batch | Pipeline invokes agents after build, in parallel (no deploy). README distinguishes invocation (202 + ≤5s curl) from generation. | Pipeline DAG review. | On feature/rhdh-petclinic-scaffold. |
+| 2026-11-10 | RG-040 | User requested RHDH register-existing + build/agents; Quay and deploy dropped | Software Template catalog:register only. Pipeline: internal-registry build then parallel doc-gen + compliance invoke. Removed quay/ and deploy-app Task. | YAML parse offline. | On feature/rhdh-petclinic-scaffold. |

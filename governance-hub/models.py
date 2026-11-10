@@ -17,13 +17,14 @@ Two tables:
                    since (unlike the other two agents) it never opens a
                    PR -- the report itself is the deliverable.
 
-Repos are discovered purely by agent activity (see app.py's /api/runs and
-/api/repos/{owner}/{repo}/remediate handlers) -- there is no background
-GitHub-org scan. This is a small, synchronous SQLAlchemy setup (no async
-driver): the Hub's query volume is low (a handful of governance-team
-browsers polling a dashboard), so a plain sync Session per request is
-simpler than wiring up an async engine, matching the simplicity level of
-the rest of this demo.
+Repos are discovered by agent activity (see app.py's /api/runs and
+/api/repos/{owner}/{repo}/remediate handlers) or by an explicit
+POST /api/repos registration (e.g. from an RHDH Software Template).
+There is no background GitHub-org scan. This is a small, synchronous
+SQLAlchemy setup (no async driver): the Hub's query volume is low (a
+handful of governance-team browsers polling a dashboard), so a plain
+sync Session per request is simpler than wiring up an async engine,
+matching the simplicity level of the rest of this demo.
 """
 from __future__ import annotations
 
@@ -71,6 +72,13 @@ class TrackedRepo(Base):
     repo = Column(String, nullable=False, index=True)
     repo_url = Column(String, nullable=False, unique=True, index=True)
     first_seen = Column(DateTime, default=_utcnow, nullable=False)
+
+    # Optional Backstage Component identity chosen at registration time
+    # (Software Template "name" / "title"). Used to serve a catalog-info
+    # YAML the scaffolder can catalog:register without publishing to git.
+    # Null when the repo was only discovered via an agent callback.
+    component_name = Column(String, nullable=True, unique=True, index=True)
+    component_title = Column(String, nullable=True)
 
     has_architecture_doc = Column(Boolean, nullable=True)
     has_openapi_spec = Column(Boolean, nullable=True)
@@ -209,9 +217,8 @@ def get_session() -> Session:
 
 
 def get_or_create_repo(session: Session, repo_url: str, owner: str, repo: str) -> TrackedRepo:
-    """Idempotently register a repo as tracked -- this is the only way a
-    repo appears in the Governance Hub (agent-run-driven discovery, no
-    background org scan)."""
+    """Idempotently register a repo as tracked -- used by agent callbacks
+    and by POST /api/repos (explicit registration)."""
     tracked = session.query(TrackedRepo).filter_by(repo_url=repo_url).one_or_none()
     if tracked is None:
         tracked = TrackedRepo(owner=owner, repo=repo, repo_url=repo_url)

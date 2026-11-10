@@ -1,0 +1,27 @@
+# Catalog entity for the existing application repository (not a fork).
+# Registered by the Software Template via catalog:register — no clone or
+# publish of a new GitHub repo.
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: spring-petclinic-rest-legacy
+  title: Spring PetClinic REST (legacy)
+  description: |
+    Existing freeze-fork of spring-petclinic-rest (javax-era legacy specimen).
+    Registered in Developer Hub for Tekton CI and agent demos; source stays
+    at matteo-grimaldi/spring-petclinic-rest-legacy.
+  annotations:
+    backstage.io/source-location: url:https://github.com/matteo-grimaldi/spring-petclinic-rest-legacy
+    backstage.io/kubernetes-id: spring-petclinic-rest-legacy
+    janus-idp.io/tekton: spring-petclinic-rest-legacy
+    tekton.dev/cicd: "true"
+  tags:
+    - java
+    - spring-boot
+    - petclinic
+    - rest
+spec:
+  type: service
+  lifecycle: experimental
+  owner: demo-team
+  system: agentic-doc-generation

@@ -57,6 +57,8 @@ compliance-scan-agent/   # OGX sidecar (agentic loop) + Gradio UI — architectu
 catalog-gen-agent/       # OGX sidecar (agentic loop) + Gradio UI — Backstage catalog-info.yaml generation
 governance-hub/          # FastAPI compliance dashboard + REST API
 compliance-mcp-server/   # Standalone, read-only Compliance MCP server (proxies governance-hub's REST API)
+ci-cd-pipeline/          # Tekton Maven build + post-build compliance /invoke (no deploy)
+developer-hub/           # RHDH portal (imperative); Software Templates under k8s/templates/
 install-openshift-ai.sh  # Imperative RHOAI + calls install-mcp-gateway.sh + AI Gateway / MaaS bootstrap (run before GitOps)
 install-mcp-gateway.sh   # RHCL + MCP Gateway Operator; re-run to patch mcp_gateway_url
 build-and-deploy-all.sh  # Non-GitOps quick-start for the app components

@@ -1,15 +1,13 @@
-# Generic "build and deploy any public repo" CI/CD pipeline, demonstrating
-# how a pipeline run can trigger doc-gen-agent and openapi-gen-agent (their
-# respective POST /invoke endpoints) *before* building/deploying, without
-# blocking on either: the invoke-doc-gen-agent and invoke-openapi-gen-agent
-# Tasks fire their requests in parallel and return almost immediately (each
-# endpoint responds 202 and runs its actual agent loop as a background
-# task), so the rest of the pipeline proceeds without waiting for either
-# generation to finish.
+# Clone, Maven-build the Java application, fire a non-blocking
+# compliance-scan-agent invocation, then a fake "deploy" step.
+# After `mvn package`, POST /invoke returns 202 immediately and the scan
+# runs in the background (reporting to Governance Hub). The final deploy
+# Task is a no-op placeholder (logs success; creates no workload).
 #
-# The git-clone and buildah Tasks are resolved from the Tekton Hub catalog
-# at run time (no local copies to keep in sync) — this requires the `hub`
-# resolver, which is enabled by default in OpenShift Pipelines.
+# The git-clone and maven Tasks come from the OpenShift Pipelines
+# operator install (cluster resolver → openshift-pipelines namespace).
+# Artifact Hub's tekton/git-clone package is not reliable from this
+# cluster, so do not use the hub resolver here.
 apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
@@ -17,135 +15,101 @@ metadata:
   namespace: ci-cd-demo
 spec:
   description: >-
-    Builds a container image (via Buildah, from a Dockerfile in the given
-    public repo) and deploys it, after kicking off non-blocking
-    doc-gen-agent (architecture documentation) and openapi-gen-agent
-    (OpenAPI spec) runs for the same repo.
+    Clones a public Java/Maven repo, runs `mvn package` (tests skipped),
+    triggers a non-blocking compliance-scan agent run, then a fake deploy
+    step for the same repo revision. No real container image push or
+    workload rollout.
   params:
     - name: repo-url
       type: string
-      description: Public git repository URL to build and deploy.
+      description: Public git repository URL to build and analyze.
     - name: repo-revision
       type: string
-      description: Branch, tag, or commit to check out.
+      description: Branch, tag, or commit to check out and hint to agents.
       default: main
     - name: app-name
       type: string
-      description: Name used for the built image, Deployment, Service, and Route.
-    - name: image-tag
+      description: Logical app name shown in the fake deploy log.
+      default: app
+    - name: maven-image-java-version
       type: string
-      default: latest
-    - name: dockerfile-path
+      description: >-
+        Java version for the OpenShift Pipelines maven Task
+        (supported: 8, 11, 17, 21).
+      default: "11"
+    - name: compliance-scan-agent-url
       type: string
-      description: Path to the Dockerfile within the cloned repo.
-      default: ./Dockerfile
-    - name: target-namespace
-      type: string
-      description: Namespace to build the image in and deploy the application into.
-      default: ci-cd-demo
-    - name: target-port
-      type: string
-      description: Port the built application container listens on.
-      default: "8080"
-    - name: doc-gen-agent-url
-      type: string
-      description: doc-gen-agent /invoke endpoint URL.
-      default: "http://doc-gen-agent.doc-gen-demo.svc.cluster.local:7860/invoke"
-    - name: openapi-gen-agent-url
-      type: string
-      description: openapi-gen-agent /invoke endpoint URL.
-      default: "http://openapi-gen-agent.doc-gen-demo.svc.cluster.local:7860/invoke"
+      description: compliance-scan-agent /invoke endpoint URL.
+      default: "http://compliance-scan-agent.doc-gen-demo.svc.cluster.local:7860/invoke"
   workspaces:
     - name: shared-workspace
-      description: Holds the cloned repo between the fetch-source and build-image Tasks.
+      description: Holds the cloned repo between fetch-source and maven-build.
   tasks:
-    # 1a/1b. Fire the doc-gen-agent and openapi-gen-agent requests first,
-    #    in parallel (neither runAfter the other) — but non-blocking: each
-    #    endpoint returns almost instantly, and both Tasks tolerate
-    #    failures/timeouts without stopping the pipeline, so neither
-    #    meaningfully delays fetch-source below.
-    - name: invoke-doc-gen-agent
-      taskRef:
-        name: invoke-doc-gen-agent
-      params:
-        - name: repo-url
-          value: $(params.repo-url)
-        - name: agent-url
-          value: $(params.doc-gen-agent-url)
-
-    - name: invoke-openapi-gen-agent
-      taskRef:
-        name: invoke-openapi-gen-agent
-      params:
-        - name: repo-url
-          value: $(params.repo-url)
-        - name: agent-url
-          value: $(params.openapi-gen-agent-url)
-
     - name: fetch-source
-      runAfter:
-        - invoke-doc-gen-agent
-        - invoke-openapi-gen-agent
       taskRef:
-        resolver: hub
+        resolver: cluster
         params:
-          - name: catalog
-            value: tekton
-          - name: type
-            value: artifact
           - name: kind
             value: task
           - name: name
             value: git-clone
-          - name: version
-            value: "0.9"
+          - name: namespace
+            value: openshift-pipelines
       workspaces:
         - name: output
           workspace: shared-workspace
       params:
-        - name: url
+        - name: URL
           value: $(params.repo-url)
-        - name: revision
+        - name: REVISION
           value: $(params.repo-revision)
 
-    - name: build-image
+    - name: maven-build
       runAfter:
         - fetch-source
       taskRef:
-        resolver: hub
+        resolver: cluster
         params:
-          - name: catalog
-            value: tekton
-          - name: type
-            value: artifact
           - name: kind
             value: task
           - name: name
-            value: buildah
-          - name: version
-            value: "0.4"
+            value: maven
+          - name: namespace
+            value: openshift-pipelines
       workspaces:
         - name: source
           workspace: shared-workspace
       params:
-        - name: IMAGE
-          value: "image-registry.openshift-image-registry.svc:5000/$(params.target-namespace)/$(params.app-name):$(params.image-tag)"
-        - name: DOCKERFILE
-          value: $(params.dockerfile-path)
-        - name: TLSVERIFY
-          value: "false"
+        - name: JAVA_VERSION
+          value: $(params.maven-image-java-version)
+        - name: GOALS
+          value:
+            - -B
+            - -DskipTests
+            - package
 
+    # After the Maven build: invoke compliance-scan (fire-and-forget).
+    - name: invoke-compliance-scan-agent
+      runAfter:
+        - maven-build
+      taskRef:
+        name: invoke-compliance-scan-agent
+      params:
+        - name: repo-url
+          value: $(params.repo-url)
+        - name: repo-revision
+          value: $(params.repo-revision)
+        - name: agent-url
+          value: $(params.compliance-scan-agent-url)
+
+    # Final step: fake rollout (no cluster changes).
     - name: deploy
       runAfter:
-        - build-image
+        - invoke-compliance-scan-agent
       taskRef:
-        name: deploy-app
+        name: deploy
       params:
         - name: app-name
           value: $(params.app-name)
-        - name: image
-          value: "image-registry.openshift-image-registry.svc:5000/$(params.target-namespace)/$(params.app-name):$(params.image-tag)"
-        - name: namespace
-          value: $(params.target-namespace)
-        - name: target-port
-          value: $(params.target-port)
+        - name: repo-url
+          value: $(params.repo-url)

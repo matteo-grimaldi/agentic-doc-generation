@@ -8,6 +8,9 @@
 # Prerequisite: the OpenShift Pipelines operator must already be installed
 # (run ./install-operator.sh first) — its CRDs must exist before any of
 # the manifests below can be applied.
+#
+# Pipeline: clone → Maven package → compliance-scan /invoke.
+# No Quay and no application deploy step.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,15 +37,8 @@ oc apply -f "${SCRIPT_DIR}/k8s/pipeline.yaml" -n "${NAMESPACE}"
 
 echo "==> Done. Pipeline 'build-deploy-app' is ready in namespace ${NAMESPACE}."
 echo ""
-echo "    Start a run against any public repo with a Dockerfile, e.g.:"
+echo "    Start a run (build + agent invoke, no deploy):"
 echo "      oc create -f ${SCRIPT_DIR}/pipelinerun-example.yaml -n ${NAMESPACE}"
-echo ""
-echo "    Or with the tkn CLI:"
-echo "      tkn pipeline start build-deploy-app -n ${NAMESPACE} \\"
-echo "        -p repo-url=https://github.com/<org>/<repo> \\"
-echo "        -p app-name=<name> \\"
-echo "        -w name=shared-workspace,claimName=ci-cd-pipeline-workspace \\"
-echo "        --serviceaccount=ci-cd-pipeline-sa"
 echo ""
 echo "    Watch progress with:"
 echo "      tkn pipelinerun logs -f -n ${NAMESPACE}"

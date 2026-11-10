@@ -96,3 +96,43 @@ def test_catalog_column_migration_preserves_existing_rows(hub):
 async def test_invalid_callbacks_do_not_register_repos(client, kwargs):
     assert (await client.post("/api/runs", json=report(**kwargs))).status_code == 400
     assert (await client.get("/api/repos")).json()["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_explicit_register_serves_catalog_info_yaml(client):
+    response = await client.post(
+        "/api/repos",
+        json={"repo_url": URL, "name": "petclinic-demo", "title": "PetClinic Demo"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["owner"] == "test" and body["repo"] == "demo"
+    assert body["component_name"] == "petclinic-demo"
+    assert body["catalog_info_url"] == "/api/catalog-info/petclinic-demo/catalog-info.yaml"
+
+    yaml = await client.get("/api/catalog-info/petclinic-demo/catalog-info.yaml")
+    assert yaml.status_code == 200
+    text = yaml.text
+    assert "name: petclinic-demo" in text
+    assert "title: PetClinic Demo" in text
+    assert "janus-idp.io/tekton: petclinic-demo" in text
+    assert URL in text
+
+    # Idempotent re-register updates title and keeps a single tracked row.
+    again = await client.post(
+        "/api/repos",
+        json={"repo_url": URL, "name": "petclinic-demo", "title": "PetClinic Demo v2"},
+    )
+    assert again.status_code == 200
+    assert again.json()["component_title"] == "PetClinic Demo v2"
+    assert (await client.get("/api/repos")).json()["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_register_rejects_duplicate_component_name(client):
+    assert (await client.post("/api/repos", json={"repo_url": URL, "name": "shared-name"})).status_code == 200
+    conflict = await client.post(
+        "/api/repos",
+        json={"repo_url": "https://github.com/test/other", "name": "shared-name"},
+    )
+    assert conflict.status_code == 409
