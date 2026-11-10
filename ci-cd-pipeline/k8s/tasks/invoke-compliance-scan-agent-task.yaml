@@ -1,0 +1,39 @@
+# Fire-and-forget call to the compliance-scan-agent's POST /invoke endpoint.
+# Same non-blocking pattern as invoke-doc-gen-agent: the endpoint returns
+# 202 Accepted and runs the scan as a background task; findings go to the
+# Governance Hub when GOVERNANCE_HUB_URL is configured (never opens a PR).
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: invoke-compliance-scan-agent
+  namespace: ci-cd-demo
+spec:
+  description: >-
+    Triggers the compliance-scan-agent to scan the repository being built,
+    without blocking the pipeline on the agent's full run.
+  params:
+    - name: repo-url
+      type: string
+      description: Public git repository URL to scan.
+    - name: repo-revision
+      type: string
+      description: Branch, tag, or commit the pipeline built (hinted in the prompt).
+      default: main
+    - name: agent-url
+      type: string
+      description: compliance-scan-agent /invoke endpoint URL.
+      default: "http://compliance-scan-agent.doc-gen-demo.svc.cluster.local:7860/invoke"
+  steps:
+    - name: invoke
+      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+      script: |
+        #!/usr/bin/env bash
+        set -uo pipefail
+
+        PROMPT="$(params.repo-url) (revision $(params.repo-revision))"
+        echo "==> Invoking compliance-scan-agent at $(params.agent-url) for ${PROMPT}"
+        curl -sS -m 5 -X POST "$(params.agent-url)" \
+          -H 'Content-Type: application/json' \
+          -d "{\"prompt\": \"${PROMPT}\"}" \
+          && echo "" \
+          || echo "==> WARNING: compliance-scan-agent invocation failed or timed out — continuing pipeline anyway"

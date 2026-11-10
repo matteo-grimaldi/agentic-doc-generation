@@ -1,17 +1,17 @@
-# Example PipelineRun — substitute any public repo URL that has a
-# Dockerfile at its root. Deliberately kept outside k8s/ (which is
-# GitOps-synced) so ArgoCD never auto-creates a PipelineRun on sync; start
-# runs explicitly instead:
+# Example PipelineRun — Maven build + compliance-scan invoke (no image,
+# no deploy, no Quay). Deliberately kept outside k8s/ (which is
+# GitOps-synced) so ArgoCD never auto-creates a PipelineRun on sync.
+#
+# Prerequisites:
+#   ./ci-cd-pipeline/install-operator.sh
+#   ./ci-cd-pipeline/build-and-deploy.sh
+#
+# Workspace storage is provisioned per-run via volumeClaimTemplate (no
+# pre-created PVC named ci-cd-pipeline-workspace is required).
 #
 #   oc create -f ci-cd-pipeline/pipelinerun-example.yaml -n ci-cd-demo
 #
-# or, with the `tkn` CLI, override params on the fly:
-#
-#   tkn pipeline start build-deploy-app -n ci-cd-demo \
-#     -p repo-url=https://github.com/<org>/<repo> \
-#     -p app-name=<name> \
-#     -w name=shared-workspace,claimName=ci-cd-pipeline-workspace \
-#     --serviceaccount=ci-cd-pipeline-sa
+# Note: the target repo must be a Maven project (pom.xml at the root).
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
@@ -23,15 +23,11 @@ spec:
   serviceAccountName: ci-cd-pipeline-sa
   params:
     - name: repo-url
-      value: https://github.com/sclorg/nodejs-ex
+      value: https://github.com/matteo-grimaldi/spring-petclinic-rest-legacy
     - name: repo-revision
-      value: master
+      value: main
     - name: app-name
-      value: nodejs-ex-demo
-    - name: dockerfile-path
-      value: ./Dockerfile
-    - name: target-port
-      value: "8080"
+      value: spring-petclinic-rest-legacy
   workspaces:
     - name: shared-workspace
       volumeClaimTemplate:

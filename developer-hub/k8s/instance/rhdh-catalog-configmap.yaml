@@ -1,12 +1,12 @@
 # Static Backstage software catalog for the agentic-doc-generation demo.
 #
-# GitOps path (ArgoCD): this ConfigMap is applied by ArgoCD; the Backstage
-#   CR mounts it at /opt/app-root/src/catalog/all.yaml.
-# Non-GitOps path (build-and-deploy.sh): the script creates this ConfigMap via
-#   oc create configmap rhdh-catalog --from-file=all.yaml=developer-hub/k8s/catalog/all.yaml
+# AUTHORITATIVE SOURCE: developer-hub/k8s/catalog/all.yaml plus
+# developer-hub/k8s/templates/*/template.yaml. build-and-deploy.sh recreates
+# this ConfigMap with --from-file (all.yaml + Software Templates). Prefer
+# re-running that script over hand-editing the embedded YAML below.
 #
 # When updating catalog entities, edit developer-hub/k8s/catalog/all.yaml
-# and keep this ConfigMap in sync (or re-run build-and-deploy.sh).
+# (and templates/) then re-run build-and-deploy.sh.
 apiVersion: v1
 kind: ConfigMap
 metadata:

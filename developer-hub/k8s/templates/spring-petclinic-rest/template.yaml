@@ -1,0 +1,126 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: spring-petclinic-rest-legacy
+  title: Register Spring PetClinic REST (legacy)
+  description: |
+    Registers the existing GitHub repository
+    matteo-grimaldi/spring-petclinic-rest-legacy in Developer Hub and
+    Governance Hub under a name you choose. Does not clone, fork, or
+    create a new repository. After registration, automatically starts the
+    Tekton build-deploy-app Pipeline (Maven package, then compliance
+    /invoke; no container image or application deploy).
+  tags:
+    - java
+    - spring-boot
+    - petclinic
+    - recommended
+spec:
+  owner: demo-team
+  type: service
+  parameters:
+    - title: Component
+      required:
+        - name
+        - repoUrl
+      properties:
+        name:
+          title: Component name
+          type: string
+          description: >
+            Backstage Component metadata.name and Tekton CI label id
+            (backstage.io/kubernetes-id / janus-idp.io/tekton). Lowercase
+            DNS label.
+          ui:autofocus: true
+          pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
+          default: spring-petclinic-rest-legacy
+        title:
+          title: Display title
+          type: string
+          description: Human-readable title shown in the catalog.
+          default: Spring PetClinic REST (legacy)
+        repoUrl:
+          title: Application repository URL
+          type: string
+          description: Existing Maven repo (not modified by this template).
+          default: https://github.com/matteo-grimaldi/spring-petclinic-rest-legacy
+  steps:
+    - id: register-governance-hub
+      name: Register in Governance Hub
+      action: http:backstage:request
+      input:
+        method: POST
+        path: /proxy/governance-hub/api/repos
+        headers:
+          Content-Type: application/json
+        body:
+          repo_url: ${{ parameters.repoUrl }}
+          name: ${{ parameters.name }}
+          title: ${{ parameters.title }}
+
+    - id: register
+      name: Register in software catalog
+      action: catalog:register
+      input:
+        catalogInfoUrl: >-
+          http://governance-hub.doc-gen-demo.svc.cluster.local:7860/api/catalog-info/${{ parameters.name }}/catalog-info.yaml
+        # Fail the scaffold if catalog ingestion cannot read the Hub YAML
+        # (e.g. backend.reading.allow mismatch) instead of succeeding silently.
+        optional: false
+
+    - id: start-pipeline
+      name: Start Maven + agents pipeline
+      action: http:backstage:request
+      input:
+        method: POST
+        path: /proxy/k8s/apis/tekton.dev/v1/namespaces/ci-cd-demo/pipelineruns
+        headers:
+          Content-Type: application/json
+        body:
+          apiVersion: tekton.dev/v1
+          kind: PipelineRun
+          metadata:
+            generateName: ${{ parameters.name }}-
+            namespace: ci-cd-demo
+            labels:
+              backstage.io/kubernetes-id: ${{ parameters.name }}
+              janus-idp.io/tekton: ${{ parameters.name }}
+              tekton.dev/pipeline: build-deploy-app
+          spec:
+            pipelineRef:
+              name: build-deploy-app
+            serviceAccountName: ci-cd-pipeline-sa
+            params:
+              - name: repo-url
+                value: ${{ parameters.repoUrl }}
+              - name: repo-revision
+                value: main
+              - name: app-name
+                value: ${{ parameters.name }}
+            workspaces:
+              - name: shared-workspace
+                volumeClaimTemplate:
+                  spec:
+                    accessModes: [ReadWriteOnce]
+                    resources:
+                      requests:
+                        storage: 1Gi
+
+  output:
+    links:
+      - title: Open in catalog
+        icon: catalog
+        entityRef: ${{ steps.register.output.entityRef }}
+      - title: Application repository
+        url: ${{ parameters.repoUrl }}
+      - title: Governance Hub
+        url: /governance-hub
+    text:
+      - title: Registered
+        content: |
+          Component **${{ parameters.name }}** is tracked in Governance Hub
+          and registered in the software catalog. A Tekton PipelineRun was
+          created in ci-cd-demo (mvn package → compliance invoke).
+
+          Open the component in the catalog and use the CI tab to follow
+          the run. Repo: ${{ parameters.repoUrl }}.

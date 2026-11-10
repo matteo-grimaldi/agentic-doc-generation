@@ -1,0 +1,52 @@
+# ServiceAccount used by the RHDH scaffolder (via /proxy/k8s) to create
+# Tekton PipelineRuns in ci-cd-demo after Software Template registration.
+# Intentionally scoped: create/get/list/watch pipelineruns in ci-cd-demo only
+# — do not widen rhdh-kubernetes-reader to cluster-wide create.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rhdh-pipeline-starter
+  namespace: rhdh
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+---
+# Long-lived token Secret — configure-rhdh copies .data.token into
+# rhdh-secrets.RHDH_PIPELINE_STARTER_TOKEN for the Backstage proxy header.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rhdh-pipeline-starter-token
+  namespace: rhdh
+  annotations:
+    kubernetes.io/service-account.name: rhdh-pipeline-starter
+    argocd.argoproj.io/sync-wave: "5"
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rhdh-pipeline-starter
+  namespace: ci-cd-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+rules:
+  - apiGroups: [tekton.dev]
+    resources: [pipelineruns]
+    verbs: [create, get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rhdh-pipeline-starter
+  namespace: ci-cd-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+subjects:
+  - kind: ServiceAccount
+    name: rhdh-pipeline-starter
+    namespace: rhdh
+roleRef:
+  kind: Role
+  name: rhdh-pipeline-starter
+  apiGroup: rbac.authorization.k8s.io

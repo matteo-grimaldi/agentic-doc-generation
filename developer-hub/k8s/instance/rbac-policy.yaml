@@ -1,8 +1,8 @@
 # RHDH RBAC policy — CSV format consumed by the backstage-community-plugin-rbac.
 # admin has full access to all plugins.
-# developer has read-only access to catalog, can use scaffolder templates,
-# and can view Kubernetes/ArgoCD data for their components.
-# Ref: https://docs.redhat.com/en/documentation/red_hat_developer_hub/1.10/html/authorization/
+# developer can read the catalog, register/unregister components, launch
+# Software Templates (scaffolder tasks), and view Kubernetes/ArgoCD data.
+# Ref: https://docs.redhat.com/en/documentation/red_hat_developer_hub/1.10/html/authorization_in_red_hat_developer_hub/permission-policies-reference_authorization-in-rhdh
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -16,26 +16,43 @@ data:
     p, role:default/developer, catalog-entity, read, allow
     p, role:default/developer, catalog.entity.read, read, allow
     p, role:default/developer, catalog.entity.create, create, deny
-    p, role:default/developer, catalog.entity.delete, delete, deny
+    # Unregister entity (UI) needs entity + location delete
+    p, role:default/developer, catalog.entity.delete, delete, allow
     p, role:default/developer, catalog.location.read, read, allow
-    p, role:default/developer, catalog.location.create, create, deny
-    p, role:default/developer, catalog.location.delete, delete, deny
-    p, role:default/developer, scaffolder-template, read, allow
-    p, role:default/developer, scaffolder-template, use, allow
-    p, role:default/developer, scaffolder-action, use, allow
+    # catalog:register (Software Template) creates a catalog Location
+    p, role:default/developer, catalog.location.create, create, allow
+    p, role:default/developer, catalog.location.delete, delete, allow
+    # Scaffolder — RHDH 1.10 permission names (not the legacy scaffolder-template/use)
+    p, role:default/developer, scaffolder.template.parameter.read, read, allow
+    p, role:default/developer, scaffolder.template.step.read, read, allow
+    p, role:default/developer, scaffolder.action.execute, use, allow
+    p, role:default/developer, scaffolder.task.create, create, allow
+    p, role:default/developer, scaffolder.task.read, read, allow
+    p, role:default/developer, scaffolder.task.cancel, use, allow
+    # Kubernetes + Tekton CI tab (Tekton reuses these kubernetes permissions)
+    p, role:default/developer, kubernetes.clusters.read, read, allow
+    p, role:default/developer, kubernetes.resources.read, read, allow
     p, role:default/developer, kubernetes.proxy, use, allow
     p, role:default/developer, argocd.application.get, read, allow
     # Governance Hub is restricted to architects — deny developer role explicitly
     p, role:default/developer, governance-hub.view, read, deny
 
     # ── architects role ─────────────────────────────────────────────────────
-    # Architects inherit developer permissions and additionally get Governance Hub access.
+    # Architects mirror developer catalog/scaffolder access and additionally get Governance Hub.
     p, role:default/architects, catalog-entity, read, allow
     p, role:default/architects, catalog.entity.read, read, allow
+    p, role:default/architects, catalog.entity.delete, delete, allow
     p, role:default/architects, catalog.location.read, read, allow
-    p, role:default/architects, scaffolder-template, read, allow
-    p, role:default/architects, scaffolder-template, use, allow
-    p, role:default/architects, scaffolder-action, use, allow
+    p, role:default/architects, catalog.location.create, create, allow
+    p, role:default/architects, catalog.location.delete, delete, allow
+    p, role:default/architects, scaffolder.template.parameter.read, read, allow
+    p, role:default/architects, scaffolder.template.step.read, read, allow
+    p, role:default/architects, scaffolder.action.execute, use, allow
+    p, role:default/architects, scaffolder.task.create, create, allow
+    p, role:default/architects, scaffolder.task.read, read, allow
+    p, role:default/architects, scaffolder.task.cancel, use, allow
+    p, role:default/architects, kubernetes.clusters.read, read, allow
+    p, role:default/architects, kubernetes.resources.read, read, allow
     p, role:default/architects, kubernetes.proxy, use, allow
     p, role:default/architects, argocd.application.get, read, allow
     p, role:default/architects, governance-hub.view, read, allow

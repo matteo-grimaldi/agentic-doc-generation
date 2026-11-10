@@ -1,0 +1,33 @@
+# Demo-only "deploy" Task — intentionally a no-op.
+# Named deploy so the PipelineRun shows a rollout-looking final step
+# without creating Deployments, Services, or Routes.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: deploy
+  namespace: ci-cd-demo
+spec:
+  description: >-
+    Fake application rollout for the demo pipeline. Logs a success message
+    and exits 0; does not change any cluster resources.
+  params:
+    - name: app-name
+      type: string
+      description: Logical application name shown in the fake rollout log.
+      default: app
+    - name: repo-url
+      type: string
+      description: Repository URL shown in the fake rollout log.
+      default: ""
+  steps:
+    - name: fake-rollout
+      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        echo "==> Fake deploy / rollout for '$(params.app-name)'"
+        if [[ -n "$(params.repo-url)" ]]; then
+          echo "    repo: $(params.repo-url)"
+        fi
+        echo "==> No cluster resources changed (demo placeholder)."
+        echo "==> Rollout complete."

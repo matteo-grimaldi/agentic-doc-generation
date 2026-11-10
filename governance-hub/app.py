@@ -2,12 +2,11 @@
 Governance Hub -- single-pane-of-glass compliance dashboard for
 architectural governance teams.
 
-Repos are discovered purely by agent activity: a repo first appears here
-the moment doc-gen-agent, openapi-gen-agent, catalog-gen-agent, or compliance-scan-agent
-reports a completed run against it (POST /api/runs), or the moment a
-governance-team member triggers one from this dashboard
-(POST /api/repos/{owner}/{repo}/remediate -- the "Fix it" button). There
-is no background GitHub-org scan.
+Repos appear here when an agent reports a completed run (POST /api/runs),
+when a governance-team member triggers remediation
+(POST /api/repos/{owner}/{repo}/remediate), or when something explicitly
+registers a repo (POST /api/repos -- used by the RHDH Software Template).
+There is no background GitHub-org scan.
 
 Compliance itself ("does this repo have an architecture doc / OpenAPI
 spec") is checked on demand via the GitHub MCP server's zero-LLM-cost
@@ -36,10 +35,10 @@ from datetime import datetime, timezone
 import httpx
 import markdown as markdown_lib
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import compliance
 from models import AgentRun, TrackedRepo, get_or_create_repo, get_session, init_db
@@ -108,11 +107,16 @@ templates.env.filters["markdown"] = _render_markdown
 
 # ── Serialization helpers ───────────────────────────────────────────────────
 
+_COMPONENT_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
+
+
 def _repo_to_dict(tracked: TrackedRepo) -> dict:
     return {
         "owner": tracked.owner,
         "repo": tracked.repo,
         "repo_url": tracked.repo_url,
+        "component_name": tracked.component_name,
+        "component_title": tracked.component_title,
         "first_seen": tracked.first_seen.isoformat() if tracked.first_seen else None,
         "has_architecture_doc": tracked.has_architecture_doc,
         "has_openapi_spec": tracked.has_openapi_spec,
@@ -136,6 +140,41 @@ def _repo_to_dict(tracked: TrackedRepo) -> dict:
         "catalog_pr_number": tracked.catalog_pr_number,
         "catalog_pr_status": tracked.catalog_pr_status,
     }
+
+
+def _catalog_info_yaml(tracked: TrackedRepo) -> str:
+    """Backstage Component YAML for scaffolder catalog:register.
+
+    Served from this Hub so a Software Template can pick a component name
+    without publishing catalog-info.yaml into the application git repo.
+    """
+    name = tracked.component_name or tracked.repo
+    title = tracked.component_title or name
+    return (
+        "apiVersion: backstage.io/v1alpha1\n"
+        "kind: Component\n"
+        "metadata:\n"
+        f"  name: {name}\n"
+        f"  title: {title}\n"
+        "  description: |\n"
+        f"    Application repository {tracked.owner}/{tracked.repo}, tracked by\n"
+        "    Governance Hub for Tekton CI and agent demos.\n"
+        "  annotations:\n"
+        f"    backstage.io/source-location: url:{tracked.repo_url}\n"
+        f"    backstage.io/kubernetes-id: {name}\n"
+        f"    janus-idp.io/tekton: {name}\n"
+        '    tekton.dev/cicd: "true"\n'
+        "  tags:\n"
+        "    - java\n"
+        "    - spring-boot\n"
+        "    - petclinic\n"
+        "    - rest\n"
+        "spec:\n"
+        "  type: service\n"
+        "  lifecycle: experimental\n"
+        "  owner: demo-team\n"
+        "  system: agentic-doc-generation\n"
+    )
 
 
 def _run_to_dict(run: AgentRun) -> dict:
@@ -412,6 +451,81 @@ async def api_list_repos() -> dict:
     try:
         repos = session.query(TrackedRepo).order_by(TrackedRepo.first_seen.desc()).all()
         return {"total": len(repos), "repos": [_repo_to_dict(r) for r in repos]}
+    finally:
+        session.close()
+
+
+class RegisterRepoRequest(BaseModel):
+    """Body for POST /api/repos -- explicit tracking registration.
+
+    `name` becomes the Backstage Component metadata.name (and Tekton CI
+    label id). Defaults to the GitHub repo name when omitted.
+    """
+
+    repo_url: str
+    name: str | None = Field(default=None, description="Backstage component name")
+    title: str | None = Field(default=None, description="Backstage component title")
+
+
+@app.post("/api/repos", status_code=200)
+async def api_register_repo(body: RegisterRepoRequest) -> dict:
+    """Idempotently track a repo and (optionally) bind a Backstage component
+    name used by GET /api/catalog-info/{name}/catalog-info.yaml."""
+    try:
+        owner, repo = compliance.parse_repo_url(body.repo_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    component_name = (body.name or repo).strip()
+    if not _COMPONENT_NAME_RE.fullmatch(component_name):
+        raise HTTPException(
+            status_code=400,
+            detail="name must be a lowercase DNS label (a-z, 0-9, hyphens; max 63 chars)",
+        )
+    component_title = (body.title or component_name).strip() or component_name
+
+    session = get_session()
+    try:
+        conflict = (
+            session.query(TrackedRepo)
+            .filter(TrackedRepo.component_name == component_name, TrackedRepo.repo_url != body.repo_url)
+            .one_or_none()
+        )
+        if conflict is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"component name '{component_name}' is already used by {conflict.owner}/{conflict.repo}",
+            )
+
+        tracked = get_or_create_repo(session, body.repo_url, owner, repo)
+        tracked.component_name = component_name
+        tracked.component_title = component_title
+        session.add(tracked)
+        session.commit()
+        session.refresh(tracked)
+
+        tracked = await compliance.run_compliance_check(session, tracked)
+        result = _repo_to_dict(tracked)
+        result["catalog_info_url"] = (
+            f"/api/catalog-info/{component_name}/catalog-info.yaml"
+        )
+        return result
+    finally:
+        session.close()
+
+
+@app.get("/api/catalog-info/{name}/catalog-info.yaml", response_class=PlainTextResponse)
+async def api_catalog_info_yaml(name: str) -> PlainTextResponse:
+    """Serve a Backstage Component YAML for catalog:register (RHDH scaffolder)."""
+    if not _COMPONENT_NAME_RE.fullmatch(name):
+        raise HTTPException(status_code=400, detail="invalid component name")
+
+    session = get_session()
+    try:
+        tracked = session.query(TrackedRepo).filter_by(component_name=name).one_or_none()
+        if tracked is None:
+            raise HTTPException(status_code=404, detail=f"no tracked repo with component name '{name}'")
+        return PlainTextResponse(_catalog_info_yaml(tracked), media_type="application/yaml")
     finally:
         session.close()
 

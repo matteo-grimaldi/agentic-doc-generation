@@ -61,14 +61,23 @@ fi
 echo "  RHDH operator CSV found."
 
 echo "==> Applying RHDH instance prerequisites (ConfigMaps, Secrets, RBAC)..."
-oc apply -f "${SCRIPT_DIR}/k8s/instance/rhdh-secrets.yaml"
+# Apply placeholder Secret only if missing — never overwrite a live Secret
+# that configure-rhdh (and GITHUB_TOKEN from github-token) already patched.
+if ! oc get secret rhdh-secrets -n "${NAMESPACE}" >/dev/null 2>&1; then
+  oc apply -f "${SCRIPT_DIR}/k8s/instance/rhdh-secrets.yaml"
+else
+  echo "    secret/rhdh-secrets already exists — leaving values untouched"
+  echo "    (re-apply PLACEHOLDER yaml would break OIDC and catalog:register)."
+fi
 oc apply -f "${SCRIPT_DIR}/k8s/instance/rbac-policy.yaml"
 oc apply -f "${SCRIPT_DIR}/k8s/instance/dynamic-plugins-configmap.yaml"
 oc apply -f "${SCRIPT_DIR}/k8s/instance/kubernetes-reader.yaml"
+oc apply -f "${SCRIPT_DIR}/k8s/instance/pipeline-starter.yaml"
 
-echo "==> Creating/updating rhdh-catalog ConfigMap from catalog/all.yaml..."
+echo "==> Creating/updating rhdh-catalog ConfigMap (catalog + Software Templates)..."
 oc create configmap rhdh-catalog \
   --from-file=all.yaml="${SCRIPT_DIR}/k8s/catalog/all.yaml" \
+  --from-file=spring-petclinic-rest-template.yaml="${SCRIPT_DIR}/k8s/templates/spring-petclinic-rest/template.yaml" \
   -n "${NAMESPACE}" --dry-run=client -o yaml | oc apply -f -
 
 echo "==> Applying app-config ConfigMap..."

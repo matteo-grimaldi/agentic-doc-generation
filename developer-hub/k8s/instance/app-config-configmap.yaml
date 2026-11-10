@@ -3,9 +3,11 @@
 # the Backstage CR injects them as env vars via extraEnvs.secrets.
 # Adapted from rhoai3-coding-demo for the agentic-doc-generation context:
 #   - Auth: OIDC via RHBK (realm: platform, client: rhdh)
-#   - No GitLab integration — GitHub via the github-mcp-server component
+#   - Optional integrations.github token (catalog/scaffolder GitHub host);
+#     agents still use github-mcp-server for repo browsing.
+#     Software Templates here only catalog:register existing repos (no publish:github).
 #   - App launcher tiles: doc-gen-agent and openapi-gen-agent
-#   - Catalog: static file (all.yaml in this repo)
+#   - Catalog: static files (all.yaml + Software Templates in this repo)
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -35,6 +37,10 @@ data:
         allow:
           - host: raw.githubusercontent.com
           - host: github.com
+          # Software Template catalog:register fetches Component YAML from
+          # governance-hub (custom name without publishing catalog-info to git).
+          # Port is required — FetchUrlReader matches host:port for non-default ports.
+          - host: governance-hub.doc-gen-demo.svc.cluster.local:7860
 
     auth:
       environment: production
@@ -52,6 +58,33 @@ data:
                 - resolver: preferredUsernameMatchingUserEntityName
 
     signInPage: oidc
+
+    # Proxy used by http:backstage:request after Software Template steps:
+    #  - /k8s → create Tekton PipelineRuns (rhdh-pipeline-starter token)
+    #  - /governance-hub → POST /api/repos to track the component
+    proxy:
+      endpoints:
+        '/k8s':
+          target: https://kubernetes.default.svc
+          changeOrigin: true
+          # In-cluster API uses the service-network cert; Node trusts it via
+          # NODE_EXTRA_CA_CERTS, but secure:false avoids proxy TLS edge cases.
+          secure: false
+          headers:
+            Authorization: Bearer ${RHDH_PIPELINE_STARTER_TOKEN}
+        '/governance-hub':
+          target: http://governance-hub.doc-gen-demo.svc.cluster.local:7860
+          changeOrigin: true
+
+    # GitHub token for catalog URL ingestion (catalog:register uses the
+    # GitHub API). Must be a real PAT — a literal PLACEHOLDER causes
+    # api.github.com 401 and scaffolder register fails with 400.
+    # Source in this demo: copy from doc-gen-demo/github-token into
+    # rhdh-secrets.GITHUB_TOKEN (do not re-apply rhdh-secrets.yaml over it).
+    integrations:
+      github:
+        - host: github.com
+          token: ${GITHUB_TOKEN}
 
     permission:
       enabled: true
@@ -95,7 +128,7 @@ data:
     catalog:
       orphanStrategy: delete
       rules:
-        - allow: [Component, System, API, Resource, Location, User, Group, Domain]
+        - allow: [Component, System, API, Resource, Location, Template, User, Group, Domain]
       locations:
         - type: file
           target: /opt/app-root/src/catalog/all.yaml

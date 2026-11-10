@@ -695,7 +695,8 @@ pod restarts can lose pending work and callbacks, leaving Hub runs accepted.
 Doc-gen, OpenAPI, and catalog invocation attempt a PR after eligible output
 is generated; compliance invocation only produces a report. Chat streams
 results without opening PRs until an explicit button click. The CI/CD
-pipeline invokes only doc-gen and OpenAPI. To monitor background work,
+pipeline invokes doc-gen and compliance-scan after the image build (in
+parallel with deploy). To monitor background work,
 read the selected agent container's logs and optional Hub history; rerun
 deliberately after failure, since invocation has no deduplication key.
 
@@ -964,12 +965,11 @@ agentic-doc-generation/
 │   ├── server.py                        # Four compliance/history tools; streamable HTTP /mcp
 │   ├── build-and-deploy.sh
 │   └── k8s/                             # MCPServer CR + Route; operator owns Deployment/Service
-├── ci-cd-pipeline/                      # OpenShift Pipelines (Tekton) build/deploy demo
+├── ci-cd-pipeline/                      # OpenShift Pipelines (Tekton) build + agent invoke (no deploy)
 │   ├── install-operator.sh              # One-time: installs the OpenShift Pipelines operator
 │   ├── build-and-deploy.sh
-│   ├── pipelinerun-example.yaml
-│   └── k8s/                             # includes tasks/invoke-doc-gen-agent-task.yaml and
-│                                         # tasks/invoke-openapi-gen-agent-task.yaml
+│   ├── pipelinerun-example.yaml         # volumeClaimTemplate workspace
+│   └── k8s/                             # invoke-doc-gen + invoke-compliance (post-build)
 ├── keycloak/                            # Red Hat Build of Keycloak (RHBK) — OIDC identity provider
 │   ├── build-and-deploy.sh              # Idempotent deploy: operator + instance + realm shell
 │   └── k8s/
@@ -980,7 +980,8 @@ agentic-doc-generation/
 │   └── k8s/
 │       ├── operator/                    # OperatorGroup, Subscription (fast-1.10, Manual), approve-installplan Job
 │       ├── instance/                    # ConfigMaps, Secrets, Backstage CR, ConsoleLink, RBAC, rbac-policy.yaml
-│       ├── catalog/                     # all.yaml — Backstage entity definitions
+│       ├── catalog/                     # all.yaml — Backstage entity definitions + Template Location
+│       ├── templates/                   # Software Templates (register existing PetClinic)
 │       └── jobs/                        # configure-rhdh.yaml — ArgoCD Sync hook (wave 18)
 ├── governance-hub-plugin/               # Custom RHDH dynamic plugin — Governance Hub embedded UI
 │   └── dist/                            # Built plugin artifact (OCI image published to quay.io/mcombi/rhdh-gov-hub)
@@ -1109,72 +1110,57 @@ the `dynamicPlugins` section of its ConfigMap. Access is gated by the
 
 ## CI/CD pipeline demo (OpenShift Pipelines)
 
-[`ci-cd-pipeline/`](ci-cd-pipeline/) adds a self-contained Tekton
-`build-deploy-app` Pipeline that demonstrates how an external CI/CD run
-can **trigger doc-gen-agent and openapi-gen-agent without waiting for
-generation**: before building
-or deploying anything, the pipeline POSTs to doc-gen-agent's and
-openapi-gen-agent's `/invoke` endpoints in parallel. Each endpoint
-accepts the request (`202 Accepted`) and runs its own generation in the
-background — so the pipeline's build/deploy steps proceed immediately
-rather than waiting minutes for either agent turn. Once each background
-run finishes, that agent proposes its output back to the repo it
-analyzed as its own **pull request**: it creates a new branch, commits
-the file there, and opens a PR against the base branch via the GitHub
-MCP server's `POST /propose-doc` route — neither agent ever writes
-directly to an existing branch, so this is safe even against a protected
-`main`. The two PRs (if both are opened) are entirely independent —
-doc-gen-agent proposes `ARCHITECTURE.md`, openapi-gen-agent proposes
-`openapi.yaml` (only if the repo looks like an API without one already).
+[`ci-cd-pipeline/`](ci-cd-pipeline/) provides the Tekton `build-deploy-app`
+Pipeline (name retained; it no longer deploys). Red Hat Developer Hub can
+**register the existing**
+[spring-petclinic-rest-legacy](https://github.com/matteo-grimaldi/spring-petclinic-rest-legacy)
+repository in the software catalog (no clone/fork/new repo) via the
+Software Template under
+[`developer-hub/k8s/templates/spring-petclinic-rest/`](developer-hub/k8s/templates/spring-petclinic-rest/).
+
+**Flow:** clone → **Maven** `mvn -B -DskipTests package` →
+**compliance-scan-agent** `POST /invoke` → fake **deploy** (no-op
+rollout log). The invoke returns `202 Accepted` within a short curl
+timeout (invocation ≠ scan). There is **no container image build or real
+workload deploy**. Compliance reports to the Governance Hub. The doc-gen
+and openapi invoke Tasks remain in-tree but are not part of this default
+pipeline.
 
 ```mermaid
 flowchart LR
-    invokeDocAgent["invoke-doc-gen-agent\n(fires & returns in ms)"] --> fetchSource["fetch-source\n(git-clone)"]
-    invokeApiAgent["invoke-openapi-gen-agent\n(fires & returns in ms)"] --> fetchSource
-    fetchSource --> buildImage["build-image\n(buildah)"]
-    buildImage --> deploy["deploy\n(oc apply)"]
-    invokeDocAgent -.->|"background task"| docAgentRun["doc-gen-agent POST /invoke\nruns doc generation async"]
-    invokeApiAgent -.->|"background task"| apiAgentRun["openapi-gen-agent POST /invoke\nruns spec generation async"]
-    docAgentRun -.->|"POST /propose-doc"| mcpPropose["GitHub MCP server"]
-    apiAgentRun -.->|"POST /propose-doc"| mcpPropose
-    mcpPropose -.->|"new branch + commit"| sourceRepo["source repo"]
-    mcpPropose -.->|"opens PR(s)"| sourceRepo
+    fetchSource["fetch-source\n(git-clone)"] --> mavenBuild["maven-build\n(mvn package)"]
+    mavenBuild --> invokeScan["invoke-compliance\n(202, non-blocking)"]
+    invokeScan --> deploy["deploy\n(fake rollout)"]
+    invokeScan -.->|"background"| scanAgentRun["compliance-scan-agent"]
 ```
 
-The pipeline builds the target repo's `Dockerfile` with Buildah, pushes
-to the internal OpenShift registry, and deploys a generic
-Deployment/Service/Route for it — so it works with **any public repo
-that has a Dockerfile**, not just this one.
+**Compatible applications:** a public Git Maven repo (`pom.xml` at the
+root). Checkout defaults to `main` (override with `repo-revision`). Invoke
+prompts include that revision as a hint; agents may still analyze the
+default branch if their tooling does not honor an explicit ref.
 
-Prerequisites: the Red Hat **OpenShift Pipelines** operator (Tekton), and
-a `GITHUB_TOKEN` with write access to the target repository configured
-on the GitHub MCP server, so it can open PRs against
-the repo you point the pipeline at. Without a token, generation still
-runs for both agents; each PR step just logs a warning and is skipped.
+**Prerequisites:** OpenShift Pipelines. The PetClinic Software Template
+registers the component and starts this pipeline; it does not need a
+repo-create token on RHDH.
 
 ```bash
-./ci-cd-pipeline/install-operator.sh    # one-time: installs the operator, waits for its CRDs
-./ci-cd-pipeline/build-and-deploy.sh    # applies the Namespace/RBAC/Tasks/Pipeline
+./ci-cd-pipeline/install-operator.sh
+./ci-cd-pipeline/build-and-deploy.sh
 oc create -f ci-cd-pipeline/pipelinerun-example.yaml -n ci-cd-demo
 tkn pipelinerun logs -f -n ci-cd-demo
 ```
 
-Or substitute any public repo/app name directly with the `tkn` CLI:
+Workspace storage uses a per-run `volumeClaimTemplate` (no pre-created PVC
+named `ci-cd-pipeline-workspace`).
 
-```bash
-tkn pipeline start build-deploy-app -n ci-cd-demo \
-  -p repo-url=https://github.com/<org>/<repo> \
-  -p app-name=<name> \
-  -w name=shared-workspace,claimName=ci-cd-pipeline-workspace \
-  --serviceaccount=ci-cd-pipeline-sa
-```
+**RHDH Create:** open *Register Spring PetClinic REST (legacy)* — it
+registers the existing repo and automatically starts a PipelineRun that
+Maven-builds that same GitHub URL (example above). No Dockerfile is
+required.
 
-If using GitOps, `gitops/apps/ci-cd-pipeline.yaml` registers this
-component as an ArgoCD-managed child Application (sync-wave 2) — but the
-operator install step above must still be run manually first, since
-ArgoCD can't apply `Pipeline`/`Task` resources before their CRDs exist
-(the same reason `gitops/bootstrap.sh` installs the OpenShift GitOps
-operator itself imperatively).
+If using GitOps, `gitops/apps/ci-cd-pipeline.yaml` syncs Tekton resources
+(sync-wave 2), but the Pipelines **operator** must still be installed
+imperatively first (CRDs must exist before CRs).
 
 ## OpenShift AI MCP catalog registration (optional)
 

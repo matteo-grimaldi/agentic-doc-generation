@@ -9,6 +9,7 @@
 #     or reused client secret
 #  5. Discovers RHDH, ArgoCD, doc-gen-agent, and openapi-gen-agent Routes
 #  6. Gets the rhdh-kubernetes-reader SA token
+#  6b. Gets the rhdh-pipeline-starter SA token (PipelineRun create via proxy)
 #  7. Generates or reuses SESSION_SECRET
 #  8. Patches rhdh-secrets with all discovered values (only if changed)
 #  9. Patches the ConsoleLink href to the RHDH URL
@@ -29,7 +30,7 @@ metadata:
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
     argocd.argoproj.io/sync-wave: "18"
 ---
-# Role in rhdh: read rhdh-secrets + rhdh-kubernetes-reader-token, patch rhdh-secrets
+# Role in rhdh: read rhdh-secrets + SA token Secrets, patch rhdh-secrets
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -45,7 +46,10 @@ rules:
     verbs: [get, list, watch, patch]
   - apiGroups: [""]
     resources: [secrets]
-    resourceNames: [rhdh-secrets, rhdh-kubernetes-reader-token]
+    resourceNames:
+      - rhdh-secrets
+      - rhdh-kubernetes-reader-token
+      - rhdh-pipeline-starter-token
     verbs: [get]
   - apiGroups: [""]
     resources: [secrets]
@@ -541,12 +545,17 @@ spec:
               fi
               echo "  ArgoCD URL: ${ARGOCD_URL}"
 
-              # ── 9. Get Kubernetes SA token ──────────────────────────────
-              echo "=== Step 9: Getting Kubernetes SA token ==="
+              # ── 9. Get Kubernetes SA tokens ─────────────────────────────
+              echo "=== Step 9: Getting Kubernetes SA tokens ==="
               KUBE_SA_TOKEN=$(oc get secret rhdh-kubernetes-reader-token -n rhdh \
                 -o jsonpath='{.data.token}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
               if [[ -z "${KUBE_SA_TOKEN}" ]]; then
                 echo "  WARNING: rhdh-kubernetes-reader-token not yet populated"
+              fi
+              PIPELINE_STARTER_TOKEN=$(oc get secret rhdh-pipeline-starter-token -n rhdh \
+                -o jsonpath='{.data.token}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+              if [[ -z "${PIPELINE_STARTER_TOKEN}" ]]; then
+                echo "  WARNING: rhdh-pipeline-starter-token not yet populated"
               fi
 
               # ── 10. Discover agent routes ───────────────────────────────
@@ -605,6 +614,7 @@ spec:
                   \"RHDH_ARGOCD_URL\":\"$(b64 "${ARGOCD_URL}")\",
                   \"RHDH_ARGOCD_TOKEN\":\"$(b64 "${ARGOCD_TOKEN}")\",
                   \"RHDH_KUBERNETES_SA_TOKEN\":\"$(b64 "${KUBE_SA_TOKEN}")\",
+                  \"RHDH_PIPELINE_STARTER_TOKEN\":\"$(b64 "${PIPELINE_STARTER_TOKEN}")\",
                   \"DOC_GEN_AGENT_URL\":\"$(b64 "${DOC_GEN_URL}")\",
                   \"OPENAPI_GEN_AGENT_URL\":\"$(b64 "${OPENAPI_GEN_URL}")\",
                   \"GOVERNANCE_HUB_URL\":\"$(b64 "${GOVERNANCE_HUB_URL}")\"
