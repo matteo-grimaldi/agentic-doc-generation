@@ -147,8 +147,8 @@ async def list_violations() -> dict:
 async def list_tracked_repos() -> dict:
     """
     List every repository currently tracked by the Governance Hub, with
-    its current compliance status. A repo appears here once an agent
-    (doc-gen-agent or openapi-gen-agent) has run against it at least once.
+    its current compliance status. A repo appears after any of the four
+    agents reports a run, or the Hub receives an explicit remediation request.
     """
     return await _list_repos()
 
@@ -156,7 +156,7 @@ async def list_tracked_repos() -> dict:
 @mcp.tool()
 async def get_repo_history(repo_url: str) -> dict:
     """
-    Return the full history of doc-gen-agent / openapi-gen-agent runs
+    Return the full history of all four agents' runs
     recorded for a given repository, most recent first, including any
     resulting pull request URLs.
 

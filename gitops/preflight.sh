@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 #
 # Pre-flight checks before applying the GitOps App-of-Apps. Warns on optional
-# gaps; exits non-zero when required CRDs are missing (see README prerequisites).
+# gaps; exits non-zero on missing CRDs, generated ConfigMaps or prepared images.
 #
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NAMESPACE="${NAMESPACE:-doc-gen-demo}"
 WARN_ONLY="${GITOPS_PREFLIGHT_WARN_ONLY:-0}"
 
@@ -47,7 +46,7 @@ require_crd "pipelines.tekton.dev" \
   "Tekton Pipeline CRD not found — run ./ci-cd-pipeline/install-operator.sh before GitOps bootstrap (or set GITOPS_PREFLIGHT_WARN_ONLY=1 to continue)."
 
 if ! oc get namespace "${NAMESPACE}" >/dev/null 2>&1; then
-  echo "    namespace ${NAMESPACE} will be created by ArgoCD (CreateNamespace sync option)."
+  echo "    namespace ${NAMESPACE} is missing — bash gitops/prepare.sh creates it."
 fi
 
 if ! oc get secret external-model-credentials -n "${NAMESPACE}" >/dev/null 2>&1; then
@@ -62,11 +61,22 @@ if ! oc get externalmodel qwen38-27b -n llm >/dev/null 2>&1; then
   warn "ExternalModel/qwen38-27b missing in llm — run ./install-openshift-ai.sh with UPSTREAM_MODEL_API_KEY to register the upstream model behind the gateway."
 fi
 
-for cm in ogx-stack-config agent-knowledge; do
-  if ! oc get configmap "${cm}" -n "${NAMESPACE}" >/dev/null 2>&1; then
-    warn "configmap/${cm} missing in ${NAMESPACE} — run component build-and-deploy.sh or build-and-deploy-all.sh so agents have OGX stack config."
-    break
+require_prepared_resource() {
+  local kind="$1" name="$2"
+  if ! oc get "${kind}" "${name}" -n "${NAMESPACE}" >/dev/null 2>&1; then
+    if [[ "${WARN_ONLY}" == 1 ]]; then
+      warn "${kind}/${name} missing in ${NAMESPACE} — run bash gitops/prepare.sh before bootstrap."
+    else
+      fail "${kind}/${name} missing in ${NAMESPACE} — run bash gitops/prepare.sh before bootstrap."
+    fi
   fi
+}
+for cm in cluster-config ogx-stack-config agent-knowledge openapi-agent-knowledge catalog-gen-knowledge compliance-scan-knowledge; do
+  require_prepared_resource configmap "${cm}"
+done
+for component in github-mcp-server doc-gen-agent openapi-gen-agent catalog-gen-agent \
+    compliance-scan-agent governance-hub compliance-mcp-server; do
+  require_prepared_resource imagestreamtag "${component}:latest"
 done
 
 if ! oc get rolebinding openshift-gitops-argocd-application-controller-admin -n "${NAMESPACE}" >/dev/null 2>&1; then

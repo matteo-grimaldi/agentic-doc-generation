@@ -4,6 +4,7 @@
 #
 # Components deployed (in order):
 #   github-mcp-server     — MCP server for GitHub repo browsing
+#   mcp-gateway           — gateway wiring, compatibility Job, and agent MCP URL
 #   doc-gen-agent         — architecture documentation agent (Gradio UI + OGX)
 #   openapi-gen-agent     — OpenAPI specification agent (Gradio UI + OGX)
 #   catalog-gen-agent     — catalog component generation agent (Gradio UI + OGX)
@@ -23,8 +24,8 @@
 # resource — if their `oc apply` errors with "no matches for kind
 # MCPServer", run ./install-openshift-ai.sh first (see their own
 # build-and-deploy.sh for details).
-# For a single command that provisions the whole stack via GitOps, use
-# gitops/bootstrap.sh instead.
+# For GitOps, install the operators, run gitops/prepare.sh, then
+# gitops/bootstrap.sh (see README for the URL-finalization step).
 #
 # Usage:
 #   ./build-and-deploy-all.sh                  # deploy everything
@@ -56,8 +57,8 @@ fi
 NAMESPACE="${NAMESPACE:-doc-gen-demo}"
 
 REPO_ROOT="${SCRIPT_DIR}"
-# shellcheck source=scripts/lib-mlflow-credentials.sh
-source "${REPO_ROOT}/scripts/lib-mlflow-credentials.sh"
+# shellcheck source=scripts/lib-openshift-binary-build.sh
+source "${REPO_ROOT}/scripts/lib-openshift-binary-build.sh"
 # shellcheck source=scripts/lib-ogx-sidecar-deploy.sh
 source "${REPO_ROOT}/scripts/lib-ogx-sidecar-deploy.sh"
 
@@ -67,8 +68,6 @@ export OGX_MLFLOW_SIDECAR_IMAGE="${OGX_MLFLOW_SIDECAR_IMAGE:-quay.io/mgrimald/og
 
 echo "==> Checking cluster login..."
 oc whoami >/dev/null || { echo "error: not logged into an OpenShift cluster (run 'oc login' first)"; exit 1; }
-
-ensure_mlflow_credentials_secret "${NAMESPACE}" "${REPO_ROOT}"
 
 MODEL_BASE_URL_SET=$(oc get configmap cluster-config -n "${NAMESPACE}" -o jsonpath='{.data.model_base_url}' 2>/dev/null || true)
 if [[ -z "${MODEL_BASE_URL_SET}" || "${MODEL_BASE_URL_SET}" == REPLACE_WITH_* ]]; then
@@ -88,9 +87,22 @@ if ! oc get gateway maas-default-gateway -n openshift-ingress >/dev/null 2>&1; t
   echo ""
 fi
 
-COMPONENTS=("github-mcp-server" "doc-gen-agent" "openapi-gen-agent" "catalog-gen-agent" "compliance-scan-agent" "governance-hub" "compliance-mcp-server" "ci-cd-pipeline" "keycloak" "developer-hub")
+COMPONENTS=("github-mcp-server" "mcp-gateway" "doc-gen-agent" "openapi-gen-agent" "catalog-gen-agent" "compliance-scan-agent" "governance-hub" "compliance-mcp-server" "ci-cd-pipeline" "keycloak" "developer-hub")
 if [[ $# -gt 0 ]]; then
   COMPONENTS=("$@")
+fi
+# Validate the entire selection before deploying anything (including credentials).
+for component in "${COMPONENTS[@]}"; do
+  case "${component}" in
+    github-mcp-server|mcp-gateway|doc-gen-agent|openapi-gen-agent|catalog-gen-agent|compliance-scan-agent|governance-hub|compliance-mcp-server|ci-cd-pipeline|keycloak|developer-hub) ;;
+    *) echo "error: unknown component ${component}" >&2; exit 1 ;;
+  esac
+done
+if [[ " ${COMPONENTS[*]} " == *" ci-cd-pipeline "* ]]; then
+  oc get crd pipelines.tekton.dev >/dev/null || {
+    echo "error: run ./ci-cd-pipeline/install-operator.sh before deploying the full stack" >&2
+    exit 1
+  }
 fi
 
 deploying_agent=false
@@ -103,6 +115,13 @@ for component in "${COMPONENTS[@]}"; do
   done
 done
 
+if [[ "${deploying_agent}" == true ]]; then
+  # Build scripts preserve installer URLs; refuse to deploy fail-closed agents
+  # when a single-component invocation skipped initial gateway provisioning.
+  # The default component order provisions it before reaching the agents.
+  echo "==> Agent deployment requires a programmed MCP gateway (deployed first in the default order)."
+fi
+
 if [[ "${deploying_agent}" == true && "${OGX_MLFLOW_SIDECAR_MODE}" == cluster ]]; then
   echo ""
   echo "==> MLflow OGX sidecar: in-cluster build (ogx-mlflow-sidecar ImageStream)"
@@ -112,6 +131,16 @@ fi
 for component in "${COMPONENTS[@]}"; do
   echo ""
   echo "==================================================================="
+  case "${component}" in
+    doc-gen-agent|openapi-gen-agent|catalog-gen-agent|compliance-scan-agent)
+      MCP_URL=$(oc get configmap cluster-config -n "${NAMESPACE}" -o jsonpath='{.data.mcp_gateway_url}')
+      if [[ -z "${MCP_URL}" ]]; then
+        echo "error: deploy mcp-gateway first: ./build-and-deploy-all.sh mcp-gateway" >&2
+        exit 1
+      fi
+      oc wait --for=condition=Programmed gateway/mcp-gateway -n mcp-gateway --timeout=300s
+      ;;
+  esac
   echo "  Deploying: ${component}"
   echo "==================================================================="
   if [[ "${NAMESPACE_OVERRIDDEN}" == true ]]; then

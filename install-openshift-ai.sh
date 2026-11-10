@@ -881,7 +881,8 @@ echo "      oc get maassubscription,maasauthpolicy -n models-as-a-service"
 # ---------------------------------------------------------------------------
 # Same operator-before-CRD pattern as mcplifecycleoperator above, but the
 # MCP gateway is *not* a DataScienceCluster component (aigateway is the
-# model gateway and stays Removed). Delegate to install-mcp-gateway.sh so
+# model gateway, enabled with modelsAsAService in Step 6). Delegate to
+# install-mcp-gateway.sh so
 # the URL-patch / re-run path after GitOps stays a single script.
 echo ""
 echo "==> Installing MCP Gateway prerequisites (Connectivity Link + MCP Gateway Operator)..."

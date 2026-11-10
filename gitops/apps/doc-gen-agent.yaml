@@ -45,3 +45,5 @@ spec:
         maxDuration: 3m
     syncOptions:
       - CreateNamespace=true
+      # Keep installer-managed URLs when another cluster-config key changes.
+      - RespectIgnoreDifferences=true

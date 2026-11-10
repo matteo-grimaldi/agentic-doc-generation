@@ -34,9 +34,18 @@ echo "==> Enabling local image lookup on ImageStream ${IMAGE_NAME}..."
 oc patch imagestream "${IMAGE_NAME}" -n "${NAMESPACE}" --type=merge \
   -p '{"spec":{"lookupPolicy":{"local":true}}}'
 
+if [[ "${PREPARE_ONLY:-false}" == true ]]; then
+  echo "==> ${IMAGE_NAME}: image/configuration prepared; workload deployment skipped."
+  exit 0
+fi
+
 echo "==> Applying Deployment, Service, and Route..."
 oc apply -f "${SCRIPT_DIR}/k8s/deployment.yaml" -n "${NAMESPACE}"
 oc apply -f "${SCRIPT_DIR}/k8s/route.yaml" -n "${NAMESPACE}"
+
+# A rebuilt :latest tag or changed ConfigMap does not change the pod template.
+# Normal deployment explicitly replaces pods; PREPARE_ONLY has already exited.
+oc rollout restart deployment/"${IMAGE_NAME}" -n "${NAMESPACE}"
 
 echo "==> Waiting for rollout..."
 oc rollout status deployment/governance-hub -n "${NAMESPACE}" --timeout=300s

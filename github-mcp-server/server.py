@@ -360,7 +360,7 @@ async def read_file(repo_url: str, path: str, ref: str = "") -> dict[str, Any]:
     """
     Read the contents of a single file from a GitHub repository.
 
-    Files larger than ~60KB are truncated with a note, to protect the
+    Files larger than MAX_FILE_BYTES (default 20,000 bytes) are truncated, to protect the
     agent's context window budget. Documentation files (README,
     CONTRIBUTING, CHANGELOG, and other .md/.rst/.txt/.adoc files) are
     truncated much more aggressively (~8KB) since their overview/purpose

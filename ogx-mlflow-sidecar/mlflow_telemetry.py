@@ -601,14 +601,6 @@ def configure_mlflow(*, service_name: str, enable_openai_autolog: bool = False) 
 
     _register_span_processors()
 
-        logger.warning(
-            "MLflow set_experiment failed — tracing disabled (experiment=%s): %s",
-            experiment,
-            exc,
-        )
-        _CONFIGURED = True
-        _ENABLED = False
-        return False
     if enable_openai_autolog and importlib.util.find_spec("openai") is not None:
         mlflow.openai.autolog(log_traces=True)
     elif enable_openai_autolog:

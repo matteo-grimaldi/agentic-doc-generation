@@ -180,6 +180,7 @@ async def _report_to_governance(
     pr_url: str | None = None,
     pr_number: int | None = None,
     error: str | None = None,
+    triggered_by: str = "invoke",
 ) -> None:
     """
     Fire-and-forget report of this run's outcome to the Governance Hub's
@@ -200,9 +201,12 @@ async def _report_to_governance(
         "pr_number": pr_number,
         "error": error,
     }
+    if triggered_by != "invoke":
+        payload["triggered_by"] = triggered_by
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
-            await client.post(f"{GOVERNANCE_HUB_URL}/api/runs", json=payload)
+            response = await client.post(f"{GOVERNANCE_HUB_URL}/api/runs", json=payload)
+            response.raise_for_status()
     except Exception as exc:
         logger.warning("Job %s: failed to report run to governance hub: %s", job_id, exc)
 
@@ -251,17 +255,24 @@ async def chat(message: str, history: list[dict]):
     history[-1] = {"role": "assistant", "content": ""}
     response_so_far = ""
 
-    async for chunk in run_agent(repo_url, repo_structure=structure if "error" not in structure else None):
-        response_so_far += chunk
-        history[-1] = {"role": "assistant", "content": response_so_far}
+    try:
+        async for chunk in run_agent(repo_url, repo_structure=structure if "error" not in structure else None):
+            response_so_far += chunk
+            history[-1] = {"role": "assistant", "content": response_so_far}
+            yield history, "", ""
+    except Exception as exc:
+        logger.exception("Chat job %s failed", job_id)
+        await _report_to_governance(job_id, repo_url, "failed", error=str(exc), triggered_by="ui")
+        history[-1] = {"role": "assistant", "content": "⚠️ Generation failed. Please try again."}
         yield history, "", ""
+        return
 
     catalog_info = extract_catalog_info(response_so_far)
     if not catalog_info.strip():
         logger.warning("Job %s: agent produced no usable catalog-info.yaml", job_id)
-        await _report_to_governance(job_id, repo_url, "failed", error="agent produced no usable catalog-info.yaml")
+        await _report_to_governance(job_id, repo_url, "failed", error="agent produced no usable catalog-info.yaml", triggered_by="ui")
     else:
-        await _report_to_governance(job_id, repo_url, "completed")
+        await _report_to_governance(job_id, repo_url, "completed", triggered_by="ui")
 
     # Final yield: PR-ready catalog YAML only (stream may include narration
     # if the model deviated from the fenced-block format; extract_catalog_info
@@ -338,6 +349,12 @@ async def propose_pr_clicked(repo_url: str, content: str) -> str:
     job_id = str(uuid.uuid4())
     logger.info("UI-triggered PR proposal job %s for %s", job_id, repo_url)
     result = await _propose_catalog_info(repo_url, content, job_id)
+
+    await _report_to_governance(
+        job_id, repo_url, "failed" if "error" in result else "completed",
+        pr_url=result.get("pr_url"), pr_number=result.get("pr_number"),
+        error=result.get("error"), triggered_by="ui-pr",
+    )
 
     if "error" in result:
         return f"⚠️ Failed to open PR for `{repo_url}`: {result['error']}"

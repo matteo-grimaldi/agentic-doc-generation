@@ -32,6 +32,8 @@ import re
 from typing import AsyncIterator
 
 import httpx
+import yaml
+from openapi_spec_validator import OpenAPIV30SpecValidator
 from ogx_client import AsyncOgxClient
 
 from mlflow_telemetry import (
@@ -269,12 +271,11 @@ def _split_leading_comments(block: str) -> tuple[str, str]:
     locating and returning the real spec fixes that without discarding
     the information.
 
-    Returns ("", block) unchanged if no `openapi:` key is found at all —
-    callers decide how to handle that (e.g. the raw-YAML fallback below).
+    Returns ("", "") if no `openapi:` key is found.
     """
     match = _OPENAPI_KEY_RE.search(block)
     if not match:
-        return "", block
+        return "", ""
     return block[: match.start()].strip(), block[match.start():].strip()
 
 
@@ -650,6 +651,46 @@ async def run_agent(repo_url: str, repo_structure: dict | None = None) -> AsyncI
             )
 
 
+def validate_openapi_spec(content: str) -> str | None:
+    """Return an error for invalid OpenAPI 3.0.x; validation performs no I/O.
+
+    Generated specs must be self-contained: only local JSON-pointer refs are
+    supported. Reject external refs before the validator can resolve them.
+    Aliases are rejected to keep validation bounded and avoid cyclic YAML.
+    This validates document structure, not whether endpoints exist in source.
+    """
+    try:
+        if any(isinstance(token, yaml.tokens.AliasToken) for token in yaml.scan(content)):
+            return "YAML aliases are not supported in generated specifications"
+        spec = yaml.safe_load(content)
+        if not isinstance(spec, dict) or not re.fullmatch(r"3\.0\.\d+", str(spec.get("openapi", ""))):
+            return "Expected an OpenAPI 3.0.x document"
+        pending = [spec]
+        while pending:
+            node = pending.pop()
+            if isinstance(node, dict):
+                ref = node.get("$ref")
+                if "$ref" in node and (not isinstance(ref, str) or not ref.startswith("#/")):
+                    return "Only local JSON-pointer $ref references are supported"
+                pending.extend(node.values())
+            elif isinstance(node, list):
+                pending.extend(node)
+        error = next(OpenAPIV30SpecValidator(spec).iter_errors(), None)
+        if error is not None:
+            return f"OpenAPI schema validation failed: {error.message[:300]}"
+    except Exception as exc:
+        return f"OpenAPI validation failed: {str(exc)[:300]}"
+    return None
+
+
+def _validated_spec(spec: str) -> str:
+    error = validate_openapi_spec(spec)
+    if error:
+        logger.warning("Rejected generated specification: %s", error)
+        return ""
+    return spec + "\n"
+
+
 def extract_openapi_spec(streamed: str) -> str:
     """
     Extract a clean OpenAPI YAML document from a full run_agent() stream,
@@ -678,7 +719,7 @@ def extract_openapi_spec(streamed: str) -> str:
                 len(preamble), preamble[:300],
             )
         if spec:
-            return spec + "\n"
+            return _validated_spec(spec)
         logger.warning("extract_openapi_spec: fenced block had no 'openapi:' key found")
         return ""
     # Fallback: the model occasionally replies with raw YAML, no fence —
@@ -691,6 +732,6 @@ def extract_openapi_spec(streamed: str) -> str:
                 "before 'openapi:' (kept out of the PR): %r",
                 len(preamble), preamble[:300],
             )
-        return spec + "\n"
+        return _validated_spec(spec)
     logger.warning("extract_openapi_spec: no recognizable OpenAPI YAML found in agent output")
     return ""

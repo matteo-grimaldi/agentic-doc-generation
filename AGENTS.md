@@ -4,7 +4,7 @@ Guidance for AI coding agents working in this repository.
 
 ## What this repo is
 
-A GitOps-provisioned OpenShift demo: three independent AI agents (each its
+A GitOps-provisioned OpenShift demo: four independent AI agents (each its
 own Gradio UI + OGX sidecar pod) that generate repo documentation and
 check architectural compliance for a given GitHub repo — `doc-gen-agent`
 produces architecture documentation with Mermaid C4 diagrams,
@@ -12,14 +12,21 @@ produces architecture documentation with Mermaid C4 diagrams,
 like HTTP API services, and `compliance-scan-agent` scans K8s/OpenShift
 manifests, project structure, and `pom.xml` content for bad practices
 against separately-maintained guideline files and reports findings (it
-never opens a PR). All three (plus `catalog-gen-agent`) reach the model
-through the in-cluster OpenShift AI AI Gateway / Models-as-a-Service
+never opens a PR). `catalog-gen-agent` generates or augments Backstage
+`catalog-info.yaml` with a Component and applicable API entities, and
+can propose it as a PR. All four reach the model through the in-cluster
+OpenShift AI AI Gateway / Models-as-a-Service
 (no GPU or in-cluster vLLM serving on this branch — the gateway fronts
 an upstream OpenAI-compatible endpoint) and a shared GitHub MCP server
 for code exploration. It is a simplified take on
 [opendatahub-io/architecture-context](https://github.com/opendatahub-io/architecture-context).
-The three agents are fully independent — separate pods, UIs, and
+The four agents are fully independent — separate pods, UIs, and
 budgets; none of them trigger each other.
+
+The supported demo inputs are Java application repositories. OpenAPI
+generation targets Spring MVC/Spring Boot or JAX-RS-style Java services;
+broader language discovery is outside the demo scope. This is a scope
+decision, not a language-validation gate currently enforced by the agents.
 
 > This is the `main` branch. The [`local-model`](../../tree/local-model)
 > branch preserves the original design where the model is served
@@ -35,6 +42,7 @@ component breakdown before making changes.
 
 ```
 gitops/                 # ArgoCD App-of-Apps: bootstrap.sh is the entry point
+  prepare.sh             # Build seven app images/configuration without applying workloads
   argocd-namespace-rolebindings.yaml  # Imperative Argo CD admin in demo namespaces
   argocd-instance-demo.yaml           # Argo CD UI RBAC + rhdh-local-user (merge patch)
   preflight.sh           # CRD/optional runtime checks before bootstrap
@@ -65,25 +73,30 @@ directory with its manifests. `ogx-mlflow-sidecar/` holds the sidecar
 Agent Deployments default to **`quay.io/mgrimald/ogx-mlflow-sidecar:latest`**
 (`cluster-config` `ogx_mlflow_sidecar_image` must stay in sync). Use
 `OGX_MLFLOW_SIDECAR_MODE=cluster` to build on OpenShift and patch to the
-namespace ImageStream instead. `doc-gen-agent`, `openapi-gen-agent`, and
-`compliance-scan-agent` are three separate agents, not slices of one
-component — don't reintroduce cross-calls between them (e.g. one
+namespace ImageStream instead. `doc-gen-agent`, `openapi-gen-agent`,
+`compliance-scan-agent`, and `catalog-gen-agent` are four separate agents,
+not slices of one component — don't reintroduce cross-calls between them (e.g. one
 triggering another's generation or budget) without the user explicitly
-asking for that coupling back. Unlike the other two, `compliance-scan-agent`
+asking for that coupling back. Unlike the other three, `compliance-scan-agent`
 never opens a PR — its only deliverable is a Markdown report, returned in
 its chat UI and (when invoked via `/invoke`) sent to `governance-hub`'s
-`POST /api/runs` callback. `governance-hub` is a fourth, independent
-component: it only *observes* all three agents (via their optional
-`POST /api/runs` callback, controlled by each agent's
-`GOVERNANCE_HUB_URL` env var) and *triggers* them (via their existing
-`POST /invoke`, exactly like the CI/CD pipeline does for the first two) —
-it never reads any agent's internals, and no agent depends on
-`governance-hub` being present or healthy. `compliance-mcp-server` is a
-fifth, independent component: a standalone MCP server that lets other AI
+`POST /api/runs` callback. Chat outcomes also use this optional callback.
+`governance-hub` is an independent FastAPI dashboard and REST API: it
+*observes* doc-gen, OpenAPI, catalog, and compliance-scan outcomes via optional
+`POST /api/runs` callbacks, controlled by each agent's
+`GOVERNANCE_HUB_URL` env var, and explicitly *triggers* all four agents via
+their existing `POST /invoke` endpoints. All four report chat outcomes;
+the three PR-capable agents also report UI proposal outcomes. Catalog
+callbacks and triggers use `catalog-gen`. These callbacks are optional
+and failures must never prevent generation. The Hub never reads an agent's internals, and
+no agent depends on it being present or healthy. `compliance-mcp-server`
+is another independent component: a standalone MCP server that lets other AI
 agents query governance-hub's compliance state. It holds no state and no
 database of its own — every tool it exposes is a thin read-only proxy
 over governance-hub's existing REST API (`GET /api/repos`,
-`GET /api/repos/{owner}/{repo}/status`). Don't give it direct database
+`GET /api/repos/{owner}/{repo}/status`). Its streamable HTTP `/mcp`
+transport exposes `get_compliance_status`, `list_violations`,
+`list_tracked_repos`, and `get_repo_history`. Don't give it direct database
 access (e.g. a shared PVC mount) — that would couple it to
 governance-hub's storage layer instead of its public API.
 
@@ -136,15 +149,23 @@ governance-hub's storage layer instead of its public API.
   (Connectivity Link + MCP Gateway Operator). Re-run
   `./install-mcp-gateway.sh` alone after GitOps syncs `mcp-gateway/k8s`
   to patch `cluster-config` `mcp_gateway_url` if still empty. The
-  DataScienceCluster `aigateway` component is the *model* gateway and
-  stays `Removed`. Gen AI Playground `mcp-catalog-entry.yaml` URLs stay
+  DataScienceCluster `aigateway` component is the *model* gateway;
+  `install-openshift-ai.sh` step 6 sets it and its nested
+  `modelsAsAService` component to `Managed` after platform prerequisites
+  are ready. This enables external-model routing/governance, not local
+  model serving or GPUs. Gen AI Playground `mcp-catalog-entry.yaml` URLs stay
   on the direct MCP Service — that ConfigMap cannot send a TokenReview
   bearer or `X-Mcp-Virtualserver`.
 - **ConfigMaps generated from files are not committed as inline YAML.**
   `ogx-stack-config` and `agent-knowledge`/`openapi-agent-knowledge`/
-  `compliance-scan-knowledge` (per component) are created by each
-  component's `build-and-deploy.sh` via
-  `oc create configmap --from-file=...` to avoid YAML-in-YAML. If you add
+  `compliance-scan-knowledge`/`catalog-gen-knowledge` are generated by
+  `scripts/configure-agents.sh`, called by each agent build script, via
+  `oc create configmap --from-file=...` to avoid YAML-in-YAML.
+  All four agents mount one shared `ogx-stack-config`, generated from the
+  canonical `doc-gen-agent/ogx/stack_run_config.yaml`; other agents' stack
+  files are reference copies, not deployment inputs. Knowledge maps stay
+  separate. The generator preserves existing installer-managed
+  `model_base_url` and `mcp_gateway_url` and does not restart pods. If you add
   a new file-backed ConfigMap, follow the same pattern and document it
   with a comment at the top of the Deployment manifest that references
   it.
@@ -167,11 +188,20 @@ governance-hub's storage layer instead of its public API.
   in-cluster AI Gateway `/v1` Service URL, `model_name` =
   `external-model/<id>` — shared by all four agents), **each** agent's
   `ogx/stack_run_config.yaml` (`model_id` / `provider_model_id` = bare
-  id), and the `ExternalModel` / `MaaSModelRef` under `ai-gateway/k8s/`
+  id; doc-gen's is canonical and the others are reference copies), and
+  the `ExternalModel` / `MaaSModelRef` under `ai-gateway/k8s/`
   (same bare id). The MaaS API key (`sk-oai-...`) goes in
   `external-model-credentials` (minted by `install-openshift-ai.sh` or
   set via `EXTERNAL_MODEL_API_KEY`); the upstream provider key stays in
   `llm/workshop-model-api-key` from `UPSTREAM_MODEL_API_KEY`.
+- **Deployment preparation and rollouts:** install OpenShift AI and Tekton
+  before GitOps, then run `bash gitops/prepare.sh` before bootstrap.
+  `PREPARE_ONLY=true` on the seven application build scripts stops before
+  workload manifests/rollout; it still builds images and updates configuration.
+  Non-GitOps aggregate deployment includes `mcp-gateway` before the agents;
+  its script waits for the compatibility Job and configures the MCP URL.
+  File-backed maps require regeneration and environment/stack changes require
+  agent restarts; Argo CD does not automatically perform those steps.
 - **OGX MLflow sidecar image** defaults to Quay: keep
   `cluster-config` `ogx_mlflow_sidecar_image` in sync with the
   `ogx-server` `image` field in all four agent `k8s/deployment.yaml`

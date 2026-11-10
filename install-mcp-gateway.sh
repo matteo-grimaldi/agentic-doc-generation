@@ -12,7 +12,8 @@
 # Platform-level / imperative (like install-openshift-ai.sh) because
 # ArgoCD cannot apply those CRs before their CRDs exist. The
 # DataScienceCluster `aigateway` component is the *model* gateway and
-# stays Removed — this script installs the MCP gateway path instead.
+# is enabled with modelsAsAService (both Managed) by install-openshift-ai.sh
+# step 6. This script installs the separate MCP gateway path.
 #
 # After operators are ready, this script also:
 #   - Creates a cluster Kuadrant singleton if AuthPolicy enforcement needs

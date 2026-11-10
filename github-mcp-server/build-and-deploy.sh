@@ -33,10 +33,18 @@ else
   echo "==> \$GITHUB_TOKEN not set — skipping secret creation (search_code tool will be unavailable, GitHub API rate limits will be lower)."
 fi
 
+if [[ "${PREPARE_ONLY:-false}" == true ]]; then
+  echo "==> ${IMAGE_NAME}: image/configuration prepared; workload deployment skipped."
+  exit 0
+fi
+
 echo "==> Applying Kubernetes manifests (MCPServer CR — requires the MCPServer CRD;"
 echo "    run ./install-openshift-ai.sh first if this errors with a 'no matches"
 echo "    for kind MCPServer' message)..."
 oc apply -f "${SCRIPT_DIR}/k8s/mcpserver.yaml" -n "${NAMESPACE}"
+
+# First deployment is asynchronous: wait for the lifecycle operator to create it.
+oc wait --for=create deployment/"${IMAGE_NAME}" -n "${NAMESPACE}" --timeout=180s
 
 echo "==> Restarting to pick up the new image (no automatic ImageStream trigger"
 echo "    is configured, so re-applying the MCPServer CR alone won't roll pods"
