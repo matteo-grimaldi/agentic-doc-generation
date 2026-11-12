@@ -30,9 +30,7 @@
 # mlflow_tracking_uri: in-cluster or Route URL of the OpenShift AI MLflow
 # tracking server (from the MLflow UI quickstart / Mlflow CR). Leave empty
 # to disable tracing. Pods in doc-gen-demo must be able to reach this URI;
-# optional auth goes in the mlflow-credentials Secret (never commit tokens):
-#   oc create secret generic mlflow-credentials \
-#     --from-literal=token="$(oc whoami -t)" -n doc-gen-demo
+# agents authenticate with their mounted, rotating service-account tokens.
 apiVersion: v1
 kind: ConfigMap
 metadata:

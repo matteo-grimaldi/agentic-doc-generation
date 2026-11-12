@@ -290,8 +290,10 @@ spec:
               # recreated — a stale "Complete" job from before the roll leaves the
               # realm missing until we delete the Job and wait for import again.
               echo "=== Step 1c: Ensuring platform realm import matches Keycloak pod ==="
+              # Pod startTime stays unchanged when its container restarts after
+              # a cluster suspend/resume; the dev-file realm is lost then too.
               KC_POD_START=$(oc get pod keycloak-0 -n rhdh-keycloak \
-                -o jsonpath='{.status.startTime}' 2>/dev/null || echo "")
+                -o jsonpath='{.status.containerStatuses[0].state.running.startedAt}' 2>/dev/null || echo "")
               IMPORT_DONE=$(oc get job platform-realm -n rhdh-keycloak \
                 -o jsonpath='{.status.completionTime}' 2>/dev/null || echo "")
               if [[ "${HOSTNAME_PATCHED}" == "true" ]] || \

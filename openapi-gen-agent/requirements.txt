@@ -4,4 +4,4 @@ httpx>=0.27.0
 PyYAML>=6.0
 openapi-spec-validator>=0.7,<0.9
 # Workspace support (mlflow.set_workspace / MLFLOW_WORKSPACE) needs >= 3.13
-mlflow>=3.13
+mlflow[kubernetes]>=3.13

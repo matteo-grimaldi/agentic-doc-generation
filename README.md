@@ -841,18 +841,9 @@ as described in [Configuration updates and restarts](#configuration-updates-and-
 | `MLFLOW_TRACKING_INSECURE_TLS` ← `cluster-config.mlflow_tracking_insecure_tls` | `"true"` | Disables TLS verification for this demo; a trusted certificate can be used instead. |
 | `MLFLOW_WORKSPACE` | `doc-gen-demo` | RHOAI workspace (= namespace) |
 | `MLFLOW_EXPERIMENT` | per-agent name | One experiment per agent |
-| `MLFLOW_TRACKING_TOKEN` ← Secret `mlflow-credentials` / `token` | optional | Create if the server requires auth |
+| `MLFLOW_TRACKING_AUTH` | `kubernetes-namespaced` | MLflow reads each pod's rotating service-account token; each agent has namespace-scoped MLflow RBAC. |
 
-```bash
-# Optional auth for the tracking server (also created automatically by
-# build-and-deploy-all.sh and each agent build-and-deploy.sh when
-# mlflow_tracking_uri is set and you are logged in with oc)
-oc create secret generic mlflow-credentials \
-  --from-literal=token="$(oc whoami -t)" -n doc-gen-demo
-
-# Then deploy an agent:
-./doc-gen-agent/build-and-deploy.sh
-```
+The agents use the [MLflow Kubernetes authentication provider](https://mlflow.org/docs/latest/self-hosting/security/kubernetes/). No copied `oc whoami` token or `mlflow-credentials` Secret is needed.
 
 **Session grouping.** Each Gradio / `/invoke` call gets a UUID written as
 trace metadata `mlflow.trace.session` (MLflow UI **Session** column). The
@@ -1097,6 +1088,22 @@ Deploy (after Keycloak):
 ```bash
 bash developer-hub/build-and-deploy.sh
 ```
+
+The demo Keycloak uses an ephemeral `dev-file` database. A Keycloak container
+restart, including after a cluster suspend/resume, can erase the `platform`
+realm while its old import Job still says `Complete`. If OIDC sign-in reports
+`Realm does not exist`, rerun only the provisioning Job (the full Developer Hub
+deploy script reapplies placeholder Secret values first):
+
+```bash
+oc delete job job-configure-rhdh -n rhdh --ignore-not-found
+oc apply -f developer-hub/k8s/jobs/configure-rhdh.yaml
+oc wait --for=condition=complete job/job-configure-rhdh -n rhdh --timeout=1800s
+```
+
+The Job restores the realm, users, and OIDC client and restarts Developer Hub.
+For a durable installation, replace Keycloak's `dev-file` database with a
+persistent database.
 
 ### Governance Hub plugin (`governance-hub-plugin/`)
 
