@@ -196,14 +196,14 @@ spec:
             '200':
               description: Server is healthy
 ---
-# Software Template — register existing Spring PetClinic REST (legacy).
+# Software Template — register an existing public Maven component.
 # Template body is loaded from the same ConfigMap mount (see build-and-deploy.sh).
 apiVersion: backstage.io/v1alpha1
 kind: Location
 metadata:
-  name: spring-petclinic-rest-template
-  description: Registers the existing PetClinic REST repo in the catalog (no new GitHub repo)
+  name: register-existing-maven-component
+  description: Registers an existing public Maven repository in the catalog
 spec:
   targets:
-    - ./spring-petclinic-rest-template.yaml
+    - ./register-existing-maven-component.yaml
 

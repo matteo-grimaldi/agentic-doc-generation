@@ -1,19 +1,16 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  name: spring-petclinic-rest-legacy
-  title: Register Spring PetClinic REST (legacy)
+  name: register-existing-maven-component
+  title: Register an existing Maven component
   description: |
-    Registers the existing GitHub repository
-    matteo-grimaldi/spring-petclinic-rest-legacy in Developer Hub and
-    Governance Hub under a name you choose. Does not clone, fork, or
-    create a new repository. After registration, automatically starts the
-    Tekton build-deploy-app Pipeline (Maven package, then compliance
-    /invoke; no container image or application deploy).
+    Register an existing public Git Maven repository in Developer Hub and
+    Governance Hub under a name you choose. The repository is not modified.
+    Registration starts the Tekton build-deploy-app Pipeline (Maven package,
+    then compliance /invoke; no container image or application deploy).
   tags:
     - java
-    - spring-boot
-    - petclinic
+    - maven
     - recommended
 spec:
   owner: demo-team
@@ -23,6 +20,7 @@ spec:
       required:
         - name
         - repoUrl
+        - repoRevision
       properties:
         name:
           title: Component name
@@ -33,17 +31,20 @@ spec:
             DNS label.
           ui:autofocus: true
           pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
-          default: spring-petclinic-rest-legacy
         title:
           title: Display title
           type: string
           description: Human-readable title shown in the catalog.
-          default: Spring PetClinic REST (legacy)
         repoUrl:
           title: Application repository URL
           type: string
-          description: Existing Maven repo (not modified by this template).
-          default: https://github.com/matteo-grimaldi/spring-petclinic-rest-legacy
+          description: Public Git repository with a pom.xml at its root.
+          ui:help: The repository is registered and built; it is not modified.
+        repoRevision:
+          title: Repository revision
+          type: string
+          description: Branch, tag, or commit to check out for the Maven build.
+          default: main
   steps:
     - id: register-governance-hub
       name: Register in Governance Hub
@@ -94,7 +95,7 @@ spec:
               - name: repo-url
                 value: ${{ parameters.repoUrl }}
               - name: repo-revision
-                value: main
+                value: ${{ parameters.repoRevision }}
               - name: app-name
                 value: ${{ parameters.name }}
             workspaces:

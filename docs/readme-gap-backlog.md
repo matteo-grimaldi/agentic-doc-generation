@@ -255,7 +255,7 @@ proposals for supervised work, not instructions to execute immediately.
 - [x] **RG-040 — RHDH PetClinic Software Template + build/agent pipeline.**
   Developer Hub had scaffolder RBAC but no Software Template, and the Tekton
   demo invoked agents before build (doc + OpenAPI only).
-  Evidence: [template](../developer-hub/k8s/templates/spring-petclinic-rest/),
+  Evidence: [template](../developer-hub/k8s/templates/register-existing-maven-component/),
   [pipeline](../ci-cd-pipeline/k8s/pipeline.yaml).
   Completion: register existing spring-petclinic-rest-legacy in the catalog
   (no new GitHub repo); pipeline builds to the internal registry then invokes
