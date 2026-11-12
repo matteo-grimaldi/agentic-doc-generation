@@ -2,7 +2,7 @@
 # Adapted from rhoai3-coding-demo:
 #   - Removed: GitLab catalog/scaffolder modules (no GitLab in this stack)
 #   - GitHub scaffolder modules come from dynamic-plugins.default.yaml;
-#     PetClinic template uses catalog:register + http:backstage:request
+#     Maven component template uses catalog:register + http:backstage:request
 #     (PipelineRun create via /proxy/k8s; no publish:github)
 #   - Kept: Kubernetes, topology, ArgoCD (OCI-digest-pinned), Tekton (OCI-digest-pinned), RBAC
 #   - Telemetry to Red Hat (Segment) is disabled.
@@ -26,7 +26,7 @@ data:
       - package: ./dynamic-plugins/dist/backstage-community-plugin-rbac
         disabled: false
 
-      # Scaffolder HTTP action — used by the PetClinic template to POST a
+      # Scaffolder HTTP action — used by the Maven component template to POST a
       # PipelineRun through the /proxy/k8s endpoint (see app-config).
       - package: ./dynamic-plugins/dist/roadiehq-scaffolder-backend-module-http-request-dynamic
         disabled: false

@@ -972,7 +972,8 @@ agentic-doc-generation/
 │       ├── operator/                    # OperatorGroup, Subscription (fast-1.10, Manual), approve-installplan Job
 │       ├── instance/                    # ConfigMaps, Secrets, Backstage CR, ConsoleLink, RBAC, rbac-policy.yaml
 │       ├── catalog/                     # all.yaml — Backstage entity definitions + Template Location
-│       ├── templates/                   # Software Templates (register existing PetClinic)
+│       ├── templates/                   # Software Template (register an existing Maven component)
+│       ├── examples/                    # Example catalog entity for the PetClinic demo
 │       └── jobs/                        # configure-rhdh.yaml — ArgoCD Sync hook (wave 18)
 ├── governance-hub-plugin/               # Custom RHDH dynamic plugin — Governance Hub embedded UI
 │   └── dist/                            # Built plugin artifact (OCI image published to quay.io/mcombi/rhdh-gov-hub)
@@ -1119,11 +1120,12 @@ the `dynamicPlugins` section of its ConfigMap. Access is gated by the
 
 [`ci-cd-pipeline/`](ci-cd-pipeline/) provides the Tekton `build-deploy-app`
 Pipeline (name retained; it no longer deploys). Red Hat Developer Hub can
-**register the existing**
-[spring-petclinic-rest-legacy](https://github.com/matteo-grimaldi/spring-petclinic-rest-legacy)
-repository in the software catalog (no clone/fork/new repo) via the
-Software Template under
-[`developer-hub/k8s/templates/spring-petclinic-rest/`](developer-hub/k8s/templates/spring-petclinic-rest/).
+register any existing public Git Maven repository in the software catalog
+(no clone/fork/new repo) via the Software Template under
+[`developer-hub/k8s/templates/register-existing-maven-component/`](developer-hub/k8s/templates/register-existing-maven-component/).
+The form requires a component name, repository URL, and checkout revision;
+the display title is optional. For this demo, you can use
+[spring-petclinic-rest-legacy](https://github.com/matteo-grimaldi/spring-petclinic-rest-legacy).
 
 **Flow:** clone → **Maven** `mvn -B -DskipTests package` →
 **compliance-scan-agent** `POST /invoke` → fake **deploy** (no-op
@@ -1146,7 +1148,7 @@ root). Checkout defaults to `main` (override with `repo-revision`). Invoke
 prompts include that revision as a hint; agents may still analyze the
 default branch if their tooling does not honor an explicit ref.
 
-**Prerequisites:** OpenShift Pipelines. The PetClinic Software Template
+**Prerequisites:** OpenShift Pipelines. The Maven component Software Template
 registers the component and starts this pipeline; it does not need a
 repo-create token on RHDH.
 
@@ -1160,10 +1162,10 @@ tkn pipelinerun logs -f -n ci-cd-demo
 Workspace storage uses a per-run `volumeClaimTemplate` (no pre-created PVC
 named `ci-cd-pipeline-workspace`).
 
-**RHDH Create:** open *Register Spring PetClinic REST (legacy)* — it
-registers the existing repo and automatically starts a PipelineRun that
-Maven-builds that same GitHub URL (example above). No Dockerfile is
-required.
+**RHDH Create:** open *Register an existing Maven component*, enter a
+component name and public Maven repository URL, then select its branch,
+tag, or commit. The template registers the repo and starts a PipelineRun
+that Maven-builds that revision. No Dockerfile is required.
 
 If using GitOps, `gitops/apps/ci-cd-pipeline.yaml` syncs Tekton resources
 (sync-wave 2), but the Pipelines **operator** must still be installed

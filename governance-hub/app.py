@@ -166,9 +166,7 @@ def _catalog_info_yaml(tracked: TrackedRepo) -> str:
         '    tekton.dev/cicd: "true"\n'
         "  tags:\n"
         "    - java\n"
-        "    - spring-boot\n"
-        "    - petclinic\n"
-        "    - rest\n"
+        "    - maven\n"
         "spec:\n"
         "  type: service\n"
         "  lifecycle: experimental\n"

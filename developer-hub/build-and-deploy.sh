@@ -77,7 +77,7 @@ oc apply -f "${SCRIPT_DIR}/k8s/instance/pipeline-starter.yaml"
 echo "==> Creating/updating rhdh-catalog ConfigMap (catalog + Software Templates)..."
 oc create configmap rhdh-catalog \
   --from-file=all.yaml="${SCRIPT_DIR}/k8s/catalog/all.yaml" \
-  --from-file=spring-petclinic-rest-template.yaml="${SCRIPT_DIR}/k8s/templates/spring-petclinic-rest/template.yaml" \
+  --from-file=register-existing-maven-component.yaml="${SCRIPT_DIR}/k8s/templates/register-existing-maven-component/template.yaml" \
   -n "${NAMESPACE}" --dry-run=client -o yaml | oc apply -f -
 
 echo "==> Applying app-config ConfigMap..."
