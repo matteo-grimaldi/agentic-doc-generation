@@ -22,6 +22,8 @@ metadata:
     app.kubernetes.io/part-of: agentic-doc-generation
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: catalog-gen-agent
@@ -102,12 +104,8 @@ spec:
               value: "doc-gen-demo"
             - name: MLFLOW_EXPERIMENT
               value: "catalog-gen-agent"
-            - name: MLFLOW_TRACKING_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: mlflow-credentials
-                  key: token
-                  optional: true
+            - name: MLFLOW_TRACKING_AUTH
+              value: kubernetes-namespaced
           volumeMounts:
             - name: ogx-config
               mountPath: /etc/ogx
@@ -207,12 +205,8 @@ spec:
               value: "doc-gen-demo"
             - name: MLFLOW_EXPERIMENT
               value: "catalog-gen-agent"
-            - name: MLFLOW_TRACKING_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: mlflow-credentials
-                  key: token
-                  optional: true
+            - name: MLFLOW_TRACKING_AUTH
+              value: kubernetes-namespaced
           livenessProbe:
             httpGet:
               path: /

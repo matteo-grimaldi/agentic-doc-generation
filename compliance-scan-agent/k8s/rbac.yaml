@@ -1,9 +1,31 @@
-# The compliance-scan agent only talks to the GitHub MCP server and an
-# external OpenAI-compatible inference endpoint — it does not need any
-# Kubernetes/OpenShift API access, so this is a plain ServiceAccount with
-# no role bindings (same pattern as doc-gen-agent-sa / openapi-gen-agent-sa).
+# The agent uses Kubernetes RBAC only to authorize its MLflow workspace.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: compliance-scan-agent-sa
   namespace: doc-gen-demo
+---
+# MLflow checks these namespace-scoped pseudo-resources via Kubernetes RBAC.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: compliance-scan-agent-mlflow
+  namespace: doc-gen-demo
+rules:
+  - apiGroups: ["mlflow.kubeflow.org"]
+    resources: ["experiments", "registeredmodels"]
+    verbs: ["get", "list", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: compliance-scan-agent-mlflow
+  namespace: doc-gen-demo
+subjects:
+  - kind: ServiceAccount
+    name: compliance-scan-agent-sa
+    namespace: doc-gen-demo
+roleRef:
+  kind: Role
+  name: compliance-scan-agent-mlflow
+  apiGroup: rbac.authorization.k8s.io

@@ -74,7 +74,4 @@ if [[ -n "${EXTERNAL_MODEL_API_KEY:-}" ]]; then
     --from-literal=api_key="${EXTERNAL_MODEL_API_KEY}" \
     -n "${NAMESPACE}" --dry-run=client -o yaml | oc apply -f -
 fi
-# shellcheck source=lib-mlflow-credentials.sh
-source "${SCRIPT_DIR}/lib-mlflow-credentials.sh"
-ensure_mlflow_credentials_secret "${NAMESPACE}" "${REPO_ROOT}"
 echo "==> Configuration generated. Restart affected agents after configuration updates."

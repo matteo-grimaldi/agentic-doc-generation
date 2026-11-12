@@ -18,6 +18,8 @@ metadata:
     app.kubernetes.io/part-of: agentic-doc-generation
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: doc-gen-agent
@@ -95,15 +97,9 @@ spec:
               value: "doc-gen-demo"
             - name: MLFLOW_EXPERIMENT
               value: "doc-gen-agent"
-            # Optional — create with:
-            #   oc create secret generic mlflow-credentials \
-            #     --from-literal=token=<token> -n doc-gen-demo
-            - name: MLFLOW_TRACKING_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: mlflow-credentials
-                  key: token
-                  optional: true
+            # Use the rotating mounted service-account token for MLflow.
+            - name: MLFLOW_TRACKING_AUTH
+              value: kubernetes-namespaced
           volumeMounts:
             - name: ogx-config
               mountPath: /etc/ogx
@@ -204,12 +200,8 @@ spec:
               value: "doc-gen-demo"
             - name: MLFLOW_EXPERIMENT
               value: "doc-gen-agent"
-            - name: MLFLOW_TRACKING_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: mlflow-credentials
-                  key: token
-                  optional: true
+            - name: MLFLOW_TRACKING_AUTH
+              value: kubernetes-namespaced
           livenessProbe:
             httpGet:
               path: /
