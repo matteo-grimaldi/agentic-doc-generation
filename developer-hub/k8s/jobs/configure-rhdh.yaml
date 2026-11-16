@@ -369,6 +369,13 @@ spec:
               done
               if [[ "${REALM_STATUS}" != "200" ]]; then
                 echo "  Realm '${REALM}' not visible on running Keycloak (HTTP ${REALM_STATUS}) — creating via Admin API..."
+                # The import wait above can outlast the short-lived admin token.
+                # Refresh it before creating the realm and provisioning its users.
+                ADMIN_TOKEN=$(curl -sk -X POST \
+                  "${KC_ADMIN_URL}/realms/master/protocol/openid-connect/token" \
+                  -d "grant_type=password&client_id=admin-cli&username=${KC_ADMIN_USER}&password=${KC_ADMIN_PASS}" \
+                  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+                AUTH="Authorization: Bearer ${ADMIN_TOKEN}"
                 CREATE_STATUS=$(curl -sk -o /dev/null -w "%{http_code}" -X POST \
                   -H "${AUTH}" -H "Content-Type: application/json" \
                   "${KC_ADMIN_URL}/admin/realms" \
