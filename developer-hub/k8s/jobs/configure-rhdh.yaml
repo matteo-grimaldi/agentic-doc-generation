@@ -93,6 +93,10 @@ rules:
     resources: [secrets]
     resourceNames: [keycloak-initial-admin]
     verbs: [get]
+  - apiGroups: [""]
+    resources: [pods]
+    resourceNames: [keycloak-0]
+    verbs: [get]
   - apiGroups: [k8s.keycloak.org]
     resources: [keycloaks]
     resourceNames: [keycloak]
@@ -296,11 +300,14 @@ spec:
                 -o jsonpath='{.status.containerStatuses[0].state.running.startedAt}' 2>/dev/null || echo "")
               IMPORT_DONE=$(oc get job platform-realm -n rhdh-keycloak \
                 -o jsonpath='{.status.completionTime}' 2>/dev/null || echo "")
+              PLATFORM_STATUS=$(curl -sk -o /dev/null -w "%{http_code}" \
+                "${KC_ADMIN_URL}/realms/${REALM}/.well-known/openid-configuration" || echo "000")
               if [[ "${HOSTNAME_PATCHED}" == "true" ]] || \
                  [[ -z "${IMPORT_DONE}" ]] || \
+                 [[ "${PLATFORM_STATUS}" != "200" ]] || \
                  { [[ -n "${KC_POD_START}" ]] && [[ -n "${IMPORT_DONE}" ]] && \
                    [[ "${IMPORT_DONE}" < "${KC_POD_START}" ]]; }; then
-                echo "  Re-triggering platform-realm import (pod start=${KC_POD_START}, last import=${IMPORT_DONE:-never})..."
+                echo "  Re-triggering platform-realm import (pod start=${KC_POD_START:-unknown}, last import=${IMPORT_DONE:-never}, discovery HTTP ${PLATFORM_STATUS})..."
                 oc delete job platform-realm -n rhdh-keycloak --ignore-not-found
                 for i in {1..60}; do
                   IMPORT_OK=$(oc get job platform-realm -n rhdh-keycloak \

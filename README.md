@@ -1093,7 +1093,9 @@ bash developer-hub/build-and-deploy.sh
 The demo Keycloak uses an ephemeral `dev-file` database. A Keycloak container
 restart, including after a cluster suspend/resume, can erase the `platform`
 realm while its old import Job still says `Complete`. If OIDC sign-in reports
-`Realm does not exist`, rerun only the provisioning Job (the full Developer Hub
+`Realm does not exist` or the popup reports `OPError: expected 200 OK, got: 503
+Service Unavailable`, check the `platform` realm's discovery URL and rerun only
+the provisioning Job if it is unavailable (the full Developer Hub
 deploy script reapplies placeholder Secret values first):
 
 ```bash
