@@ -59,6 +59,7 @@ governance-hub/          # FastAPI compliance dashboard + REST API
 compliance-mcp-server/   # Standalone, read-only Compliance MCP server (proxies governance-hub's REST API)
 ci-cd-pipeline/          # Tekton Maven build + post-build compliance /invoke (no deploy)
 developer-hub/           # RHDH portal (imperative); Software Templates under k8s/templates/
+  restore-login-after-restart.sh  # Reprovision ephemeral Keycloak realm and RHDH OIDC login
 install-openshift-ai.sh  # Imperative RHOAI + calls install-mcp-gateway.sh + AI Gateway / MaaS bootstrap (run before GitOps)
 install-mcp-gateway.sh   # RHCL + MCP Gateway Operator; re-run to patch mcp_gateway_url
 build-and-deploy-all.sh  # Non-GitOps quick-start for the app components
@@ -103,6 +104,13 @@ access (e.g. a shared PVC mount) — that would couple it to
 governance-hub's storage layer instead of its public API.
 
 ## Core conventions
+
+- **Developer Hub login after an environment restart:** If the `platform`
+  realm is missing, or the user asks to restore Developer Hub access after a
+  restart, run `bash developer-hub/restore-login-after-restart.sh` after `oc`
+  login. The script waits for Keycloak, recreates the completed provisioning
+  Job, and verifies realm discovery. Do not merely reapply the Job manifest;
+  see the [README recovery instructions](README.md#developer-portal-rhdh--keycloak).
 
 - **GitOps is the source of truth for deployment.** Any new Kubernetes
   resource must live under a component's `k8s/` directory so ArgoCD picks

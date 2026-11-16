@@ -1092,17 +1092,20 @@ bash developer-hub/build-and-deploy.sh
 
 The demo Keycloak uses an ephemeral `dev-file` database. A Keycloak container
 restart, including after a cluster suspend/resume, can erase the `platform`
-realm while its old import Job still says `Complete`. If OIDC sign-in reports
-`Realm does not exist`, rerun only the provisioning Job (the full Developer Hub
-deploy script reapplies placeholder Secret values first):
+realm while its old import Job still says `Complete`. After each environment
+restart, log in with `oc`, then run this from the repository root once Keycloak
+has started (the script waits for its pod to become ready):
 
 ```bash
-oc delete job job-configure-rhdh -n rhdh --ignore-not-found
-oc apply -f developer-hub/k8s/jobs/configure-rhdh.yaml
-oc wait --for=condition=complete job/job-configure-rhdh -n rhdh --timeout=1800s
+bash developer-hub/restore-login-after-restart.sh
 ```
 
-The Job restores the realm, users, and OIDC client and restarts Developer Hub.
+The script reruns the provisioning Job and verifies realm discovery. The Job
+restores the realm, users, and OIDC client and restarts Developer Hub. Run the
+script if OIDC sign-in reports `Realm does not exist` or
+`OPError: expected 200 OK, got: 503 Service Unavailable`. Applying
+`configure-rhdh.yaml` alone does not rerun a completed Job. The full Developer
+Hub deploy script is unnecessary for this recovery.
 For a durable installation, replace Keycloak's `dev-file` database with a
 persistent database.
 
