@@ -1,0 +1,63 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nemo-guardrails
+  namespace: doc-gen-demo
+  labels:
+    app: nemo-guardrails
+    app.kubernetes.io/name: nemo-guardrails
+    app.kubernetes.io/part-of: agentic-doc-generation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nemo-guardrails
+  template:
+    metadata:
+      labels:
+        app: nemo-guardrails
+    spec:
+      containers:
+        - name: nemo-guardrails
+          image: image-registry.openshift-image-registry.svc:5000/doc-gen-demo/nemo-guardrails:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nemo-guardrails
+  namespace: doc-gen-demo
+  labels:
+    app: nemo-guardrails
+spec:
+  selector:
+    app: nemo-guardrails
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP

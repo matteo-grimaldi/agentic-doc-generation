@@ -33,6 +33,21 @@ UIs/routes, and run budgets. No agent triggers another. The three
 PR-capable agents create separate proposals; compliance scanning only
 reports findings. All four expose their own `POST /invoke` endpoint.
 
+### Optional NeMo Guardrails
+
+`nemo-guardrails/` is a shared, optional policy service for the four
+independent agents. Each agent checks user input and generated output; the
+three PR-capable agents also check the artifact immediately before invoking
+the GitHub proposal endpoint. Current deterministic rails reject known secret
+formats and prompt-injection instructions. A policy denial blocks the action;
+an unavailable guardrails service is logged and does not stop generation, so
+the optional guardrail component never becomes an availability dependency.
+
+The service is deployed in sync wave 1 and is built by `gitops/prepare.sh`.
+It is not yet connected to the Technology Preview NeMo/MCP Gateway
+tool-call-enforcement integration: MCP Gateway policy wiring must be added
+only after validating the target OpenShift AI version and gateway API.
+
 Two supporting services provide governance: **Governance Hub** is an
 independent dashboard and REST API with persistent run history, checks,
 and explicit remediation triggers for all four agents;

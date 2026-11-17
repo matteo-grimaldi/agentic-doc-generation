@@ -146,6 +146,8 @@ spec:
               value: "False"
             - name: OGX_BASE_URL
               value: "http://localhost:8321"
+            - name: NEMO_GUARDRAILS_URL
+              value: "http://nemo-guardrails.doc-gen-demo.svc.cluster.local:8080"
             - name: MCP_GATEWAY_URL
               valueFrom:
                 configMapKeyRef:

@@ -11,7 +11,7 @@ if [[ "${NAMESPACE:-doc-gen-demo}" != doc-gen-demo ]]; then
 fi
 oc whoami >/dev/null
 for component in github-mcp-server doc-gen-agent openapi-gen-agent catalog-gen-agent \
-    compliance-scan-agent governance-hub compliance-mcp-server; do
+    compliance-scan-agent governance-hub compliance-mcp-server nemo-guardrails; do
   echo "==> Preparing ${component} (images/configuration only)..."
   PREPARE_ONLY=true NAMESPACE=doc-gen-demo bash "${REPO_ROOT}/${component}/build-and-deploy.sh"
 done

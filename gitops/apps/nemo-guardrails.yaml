@@ -1,0 +1,32 @@
+# Child Application: shared, optional NeMo Guardrails checks for the four agents.
+# sync-wave 1 — agents tolerate this service being temporarily unavailable.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nemo-guardrails
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/matteo-grimaldi/agentic-doc-generation.git
+    targetRevision: HEAD
+    path: nemo-guardrails/k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: doc-gen-demo
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+    syncOptions:
+      - CreateNamespace=true
