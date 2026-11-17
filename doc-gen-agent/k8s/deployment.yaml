@@ -141,6 +141,10 @@ spec:
               value: "False"
             - name: OGX_BASE_URL
               value: "http://localhost:8321"
+            # Optional shared NeMo Guardrails policy service. Agent code fails
+            # open only for service outages; policy denials block output/PRs.
+            - name: NEMO_GUARDRAILS_URL
+              value: "http://nemo-guardrails.doc-gen-demo.svc.cluster.local:8080"
             # Federated MCP endpoint (Connectivity Link MCP Gateway).
             # Populated by ./install-mcp-gateway.sh into cluster-config;
             # empty until then — agent.py fails closed (no direct-Service fallback).

@@ -24,6 +24,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel
 
 from agent import MODEL_NAME, extract_architecture_document, run_agent
+from guardrails import check_content
 from mlflow_telemetry import configure_mlflow
 
 # Opt-in MLflow tracing (no-op when MLFLOW_TRACKING_URI is unset).
@@ -95,6 +96,11 @@ async def chat(message: str, history: list[dict]):
         yield history + [{"role": "assistant", "content": "Please paste a GitHub repository URL (e.g. https://github.com/owner/repo)."}], "", ""
         return
 
+    violation = await check_content(message, "input")
+    if violation:
+        yield history + [{"role": "assistant", "content": f"⚠️ NeMo Guardrails blocked this request: {violation}."}], "", ""
+        return
+
     repo_url = message.strip()
     job_id = str(uuid.uuid4())
     logger.info("Job %s: user repo URL: %s", job_id, repo_url[:200])
@@ -119,6 +125,12 @@ async def chat(message: str, history: list[dict]):
 
     # Final yield: PR-ready doc only (stream may include tool-status lines).
     document = extract_architecture_document(response_so_far)
+    violation = await check_content(document, "output")
+    if violation:
+        history[-1] = {"role": "assistant", "content": f"⚠️ NeMo Guardrails blocked generated output: {violation}."}
+        await _report_to_governance(job_id, repo_url, "failed", error=f"guardrails blocked output: {violation}", triggered_by="ui")
+        yield history, "", ""
+        return
     await _report_to_governance(
         job_id, repo_url, "completed" if document.strip() else "failed",
         error=None if document.strip() else "agent produced no document",
@@ -160,6 +172,9 @@ async def _propose_architecture_doc(repo_url: str, content: str, job_id: str) ->
     background task, and the chat UI's opt-in "Propose as PR" button)
     decide how to surface that to their respective audiences.
     """
+    violation = await check_content(content, "pr_proposal")
+    if violation:
+        return {"error": f"NeMo Guardrails blocked the PR proposal: {violation}"}
     payload = {
         "repo_url": repo_url,
         "path": ARCHITECTURE_DOC_PATH,
@@ -247,6 +262,14 @@ async def _run_agent_in_background(prompt: str, job_id: str) -> None:
     Governance Hub for its compliance dashboard.
     """
     logger.info("Background agent job %s started for prompt=%s", job_id, prompt[:200])
+
+    violation = await check_content(prompt, "input")
+    if violation:
+        logger.warning("Job %s: NeMo Guardrails blocked input: %s", job_id, violation)
+        repo_url = _extract_repo_url(prompt)
+        if repo_url:
+            await _report_to_governance(job_id, repo_url, "failed", error=f"guardrails blocked input: {violation}")
+        return
 
     repo_url = _extract_repo_url(prompt)
 
