@@ -36,7 +36,7 @@ PROMPT_INJECTION_PATTERNS = {
         re.IGNORECASE,
     ),
     "prompt_exfiltration": re.compile(
-        r"\b(?:reveal|print|show|exfiltrate)\b.{0,80}\b(?:system prompt|secrets?|tokens?|credentials?)\b",
+        r"\b(?:reveal|print|show|exfiltrate|list|give(?:\s+me)?|tell(?:\s+me)?)\b.{0,80}\b(?:system prompt|secrets?|tokens?|credentials?|api[- ]?keys?)\b",
         re.IGNORECASE,
     ),
 }
