@@ -348,6 +348,11 @@ Playground entries retain the direct Service `/mcp` URL.
   ArgoCD/`oc apply` can't create a custom resource before its CRD
   exists. This also makes both servers visible under OpenShift AI's
   AI Hub "Deployed MCP Servers" tab.
+  The installer also enables Connectivity Link's `kuadrant-console-plugin`
+  dynamic plug-in in the OpenShift web console, preserving any plugins that
+  were already enabled. Refresh the Administrator console after installation
+  and use **Connectivity Link → Overview** to inspect Gateway, route, and
+  policy status.
 - An **upstream OpenAI-compatible inference endpoint** reachable from the
   cluster (registered as an `ExternalProvider` behind the AI Gateway) and
   its API key (`UPSTREAM_MODEL_API_KEY`). Agents never call this URL

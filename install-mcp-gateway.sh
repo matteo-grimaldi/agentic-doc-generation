@@ -188,6 +188,63 @@ done
 echo "    Connectivity Link / Kuadrant CSV ready (or not yet installed; AuthPolicy CRD already present)."
 
 # ---------------------------------------------------------------------------
+# Step 2.5 -- Connectivity Link dashboard in the OpenShift web console
+# ---------------------------------------------------------------------------
+# RHCL installs the ConsolePlugin CR, but OpenShift deliberately leaves
+# dynamic plugins disabled until the cluster administrator opts in. Enable it
+# here because this installer is the platform-level owner of RHCL setup. The
+# Console CR is cluster-scoped, so it must not be part of the namespaced
+# mcp-gateway Argo CD Application.
+CONNECTIVITY_LINK_CONSOLE_PLUGIN="kuadrant-console-plugin"
+echo "==> Enabling Connectivity Link dashboard in the OpenShift web console..."
+_waited=0
+until oc get consoleplugin "${CONNECTIVITY_LINK_CONSOLE_PLUGIN}" >/dev/null 2>&1; do
+  if (( _waited >= 300 )); then
+    fail "ConsolePlugin/${CONNECTIVITY_LINK_CONSOLE_PLUGIN} was not created by Connectivity Link within 5 minutes"
+  fi
+  sleep 5
+  _waited=$((_waited + 5))
+done
+
+# Do not use a merge patch containing only this plugin: arrays are replaced by
+# merge patches, which could silently disable Console plugins enabled by the
+# cluster administrator. Append when the plugins array exists; an older or
+# minimally configured Console object may omit that field, in which case add
+# it explicitly.
+read -r -a enabled_console_plugins <<< "$(oc get console.operator.openshift.io cluster \
+  -o jsonpath='{.spec.plugins[*]}')"
+console_plugin_enabled=false
+for console_plugin in "${enabled_console_plugins[@]}"; do
+  if [[ "${console_plugin}" == "${CONNECTIVITY_LINK_CONSOLE_PLUGIN}" ]]; then
+    console_plugin_enabled=true
+    break
+  fi
+done
+if [[ "${console_plugin_enabled}" == true ]]; then
+  echo "    ConsolePlugin/${CONNECTIVITY_LINK_CONSOLE_PLUGIN} already enabled."
+elif oc patch console.operator.openshift.io cluster --type=json \
+  --patch '[{"op":"add","path":"/spec/plugins/-","value":"kuadrant-console-plugin"}]' >/dev/null 2>&1; then
+  echo "    Enabled ConsolePlugin/${CONNECTIVITY_LINK_CONSOLE_PLUGIN}."
+else
+  oc patch console.operator.openshift.io cluster --type=json \
+    --patch '[{"op":"add","path":"/spec/plugins","value":["kuadrant-console-plugin"]}]' \
+    >/dev/null || fail "could not enable ConsolePlugin/${CONNECTIVITY_LINK_CONSOLE_PLUGIN}"
+  echo "    Enabled ConsolePlugin/${CONNECTIVITY_LINK_CONSOLE_PLUGIN}."
+fi
+
+# A successful patch response is not enough for an existing installation:
+# re-read the cluster Console resource so a rejected admission update or a
+# concurrent configuration change fails the installer instead of leaving the
+# dashboard silently disabled.
+verified_console_plugins="$(oc get console.operator.openshift.io cluster \
+  -o jsonpath='{.spec.plugins[*]}')" \
+  || fail "could not verify enabled OpenShift Console plugins"
+case " ${verified_console_plugins} " in
+  *" ${CONNECTIVITY_LINK_CONSOLE_PLUGIN} "*) ;;
+  *) fail "ConsolePlugin/${CONNECTIVITY_LINK_CONSOLE_PLUGIN} is not enabled on the cluster Console" ;;
+esac
+
+# ---------------------------------------------------------------------------
 # Step 3 -- MCP Gateway Operator (MCPGatewayExtension CRD)
 # ---------------------------------------------------------------------------
 echo "==> Ensuring MCP Gateway Operator..."
