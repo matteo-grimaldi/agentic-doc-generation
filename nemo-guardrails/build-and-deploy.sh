@@ -22,4 +22,7 @@ if [[ "${PREPARE_ONLY:-false}" == true ]]; then
 fi
 
 oc apply -f "${SCRIPT_DIR}/k8s/deployment.yaml" -n "${NAMESPACE}"
+# The Deployment references the ImageStream tag, so an apply alone does not
+# change its Pod template after a new image is built. Restart to load it.
+oc rollout restart deployment/${IMAGE_NAME} -n "${NAMESPACE}"
 oc rollout status deployment/${IMAGE_NAME} -n "${NAMESPACE}" --timeout=300s
