@@ -75,7 +75,7 @@ for cm in cluster-config ogx-stack-config agent-knowledge openapi-agent-knowledg
   require_prepared_resource configmap "${cm}"
 done
 for component in github-mcp-server doc-gen-agent openapi-gen-agent catalog-gen-agent \
-    compliance-scan-agent governance-hub compliance-mcp-server; do
+    compliance-scan-agent governance-hub compliance-mcp-server nemo-guardrails; do
   require_prepared_resource imagestreamtag "${component}:latest"
 done
 

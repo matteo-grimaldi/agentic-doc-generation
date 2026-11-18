@@ -1,0 +1,11 @@
+models: []
+
+rails:
+  input:
+    flows: []
+  output:
+    flows: []
+
+# The service uses NeMo Guardrails' configuration model and provides the
+# deterministic rails in app.py. Keep the rules deterministic here: these
+# checks protect agent control paths and must not require another LLM call.

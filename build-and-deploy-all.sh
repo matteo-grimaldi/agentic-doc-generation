@@ -87,14 +87,14 @@ if ! oc get gateway maas-default-gateway -n openshift-ingress >/dev/null 2>&1; t
   echo ""
 fi
 
-COMPONENTS=("github-mcp-server" "mcp-gateway" "doc-gen-agent" "openapi-gen-agent" "catalog-gen-agent" "compliance-scan-agent" "governance-hub" "compliance-mcp-server" "ci-cd-pipeline" "keycloak" "developer-hub")
+COMPONENTS=("github-mcp-server" "mcp-gateway" "nemo-guardrails" "doc-gen-agent" "openapi-gen-agent" "catalog-gen-agent" "compliance-scan-agent" "governance-hub" "compliance-mcp-server" "ci-cd-pipeline" "keycloak" "developer-hub")
 if [[ $# -gt 0 ]]; then
   COMPONENTS=("$@")
 fi
 # Validate the entire selection before deploying anything (including credentials).
 for component in "${COMPONENTS[@]}"; do
   case "${component}" in
-    github-mcp-server|mcp-gateway|doc-gen-agent|openapi-gen-agent|catalog-gen-agent|compliance-scan-agent|governance-hub|compliance-mcp-server|ci-cd-pipeline|keycloak|developer-hub) ;;
+    github-mcp-server|mcp-gateway|nemo-guardrails|doc-gen-agent|openapi-gen-agent|catalog-gen-agent|compliance-scan-agent|governance-hub|compliance-mcp-server|ci-cd-pipeline|keycloak|developer-hub) ;;
     *) echo "error: unknown component ${component}" >&2; exit 1 ;;
   esac
 done
