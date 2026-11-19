@@ -10,3 +10,4 @@ venv/
 /governance-hub-plugin/node_modules/
 /governance-hub-plugin/dist/
 /governance-hub/snapshots/*.db
+*-api-key

@@ -73,6 +73,39 @@ def test_validation_accepts_local_reference(agent_modules, profile):
     assert agent_modules[0].validate_openapi_spec(spec) is None
 
 
+def test_relative_java_routes_are_corrected_before_validation(agent_modules, profile):
+    agent = agent_modules[0]
+    spec = yaml.safe_load(profile.output)
+    spec["paths"] = {
+        "api/pets": {"get": {"responses": {"200": {"description": "OK"}}}},
+        "api/pets/{petId}": {
+            "parameters": [{"name": "petId", "in": "path", "required": True,
+                            "schema": {"type": "integer"}}],
+            "get": {"responses": {"200": {"description": "OK"}}},
+        },
+    }
+    raw = yaml.safe_dump(spec, sort_keys=False)
+    assert agent.validate_openapi_spec(raw)  # Proposal validation stays strict.
+    result = agent.extract_openapi_spec("```yaml\n" + raw + "```")
+    assert result and agent.validate_openapi_spec(result) is None
+    expected = {"/" + k: v for k, v in spec["paths"].items()}
+    assert yaml.safe_load(result)["paths"] == expected
+
+
+@pytest.mark.parametrize("paths", [
+    {"api/pets": {}, "/api/pets": {}},
+    {"/api/pets": {}, "api/pets": {}},
+    {"https://example.com/pets": {}},
+    {"../pets": {}},
+    {"api/pets": {"get": {}}},  # Other structural errors must still block a PR.
+    {"api/pets/{petId}": {"get": {"responses": {"200": {"description": "OK"}}}}},
+])
+def test_path_correction_does_not_accept_ambiguous_or_invalid_specs(agent_modules, profile, paths):
+    spec = yaml.safe_load(profile.output)
+    spec["paths"] = paths
+    assert agent_modules[0].extract_openapi_spec(yaml.safe_dump(spec, sort_keys=False)) == ""
+
+
 def test_fixture_yaml_contract(agent_modules, profile):
     result = yaml.safe_load(agent_modules[0].extract_openapi_spec(profile.stream))
     assert result["openapi"].startswith("3.0.")
