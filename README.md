@@ -199,6 +199,10 @@ user invokes:
    specification from the observed Java annotations and model signatures.
 5. Output streams to chat. YAML and OpenAPI 3.0 schema validation gate
    the PR-ready result and both proposal paths. Generated specifications
+   have missing leading slashes on simple relative route keys corrected before
+   validation; conflicting route keys are rejected, never merged. Other schema
+   errors still block a proposal.
+   Generated specifications
    must be self-contained, using local JSON-pointer `$ref` references;
    YAML aliases and external references are rejected. Schema validation
    does not prove that endpoints or schemas match the source: review the

@@ -367,6 +367,11 @@ Spec rules:
 - Derive schema field types from real models/DTOs; use a minimal `type: object` if a field's type
   wasn't confirmed rather than guessing.
 - Use the project's actual base path/prefix (e.g. a class-level @RequestMapping/@Path).
+- Every paths key must start with `/`, even when Java annotations omit it:
+  @RequestMapping("api/pets") becomes /api/pets, not api/pets.
+- Use OpenAPI 3.0 syntax: requestBody/content for bodies, responses with descriptions,
+  quoted response status codes, and schema under each parameter. Every route placeholder
+  needs a matching in: path parameter with required: true. Resolve all local $ref targets.
 - Mark uncertain operations with `x-confidence: low`.
 - Valid YAML: no tabs, consistent indent, quote strings containing `:`.
 """
@@ -684,11 +689,49 @@ def validate_openapi_spec(content: str) -> str | None:
 
 
 def _validated_spec(spec: str) -> str:
+    spec = _normalize_generated_paths(spec)
     error = validate_openapi_spec(spec)
     if error:
         logger.warning("Rejected generated specification: %s", error)
         return ""
     return spec + "\n"
+
+
+def _normalize_generated_paths(content: str) -> str:
+    """Repair missing leading slashes without merging routes or bypassing validation.
+
+    Java mapping annotations allow relative route strings. Models sometimes copy
+    those literally into OpenAPI. Only normalize simple relative path keys; leave
+    ambiguous keys, collisions, aliases and malformed YAML for the validator.
+    """
+    try:
+        if any(isinstance(token, yaml.tokens.AliasToken) for token in yaml.scan(content)):
+            return content
+        spec = yaml.safe_load(content)
+        paths = spec.get("paths") if isinstance(spec, dict) else None
+        if not isinstance(paths, dict):
+            return content
+        corrected = {}
+        changed = []
+        for path, value in paths.items():
+            target = path
+            if isinstance(path, str) and not path.startswith(("/", "x-")):
+                if not re.fullmatch(r"[A-Za-z0-9_{][A-Za-z0-9_{}./~-]*", path):
+                    return content
+                if any(segment in (".", "..") for segment in path.split("/")):
+                    return content
+                target = "/" + path
+                changed.append(path)
+            if target in corrected:
+                return content
+            corrected[target] = value
+        if not changed:
+            return content
+        spec["paths"] = corrected
+        logger.info("Added missing leading slash to generated OpenAPI paths: %s", changed)
+        return yaml.safe_dump(spec, sort_keys=False, allow_unicode=True).rstrip()
+    except (yaml.YAMLError, ValueError, TypeError):
+        return content
 
 
 def extract_openapi_spec(streamed: str) -> str:
