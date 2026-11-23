@@ -77,12 +77,12 @@ const diagram = {
   },
   "canvas": {
     "width": 1100,
-    "height": 1340
+    "height": 1020
   },
   "nodes": {
     "knowledge": {
       "x": 115,
-      "y": 405,
+      "y": 315,
       "w": 215,
       "h": 72,
       "label": "Knowledge.md",
@@ -92,7 +92,7 @@ const diagram = {
     },
     "agent": {
       "x": 440,
-      "y": 405,
+      "y": 315,
       "w": 220,
       "h": 72,
       "label": "doc-gen-agent",
@@ -102,7 +102,7 @@ const diagram = {
     },
     "mcp": {
       "x": 125,
-      "y": 565,
+      "y": 475,
       "w": 220,
       "h": 72,
       "label": "MCP Gateway",
@@ -112,7 +112,7 @@ const diagram = {
     },
     "github_mcp": {
       "x": 125,
-      "y": 695,
+      "y": 605,
       "w": 220,
       "h": 72,
       "label": "GitHub MCP",
@@ -122,7 +122,7 @@ const diagram = {
     },
     "github": {
       "x": 125,
-      "y": 840,
+      "y": 750,
       "w": 220,
       "h": 72,
       "label": "GitHub",
@@ -132,7 +132,7 @@ const diagram = {
     },
     "guardrails": {
       "x": 730,
-      "y": 565,
+      "y": 475,
       "w": 220,
       "h": 72,
       "label": "NeMo Guardrails",
@@ -142,7 +142,7 @@ const diagram = {
     },
     "ai": {
       "x": 730,
-      "y": 695,
+      "y": 605,
       "w": 220,
       "h": 72,
       "label": "AI Gateway",
@@ -151,18 +151,18 @@ const diagram = {
       "fontSize": 17
     },
     "model": {
-      "x": 665,
-      "y": 840,
-      "w": 350,
-      "h": 72,
+      "x": 635,
+      "y": 715,
+      "w": 410,
+      "h": 170,
       "label": "External OpenShift AI cluster",
-      "sublabel": "MaaS · Qwen external model",
+      "type": "boundary",
       "color": "#3fb950",
-      "fontSize": 17
+      "labelAlign": "left"
     },
     "user": {
       "x": 440,
-      "y": 165,
+      "y": 75,
       "w": 220,
       "h": 72,
       "label": "User",
@@ -172,13 +172,33 @@ const diagram = {
     },
     "gradio": {
       "x": 440,
-      "y": 280,
+      "y": 190,
       "w": 220,
       "h": 72,
       "label": "Gradio UI",
       "sublabel": "Repository URL · chat",
       "color": "#79c0ff",
       "fontSize": 17
+    },
+    "qwen": {
+      "x": 705,
+      "y": 775,
+      "w": 270,
+      "h": 65,
+      "label": "Qwen model",
+      "sublabel": "MaaS external model",
+      "color": "#3fb950",
+      "fontSize": 17
+    },
+    "cluster": {
+      "x": 75,
+      "y": 165,
+      "w": 925,
+      "h": 535,
+      "label": "OpenShift cluster",
+      "type": "boundary",
+      "color": "#8b949e",
+      "labelAlign": "left"
     }
   },
   "tooltips": {
@@ -221,6 +241,10 @@ const diagram = {
     "gradio": {
       "title": "Gradio UI",
       "description": "The user-facing chat interface for doc-gen-agent. It accepts the repository URL and passes the request to the agent; the UI does not call the model directly."
+    },
+    "qwen": {
+      "title": "Qwen model",
+      "description": "The external Qwen model is hosted by MaaS in the separate OpenShift AI cluster."
     }
   },
   "flows": {
@@ -260,7 +284,7 @@ const diagram = {
         },
         {
           "mode": "arrow",
-          "to": "model",
+          "to": "qwen",
           "text": "Send the user request and documentation guidance to Qwen; ask which repository tools are needed. OGX connects directly to external MaaS.",
           "color": "#58a6ff",
           "from": "agent",
@@ -268,11 +292,11 @@ const diagram = {
           "waypoints": [
             {
               "x": 1050,
-              "y": 441
+              "y": 351
             },
             {
               "x": 1050,
-              "y": 876
+              "y": 807.5
             }
           ]
         },
@@ -281,16 +305,16 @@ const diagram = {
           "to": "agent",
           "text": "Qwen responds successfully with repository tool calls; model access is confirmed.",
           "color": "#3fb950",
-          "from": "model",
+          "from": "qwen",
           "num": 6,
           "waypoints": [
             {
               "x": 610,
-              "y": 876
+              "y": 807.5
             },
             {
               "x": 610,
-              "y": 510
+              "y": 420
             }
           ]
         },
@@ -304,15 +328,15 @@ const diagram = {
           "waypoints": [
             {
               "x": 550,
-              "y": 525
+              "y": 435
             },
             {
               "x": 400,
-              "y": 525
+              "y": 435
             },
             {
               "x": 400,
-              "y": 731
+              "y": 641
             }
           ],
           "fromBottom": true,
@@ -344,15 +368,15 @@ const diagram = {
           "waypoints": [
             {
               "x": 370,
-              "y": 731
+              "y": 641
             },
             {
               "x": 370,
-              "y": 545
+              "y": 455
             },
             {
               "x": 550,
-              "y": 545
+              "y": 455
             }
           ],
           "fromRight": true,
@@ -360,7 +384,7 @@ const diagram = {
         },
         {
           "mode": "arrow",
-          "to": "model",
+          "to": "qwen",
           "text": "Send retrieved repository evidence and knowledge to Qwen to generate architecture documentation. OGX connects directly to external MaaS.",
           "color": "#58a6ff",
           "from": "agent",
@@ -368,11 +392,11 @@ const diagram = {
           "waypoints": [
             {
               "x": 1050,
-              "y": 441
+              "y": 351
             },
             {
               "x": 1050,
-              "y": 876
+              "y": 807.5
             }
           ]
         },
@@ -381,16 +405,16 @@ const diagram = {
           "to": "agent",
           "text": "Qwen returns architecture documentation with Mermaid C4 diagrams.",
           "color": "#3fb950",
-          "from": "model",
+          "from": "qwen",
           "num": 12,
           "waypoints": [
             {
               "x": 610,
-              "y": 876
+              "y": 807.5
             },
             {
               "x": 610,
-              "y": 510
+              "y": 420
             }
           ]
         },
@@ -441,7 +465,7 @@ const diagram = {
         },
         {
           "mode": "arrow",
-          "to": "model",
+          "to": "qwen",
           "text": "Send the user request and documentation guidance to Qwen; ask which repository tools are needed. OGX connects directly to external MaaS.",
           "color": "#58a6ff",
           "from": "agent",
@@ -449,11 +473,11 @@ const diagram = {
           "waypoints": [
             {
               "x": 1050,
-              "y": 441
+              "y": 351
             },
             {
               "x": 1050,
-              "y": 876
+              "y": 807.5
             }
           ]
         },
@@ -462,16 +486,16 @@ const diagram = {
           "to": "agent",
           "text": "Qwen responds successfully with repository tool calls; model access is confirmed.",
           "color": "#3fb950",
-          "from": "model",
+          "from": "qwen",
           "num": 5,
           "waypoints": [
             {
               "x": 610,
-              "y": 876
+              "y": 807.5
             },
             {
               "x": 610,
-              "y": 510
+              "y": 420
             }
           ]
         },
@@ -545,7 +569,7 @@ const diagram = {
         },
         {
           "mode": "arrow",
-          "to": "model",
+          "to": "qwen",
           "text": "Send the user request and documentation guidance to Qwen; ask which repository tools are needed. OGX connects directly to external MaaS.",
           "color": "#58a6ff",
           "from": "agent",
@@ -553,11 +577,11 @@ const diagram = {
           "waypoints": [
             {
               "x": 1050,
-              "y": 441
+              "y": 351
             },
             {
               "x": 1050,
-              "y": 876
+              "y": 807.5
             }
           ]
         },
@@ -566,16 +590,16 @@ const diagram = {
           "to": "agent",
           "text": "Qwen responds successfully with repository tool calls; model access is confirmed.",
           "color": "#3fb950",
-          "from": "model",
+          "from": "qwen",
           "num": 5,
           "waypoints": [
             {
               "x": 610,
-              "y": 876
+              "y": 807.5
             },
             {
               "x": 610,
-              "y": 510
+              "y": 420
             }
           ]
         },
@@ -636,7 +660,7 @@ const diagram = {
         },
         {
           "mode": "arrow",
-          "to": "model",
+          "to": "qwen",
           "text": "Send retrieved repository evidence and knowledge to Qwen to generate architecture documentation. OGX connects directly to external MaaS.",
           "color": "#58a6ff",
           "from": "agent",
@@ -644,11 +668,11 @@ const diagram = {
           "waypoints": [
             {
               "x": 1050,
-              "y": 441
+              "y": 351
             },
             {
               "x": 1050,
-              "y": 876
+              "y": 807.5
             }
           ]
         },
@@ -657,16 +681,16 @@ const diagram = {
           "to": "agent",
           "text": "Qwen returns architecture documentation with Mermaid C4 diagrams.",
           "color": "#3fb950",
-          "from": "model",
+          "from": "qwen",
           "num": 14,
           "waypoints": [
             {
               "x": 610,
-              "y": 876
+              "y": 807.5
             },
             {
               "x": 610,
-              "y": 510
+              "y": 420
             }
           ]
         },
@@ -800,7 +824,7 @@ const diagram = {
         },
         {
           "mode": "arrow",
-          "to": "model",
+          "to": "qwen",
           "text": "AI Gateway forwards the authorized request to external OpenShift AI MaaS.",
           "color": "#58a6ff",
           "from": "ai",
@@ -811,7 +835,7 @@ const diagram = {
           "to": "ai",
           "text": "Qwen responds successfully with repository tool calls; model access is confirmed.",
           "color": "#3fb950",
-          "from": "model",
+          "from": "qwen",
           "num": 7
         },
         {
@@ -894,7 +918,7 @@ const diagram = {
         },
         {
           "mode": "arrow",
-          "to": "model",
+          "to": "qwen",
           "text": "AI Gateway forwards the authorized request to external OpenShift AI MaaS.",
           "color": "#58a6ff",
           "from": "ai",
@@ -905,7 +929,7 @@ const diagram = {
           "to": "ai",
           "text": "Qwen returns architecture documentation with Mermaid C4 diagrams.",
           "color": "#3fb950",
-          "from": "model",
+          "from": "qwen",
           "num": 19
         },
         {
@@ -1061,7 +1085,7 @@ const diagram = {
         },
         {
           "mode": "arrow",
-          "to": "model",
+          "to": "qwen",
           "text": "AI Gateway forwards the authorized request to external OpenShift AI MaaS.",
           "color": "#58a6ff",
           "from": "ai",
@@ -1072,7 +1096,7 @@ const diagram = {
           "to": "ai",
           "text": "Qwen responds successfully with repository tool calls; model access is confirmed.",
           "color": "#3fb950",
-          "from": "model",
+          "from": "qwen",
           "num": 9
         },
         {
@@ -1171,7 +1195,7 @@ const diagram = {
         },
         {
           "mode": "arrow",
-          "to": "model",
+          "to": "qwen",
           "text": "AI Gateway forwards the authorized request to external OpenShift AI MaaS.",
           "color": "#58a6ff",
           "from": "ai",
@@ -1182,7 +1206,7 @@ const diagram = {
           "to": "ai",
           "text": "Qwen returns architecture documentation with Mermaid C4 diagrams.",
           "color": "#3fb950",
-          "from": "model",
+          "from": "qwen",
           "num": 23
         },
         {
@@ -1310,7 +1334,7 @@ try {
     this.H = this.canvas.height = Math.max(1, innerHeight - 112);
     this._sc = Math.min(this.W / this.logicalWidth, this.H / this.logicalHeight) * 0.98;
     this._ox = (this.W - this.logicalWidth * this._sc) / 2;
-    this._oy = (this.H - this.logicalHeight * this._sc) * 0.04;
+    this._oy = (this.H - this.logicalHeight * this._sc) / 2;
     this.draw();
   };
   const stepsPanel = document.querySelector('.fs-panel');
