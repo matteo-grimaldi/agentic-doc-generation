@@ -17,100 +17,148 @@ Each launcher selects a scenario in [prepare.py](prepare.py). Its `configure()` 
 
 ## Commands for the live demo
 
-In the presentation terminal, define these read-only shortcuts once. They require `oc` and `jq`. The environment view prints only the routing settings and the source of the inference credential.
+From this directory, paste the setup block once into Bash or Zsh. Keep that terminal open for the baseline, the scenarios you want to show, and restore. The inspection commands use `oc` and `jq`. Scenario 07 also uses `rg`.
 
 ```sh
+set -o pipefail
+
+heading() {
+  printf '\n=== %s ===\n' "$1"
+}
 agent_spec() {
   oc -n doc-gen-demo get deployment/doc-gen-agent -o json | jq '.spec.template.spec'
 }
 routes() {
-  agent_spec | jq -r '.containers[] | .name as $container | .env[] |
+  heading 'Where the agent sends requests'
+  agent_spec | jq -r '.containers[] | .name as $container |
+    (.env | sort_by(.name)[]) |
     select(.name == "INFERENCE_BASE_URL" or .name == "INFERENCE_API_KEY" or
            .name == "MCP_GATEWAY_URL" or .name == "NEMO_GUARDRAILS_URL") |
-    [$container, .name, (if .valueFrom.secretKeyRef then "Secret/" + .valueFrom.secretKeyRef.name
-      elif .valueFrom.configMapKeyRef then "ConfigMap/" + .valueFrom.configMapKeyRef.name + ":" + .valueFrom.configMapKeyRef.key
-      elif .name == "INFERENCE_API_KEY" then "literal (hidden)"
-      else .value end)] | @tsv'
+    (if .valueFrom.secretKeyRef then "Secret/" + .valueFrom.secretKeyRef.name
+     elif .valueFrom.configMapKeyRef then
+       "ConfigMap/" + .valueFrom.configMapKeyRef.name + " / " + .valueFrom.configMapKeyRef.key
+     elif .name == "INFERENCE_API_KEY" then "literal (hidden)"
+     elif .name == "NEMO_GUARDRAILS_URL" and (.value // "") == "" then "disabled"
+     else .value end) as $source |
+    "  \($container) / \(.name)\n    \($source)"'
 }
 token_volume() {
-  agent_spec | jq '.volumes[] | select(.name == "mcp-gateway-token")'
+  agent_spec | jq -S '.volumes[] | select(.name == "mcp-gateway-token")'
 }
-gateway_audience() {
+audiences() {
+  heading 'Audience requested by the agent token'
+  token_volume | jq -r '.projected.sources[] | .serviceAccountToken? // empty | .audience'
+  heading 'Audiences accepted by the MCP Gateway'
   oc -n mcp-gateway get authpolicy/mcp-gateway-tokenreview -o json |
     jq -r '.spec.rules.authentication["k8s-token"].kubernetesTokenReview.audiences[]'
 }
-gitops_state() {
+demo_state() {
+  routes || return 1
+  heading 'MCP token volume'
+  token_volume || return 1
+  heading 'Argo CD applications and their skip-reconcile settings'
   oc -n openshift-gitops get applications doc-gen-demo-root doc-gen-agent -o json |
-    jq -r '.items[] | [.metadata.name, (.metadata.annotations["argocd.argoproj.io/skip-reconcile"] // "(unset)")] | @tsv' | sort
+    jq -r '.items | sort_by(.metadata.name)[] |
+      "  \(.metadata.name)    \(.metadata.annotations["argocd.argoproj.io/skip-reconcile"] // "(unset)")"'
 }
 ```
 
-Before the first scenario, capture the displayed fields for the restore comparison. Keep the same terminal open.
+Before running the first launcher, display the baseline and save a copy for the restore comparison.
 
 ```sh
+heading 'Pre-demo baseline'
 demo_before=$(mktemp)
-{ routes; token_volume; gitops_state; } > "$demo_before"
+demo_state | tee "$demo_before"
 ```
 
-**01-basic.sh** — Run after setup. Compare the direct inference URL with the upstream provider host. The MCP URL points to the GitHub MCP service, and the volume projects the pod name.
+**01 · Direct connections.** Compare the host in `INFERENCE_BASE_URL` with the upstream provider below. The MCP URL points to the GitHub MCP service. The volume supplies the pod name as a placeholder.
 
 ```sh
+./01-basic.sh
 routes
-token_volume
+heading 'Source of the MCP token file'
+token_volume | jq -r '.downwardAPI.items[] | "  \(.path) comes from pod field \(.fieldRef.fieldPath)"'
+heading 'Upstream model provider host'
 oc -n llm get externalprovider/workshop-maas -o json | jq -r '.spec.endpoint'
 ```
 
-**02-tooling-blocked.sh** — Show the projected audience `basic-flow-denied` alongside the gateway's accepted audience `mcp-gateway`.
+**02 · MCP Gateway denies the token.** Point out the mismatch between the requested audience (`basic-flow-denied`) and the accepted audience (`mcp-gateway`), then submit the printed URL in Gradio.
 
 ```sh
+./02-tooling-blocked.sh
 routes
-token_volume | jq -r '.projected.sources[].serviceAccountToken.audience'
-gateway_audience
+audiences
 ```
 
-**03-tooling-allowed.sh** — The two audiences now match. Resolve the gateway URL from the ConfigMap and show that inference still uses the direct URL.
+**03 · MCP Gateway accepts the token.** The audiences now match. Compare the MCP Gateway address with the direct inference URL.
 
 ```sh
-token_volume | jq -r '.projected.sources[].serviceAccountToken.audience'
-gateway_audience
+./03-tooling-allowed.sh
+audiences
+heading 'MCP Gateway address from cluster-config'
 oc -n doc-gen-demo get configmap/cluster-config -o json | jq -r '.data.mcp_gateway_url'
 routes
 ```
 
-**04-ai-blocked.sh** — Show the AI Gateway URL and the credential source `literal (hidden)`. Submit the URL in Gradio to demonstrate the rejection.
+**04 · AI Gateway denies the credential.** Show the gateway address and the `literal (hidden)` credential source, then submit the URL in Gradio to demonstrate the rejection.
 
 ```sh
+./04-ai-blocked.sh
+heading 'AI Gateway address from cluster-config'
 oc -n doc-gen-demo get configmap/cluster-config -o json | jq -r '.data.model_base_url'
 routes
 ```
 
-**05-ai-allowed.sh** — Show that the inference credential comes from the original Secret reference. Show the model and provider the gateway routes to.
+**05 · AI Gateway accepts the credential.** Point out the restored Secret reference under `INFERENCE_API_KEY`, then trace the model request to its provider.
 
 ```sh
+./05-ai-allowed.sh
 routes
+heading 'How the AI Gateway routes the model request'
 oc -n llm get externalmodel/qwen38-27b -o json |
-  jq '.spec | {modelName, providers: [.externalProviderRefs[] | {provider: .ref.name, targetModel}]}'
+  jq -r '.spec | "  Gateway model    \(.modelName)",
+    (.externalProviderRefs[] | "  Provider         \(.ref.name)\n  Target model     \(.targetModel)")'
 ```
 
-**06-guardrails-blocked.sh** — Show the NeMo URL with the first command. After submitting the script's override prompt in Gradio, run the second command to show the input-phase denial.
+**06 · NeMo denies the input.** Show the NeMo address under `NEMO_GUARDRAILS_URL`.
 
 ```sh
+./06-guardrails-blocked.sh
 routes
+```
+
+Submit the printed prompt, including the instruction override, in Gradio. Once the denial appears, show the corresponding log entry.
+
+```sh
+heading 'Recent input denials from NeMo Guardrails'
 oc -n doc-gen-demo logs deployment/doc-gen-agent -c doc-gen-agent --since=5m |
-  grep -F 'NeMo Guardrails denied input' | tail -3
+  awk '/NeMo Guardrails denied input/ {print; found=1}
+       END {if (!found) print "No input denials in the last five minutes."}' | tail -n 3
 ```
 
-**07-guardrails-allowed.sh** — Show the enabled NeMo URL, then submit the plain repository URL. After generation, inspect the chat handler from this directory to show where the input and output checks occur. The completed document in Gradio demonstrates the user-visible outcome.
+**07 · NeMo allows the request.** Show the same NeMo address, then submit the plain repository URL. Show the completed document in Gradio.
 
 ```sh
+./07-guardrails-allowed.sh
 routes
+```
+
+Return to the terminal to show where the chat handler checks the incoming message and the generated document.
+
+```sh
+heading 'Input and output guardrail checks in the Gradio handler'
 rg -n 'await check_content\((message|document),' ../../../doc-gen-agent/app.py
 ```
 
-**99-restore.sh** — After restore, compare the displayed routes, token volume, and GitOps annotations against the captured values. An empty diff means those fields match. The rollout command confirms the restored Deployment is ready.
+**99 · Restore and compare.** Compare the displayed routes, token volume, and GitOps annotations with the baseline. A difference prints the affected lines. Check rollout readiness separately.
 
 ```sh
-{ routes; token_volume; gitops_state; } | diff -u "$demo_before" -
+./99-restore.sh
+heading 'Restored configuration compared with the pre-demo baseline'
+if demo_state | diff -u "$demo_before" -; then
+  printf 'Routes, token volume, and Argo CD settings match the baseline.\n'
+fi
+heading 'Restored doc-gen-agent rollout'
 oc -n doc-gen-demo rollout status deployment/doc-gen-agent --timeout=2m
 ```
 
