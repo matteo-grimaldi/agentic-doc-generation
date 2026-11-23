@@ -1,0 +1,1458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Doc generation — FlowStory</title>
+<link rel="stylesheet" href="https://noyitz.github.io/flowstory/templates/style.css">
+<style>
+.scenario-note { margin: 14px 18px; color: var(--fs-text-dim, #8b949e); font: 12px/1.6 system-ui; }
+.fs-inspector { display: none; }
+</style>
+</head>
+<body>
+
+<button class="fs-theme-toggle" aria-label="Toggle color theme" id="fs-theme">&#9790;</button>
+
+<div class="fs-brand" id="fs-brand"></div>
+<div class="fs-title" id="fs-title"></div>
+
+<div class="fs-panel">
+  <div class="fs-flow-bar">
+    <select aria-label="Scenario" id="fs-flow-select"></select>
+    <button class="fs-start" id="fs-play">&#9654; Start</button>
+    <button id="fs-speed">1x</button>
+    <button id="fs-loop" style="border-color:#79c0ff;color:#79c0ff">&#8635; Loop</button>
+    <button class="fs-reset" id="fs-reset">Reset</button>
+  </div>
+  <div class="fs-steps" id="fs-steps">
+    <div class="fs-steps-title">Flow Steps <span style="font-weight:400;font-size:11px;color:var(--fs-text-dim)">· click to jump</span></div>
+    <div id="fs-steps-container"></div>
+  </div>
+  <p class="scenario-note">Seven illustrative scenarios. Basic shows direct access; the deployed architecture uses both gateways. Every scenario starts with User → Gradio UI → doc-gen-agent. Model access precedes tool access; guardrail scenarios check the generated output. The agent includes OGX. Click a component for details.</p>
+  <div class="fs-inspector" id="fs-inspector">
+    <div class="fs-inspector-title" id="fs-inspector-title" style="color:var(--fs-accent)">Request</div>
+    <div id="fs-inspector-content"></div>
+  </div>
+</div>
+
+<div id="fs-highlight-box" style="display:none;position:fixed;z-index:350;border-radius:10px;pointer-events:none"></div>
+<div id="fs-overlay" style="display:none;position:fixed;top:0;left:0;right:380px;bottom:0;z-index:300;background:rgba(0,0,0,0.6)">
+  <div id="fs-overlay-card" style="position:absolute;background:#161b22ee;border:1px solid #30363d;border-radius:14px;max-width:420px;padding:22px 26px;box-shadow:0 12px 40px rgba(0,0,0,0.5)">
+    <button id="fs-overlay-close" style="position:absolute;top:10px;right:14px;background:none;border:none;color:#8b949e;font-size:18px;cursor:pointer;padding:4px 8px;border-radius:6px">✕</button>
+    <div id="fs-overlay-accent" style="width:4px;height:24px;border-radius:2px;position:absolute;left:0;top:22px"></div>
+    <h2 id="fs-overlay-title" style="margin:0 0 6px;font-size:18px;color:#c9d1d9;font-family:system-ui"></h2>
+    <p id="fs-overlay-desc" style="margin:0 0 14px;font-size:13px;color:#8b949e;line-height:1.5;font-family:system-ui"></p>
+    <div id="fs-overlay-details" style="font-size:12px;font-family:'SF Mono',Menlo,monospace"></div>
+    <button id="fs-overlay-resume" style="margin-top:14px;padding:7px 20px;border:1px solid #3fb950;border-radius:8px;background:transparent;color:#3fb950;font-size:13px;cursor:pointer;font-family:system-ui">&#9654; Resume Flow</button>
+  </div>
+</div>
+
+<div class="fs-legend" id="fs-legend"></div>
+
+<canvas id="fs-canvas"></canvas>
+
+<script type="module">
+import { FlowStory } from 'https://noyitz.github.io/flowstory/src/index.js';
+
+const diagram = {
+  "meta": {
+    "title": "Doc generation · access & guardrails"
+  },
+  "canvas": {
+    "width": 1540,
+    "height": 760
+  },
+  "nodes": {
+    "knowledge": {
+      "x": 365,
+      "y": 110,
+      "w": 215,
+      "h": 72,
+      "label": "Knowledge.md",
+      "sublabel": "Documentation style guide",
+      "color": "#d2a8ff",
+      "fontSize": 17
+    },
+    "agent": {
+      "x": 365,
+      "y": 335,
+      "w": 215,
+      "h": 72,
+      "label": "doc-gen-agent",
+      "sublabel": "Agent + OGX sidecar",
+      "color": "#58a6ff",
+      "fontSize": 17
+    },
+    "mcp": {
+      "x": 675,
+      "y": 210,
+      "w": 220,
+      "h": 72,
+      "label": "MCP Gateway",
+      "sublabel": "Tool access policy",
+      "color": "#f0883e",
+      "fontSize": 17
+    },
+    "github_mcp": {
+      "x": 985,
+      "y": 210,
+      "w": 215,
+      "h": 72,
+      "label": "GitHub MCP",
+      "sublabel": "Repository browsing tools",
+      "color": "#58a6ff",
+      "fontSize": 17
+    },
+    "github": {
+      "x": 1285,
+      "y": 210,
+      "w": 210,
+      "h": 72,
+      "label": "GitHub",
+      "sublabel": "Java source repository",
+      "color": "#8b949e",
+      "fontSize": 17
+    },
+    "guardrails": {
+      "x": 675,
+      "y": 110,
+      "w": 220,
+      "h": 72,
+      "label": "NeMo Guardrails",
+      "sublabel": "Input / output policy",
+      "color": "#d2a8ff",
+      "fontSize": 17
+    },
+    "ai": {
+      "x": 675,
+      "y": 485,
+      "w": 220,
+      "h": 72,
+      "label": "AI Gateway",
+      "sublabel": "Model access policy",
+      "color": "#f0883e",
+      "fontSize": 17
+    },
+    "model": {
+      "x": 1130,
+      "y": 485,
+      "w": 365,
+      "h": 72,
+      "label": "External OpenShift AI cluster",
+      "sublabel": "MaaS · Qwen external model",
+      "color": "#3fb950",
+      "fontSize": 17
+    },
+    "user": {
+      "x": 25,
+      "y": 180,
+      "w": 230,
+      "h": 72,
+      "label": "User",
+      "type": "icon",
+      "color": "#79c0ff",
+      "fontSize": 17
+    },
+    "gradio": {
+      "x": 25,
+      "y": 335,
+      "w": 230,
+      "h": 72,
+      "label": "Gradio UI",
+      "sublabel": "Repository URL · chat",
+      "color": "#79c0ff",
+      "fontSize": 17
+    }
+  },
+  "tooltips": {
+    "knowledge": {
+      "title": "Knowledge.md",
+      "description": "The local doc-gen-agent/knowledge.md file supplies documentation style guidance, injected into the prompt. It is not a remote tool."
+    },
+    "agent": {
+      "title": "doc-gen-agent",
+      "description": "The documentation agent and its OGX sidecar. Gradio UI is shown separately as the user-facing entry point. Only the OGX sidecar makes inference connections."
+    },
+    "mcp": {
+      "title": "MCP Gateway",
+      "description": "Authorizes MCP requests using a projected service-account token and the mcp-gateway/github-tools virtual server. A denial stops access to the backend."
+    },
+    "github_mcp": {
+      "title": "GitHub MCP",
+      "description": "Exposes repository exploration tools including get_repo_info, get_repo_structure, get_file_outline and read_file. It queries GitHub on the agent’s behalf."
+    },
+    "github": {
+      "title": "GitHub",
+      "description": "The source repository supplying Java application code and deployment configuration."
+    },
+    "guardrails": {
+      "title": "NeMo Guardrails",
+      "description": "Optional agent-side input and output checks reject known secret formats and prompt-injection instructions. A policy denial blocks the action; service unavailability is logged and fails open. This is separate from MCP Gateway tool enforcement."
+    },
+    "ai": {
+      "title": "AI Gateway",
+      "description": "In-cluster OpenShift AI model gateway: MaaS authentication, model access governance and routing to the upstream external endpoint. It does not host model weights."
+    },
+    "model": {
+      "title": "External OpenShift AI cluster",
+      "description": "The requested upstream deployment: a separate OpenShift AI cluster exposes Qwen through MaaS with an OpenAI-compatible endpoint. Model serving stays outside the demo cluster."
+    },
+    "user": {
+      "title": "User",
+      "description": "Starts every scenario by submitting a GitHub repository URL in the Gradio chat UI."
+    },
+    "gradio": {
+      "title": "Gradio UI",
+      "description": "The user-facing chat interface for doc-gen-agent. It accepts the repository URL and passes the request to the agent; the UI does not call the model directly."
+    }
+  },
+  "flows": {
+    "basic": {
+      "label": "Basic",
+      "steps": [
+        {
+          "mode": "arrow",
+          "from": "user",
+          "to": "gradio",
+          "text": "User opens the Gradio UI and submits a GitHub repository URL.",
+          "color": "#58a6ff",
+          "num": 1
+        },
+        {
+          "mode": "arrow",
+          "from": "gradio",
+          "to": "agent",
+          "text": "Gradio UI passes the user request to doc-gen-agent.",
+          "color": "#58a6ff",
+          "num": 2
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Load the documentation style guide into the agent prompt.",
+          "color": "#d2a8ff",
+          "from": "knowledge",
+          "num": 3
+        },
+        {
+          "mode": "lightup",
+          "target": "agent",
+          "text": "Illustrative baseline: direct tool and model access; gateway controls are bypassed in this scenario only.",
+          "badge": 4,
+          "errColor": "#58a6ff"
+        },
+        {
+          "mode": "arrow",
+          "to": "model",
+          "text": "Send the user request and documentation guidance to Qwen; ask which repository tools are needed. OGX connects directly to external MaaS.",
+          "color": "#58a6ff",
+          "fromBottom": true,
+          "toBottom": true,
+          "waypoints": [
+            {
+              "x": 472,
+              "y": 640
+            },
+            {
+              "x": 1312,
+              "y": 640
+            }
+          ],
+          "from": "agent",
+          "num": 5
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Qwen responds successfully with repository tool calls; model access is confirmed.",
+          "color": "#3fb950",
+          "fromTop": true,
+          "toRight": true,
+          "waypoints": [
+            {
+              "x": 1312,
+              "y": 371
+            }
+          ],
+          "from": "model",
+          "num": 6
+        },
+        {
+          "mode": "arrow",
+          "to": "github_mcp",
+          "text": "Call GitHub MCP directly.",
+          "color": "#58a6ff",
+          "waypoints": [
+            {
+              "x": 610,
+              "y": 315
+            },
+            {
+              "x": 1090,
+              "y": 315
+            }
+          ],
+          "fromRight": true,
+          "toBottom": true,
+          "from": "agent",
+          "num": 7
+        },
+        {
+          "mode": "arrow",
+          "to": "github",
+          "text": "Read repository metadata, file tree and selected Java source through the GitHub API.",
+          "color": "#58a6ff",
+          "from": "github_mcp",
+          "num": 8
+        },
+        {
+          "mode": "arrow",
+          "to": "github_mcp",
+          "text": "Return repository evidence.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "github",
+          "num": 9
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Return repository evidence directly.",
+          "color": "#3fb950",
+          "waypoints": [
+            {
+              "x": 1090,
+              "y": 435
+            },
+            {
+              "x": 610,
+              "y": 435
+            }
+          ],
+          "fromBottom": true,
+          "toRight": true,
+          "from": "github_mcp",
+          "num": 10
+        },
+        {
+          "mode": "arrow",
+          "to": "model",
+          "text": "Send retrieved repository evidence and knowledge to Qwen to generate architecture documentation. OGX connects directly to external MaaS.",
+          "color": "#58a6ff",
+          "fromBottom": true,
+          "toBottom": true,
+          "waypoints": [
+            {
+              "x": 472,
+              "y": 640
+            },
+            {
+              "x": 1312,
+              "y": 640
+            }
+          ],
+          "from": "agent",
+          "num": 11
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Qwen returns architecture documentation with Mermaid C4 diagrams.",
+          "color": "#3fb950",
+          "fromTop": true,
+          "toRight": true,
+          "waypoints": [
+            {
+              "x": 1312,
+              "y": 371
+            }
+          ],
+          "from": "model",
+          "num": 12
+        },
+        {
+          "mode": "arrow",
+          "from": "agent",
+          "to": "gradio",
+          "text": "Stream the generated architecture documentation to the Gradio UI.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "num": 13
+        },
+        {
+          "mode": "arrow",
+          "from": "gradio",
+          "to": "user",
+          "text": "Display the result to the user.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "num": 14
+        }
+      ]
+    },
+    "tooling-blocked": {
+      "label": "Tooling blocked",
+      "steps": [
+        {
+          "mode": "arrow",
+          "from": "user",
+          "to": "gradio",
+          "text": "User opens the Gradio UI and submits a GitHub repository URL.",
+          "color": "#58a6ff",
+          "num": 1
+        },
+        {
+          "mode": "arrow",
+          "from": "gradio",
+          "to": "agent",
+          "text": "Gradio UI passes the user request to doc-gen-agent.",
+          "color": "#58a6ff",
+          "num": 2
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Load the documentation style guide into the agent prompt.",
+          "color": "#d2a8ff",
+          "from": "knowledge",
+          "num": 3
+        },
+        {
+          "mode": "arrow",
+          "to": "model",
+          "text": "Send the user request and documentation guidance to Qwen; ask which repository tools are needed. OGX connects directly to external MaaS.",
+          "color": "#58a6ff",
+          "fromBottom": true,
+          "toBottom": true,
+          "waypoints": [
+            {
+              "x": 472,
+              "y": 640
+            },
+            {
+              "x": 1312,
+              "y": 640
+            }
+          ],
+          "from": "agent",
+          "num": 4
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Qwen responds successfully with repository tool calls; model access is confirmed.",
+          "color": "#3fb950",
+          "fromTop": true,
+          "toRight": true,
+          "waypoints": [
+            {
+              "x": 1312,
+              "y": 371
+            }
+          ],
+          "from": "model",
+          "num": 5
+        },
+        {
+          "mode": "arrow",
+          "to": "mcp",
+          "text": "Request repository tools with a projected service-account token and github-tools virtual server.",
+          "color": "#58a6ff",
+          "from": "agent",
+          "num": 6
+        },
+        {
+          "mode": "lightup",
+          "target": "mcp",
+          "text": "Access policy denies this agent. The request stops before GitHub MCP.",
+          "badge": "DENY",
+          "errColor": "#f85149"
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Return access denied; GitHub MCP and GitHub are never contacted.",
+          "color": "#f85149",
+          "yOff": 17,
+          "from": "mcp",
+          "num": 8
+        },
+        {
+          "mode": "arrow",
+          "from": "agent",
+          "to": "gradio",
+          "text": "Show the tool-access denial. Repository evidence was not retrieved.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "num": 9
+        },
+        {
+          "mode": "arrow",
+          "from": "gradio",
+          "to": "user",
+          "text": "Display the result to the user.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "num": 10
+        }
+      ]
+    },
+    "tooling-allowed": {
+      "label": "Tooling allowed",
+      "steps": [
+        {
+          "mode": "arrow",
+          "from": "user",
+          "to": "gradio",
+          "text": "User opens the Gradio UI and submits a GitHub repository URL.",
+          "color": "#58a6ff",
+          "num": 1
+        },
+        {
+          "mode": "arrow",
+          "from": "gradio",
+          "to": "agent",
+          "text": "Gradio UI passes the user request to doc-gen-agent.",
+          "color": "#58a6ff",
+          "num": 2
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Load the documentation style guide into the agent prompt.",
+          "color": "#d2a8ff",
+          "from": "knowledge",
+          "num": 3
+        },
+        {
+          "mode": "arrow",
+          "to": "model",
+          "text": "Send the user request and documentation guidance to Qwen; ask which repository tools are needed. OGX connects directly to external MaaS.",
+          "color": "#58a6ff",
+          "fromBottom": true,
+          "toBottom": true,
+          "waypoints": [
+            {
+              "x": 472,
+              "y": 640
+            },
+            {
+              "x": 1312,
+              "y": 640
+            }
+          ],
+          "from": "agent",
+          "num": 4
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Qwen responds successfully with repository tool calls; model access is confirmed.",
+          "color": "#3fb950",
+          "fromTop": true,
+          "toRight": true,
+          "waypoints": [
+            {
+              "x": 1312,
+              "y": 371
+            }
+          ],
+          "from": "model",
+          "num": 5
+        },
+        {
+          "mode": "arrow",
+          "to": "mcp",
+          "text": "Request repository tools with a projected service-account token and github-tools virtual server.",
+          "color": "#58a6ff",
+          "from": "agent",
+          "num": 6
+        },
+        {
+          "mode": "lightup",
+          "target": "mcp",
+          "text": "MCP Gateway authorizes the agent to use github-tools.",
+          "badge": "OK",
+          "errColor": "#3fb950"
+        },
+        {
+          "mode": "arrow",
+          "to": "github_mcp",
+          "text": "Forward the authorized MCP tool call to GitHub MCP.",
+          "color": "#58a6ff",
+          "from": "mcp",
+          "num": 8
+        },
+        {
+          "mode": "arrow",
+          "to": "github",
+          "text": "Read repository metadata, file tree and selected Java source through the GitHub API.",
+          "color": "#58a6ff",
+          "from": "github_mcp",
+          "num": 9
+        },
+        {
+          "mode": "arrow",
+          "to": "github_mcp",
+          "text": "Return repository evidence.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "github",
+          "num": 10
+        },
+        {
+          "mode": "arrow",
+          "to": "mcp",
+          "text": "Return the tool result through MCP Gateway.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "github_mcp",
+          "num": 11
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Deliver repository evidence to the agent.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "mcp",
+          "num": 12
+        },
+        {
+          "mode": "arrow",
+          "to": "model",
+          "text": "Send retrieved repository evidence and knowledge to Qwen to generate architecture documentation. OGX connects directly to external MaaS.",
+          "color": "#58a6ff",
+          "fromBottom": true,
+          "toBottom": true,
+          "waypoints": [
+            {
+              "x": 472,
+              "y": 640
+            },
+            {
+              "x": 1312,
+              "y": 640
+            }
+          ],
+          "from": "agent",
+          "num": 13
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Qwen returns architecture documentation with Mermaid C4 diagrams.",
+          "color": "#3fb950",
+          "fromTop": true,
+          "toRight": true,
+          "waypoints": [
+            {
+              "x": 1312,
+              "y": 371
+            }
+          ],
+          "from": "model",
+          "num": 14
+        },
+        {
+          "mode": "arrow",
+          "from": "agent",
+          "to": "gradio",
+          "text": "Stream the generated architecture documentation to the Gradio UI.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "num": 15
+        },
+        {
+          "mode": "arrow",
+          "from": "gradio",
+          "to": "user",
+          "text": "Display the result to the user.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "num": 16
+        }
+      ]
+    },
+    "ai-blocked": {
+      "label": "AI Gateway blocked",
+      "steps": [
+        {
+          "mode": "arrow",
+          "from": "user",
+          "to": "gradio",
+          "text": "User opens the Gradio UI and submits a GitHub repository URL.",
+          "color": "#58a6ff",
+          "num": 1
+        },
+        {
+          "mode": "arrow",
+          "from": "gradio",
+          "to": "agent",
+          "text": "Gradio UI passes the user request to doc-gen-agent.",
+          "color": "#58a6ff",
+          "num": 2
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Load the documentation style guide into the agent prompt.",
+          "color": "#d2a8ff",
+          "from": "knowledge",
+          "num": 3
+        },
+        {
+          "mode": "arrow",
+          "to": "ai",
+          "text": "OGX sends an inference request with a MaaS API key for the external Qwen model.",
+          "color": "#58a6ff",
+          "from": "agent",
+          "num": 4
+        },
+        {
+          "mode": "lightup",
+          "target": "ai",
+          "text": "Model access policy rejects the request. No request reaches external MaaS or Qwen.",
+          "badge": "DENY",
+          "errColor": "#f85149"
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Return model access denied; no model generation occurs.",
+          "color": "#f85149",
+          "yOff": 17,
+          "from": "ai",
+          "num": 6
+        },
+        {
+          "mode": "arrow",
+          "from": "agent",
+          "to": "gradio",
+          "text": "Show the model-access denial. No GitHub tool call was attempted.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "num": 7
+        },
+        {
+          "mode": "arrow",
+          "from": "gradio",
+          "to": "user",
+          "text": "Display the result to the user.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "num": 8
+        }
+      ]
+    },
+    "ai-allowed": {
+      "label": "AI Gateway allowed",
+      "steps": [
+        {
+          "mode": "arrow",
+          "from": "user",
+          "to": "gradio",
+          "text": "User opens the Gradio UI and submits a GitHub repository URL.",
+          "color": "#58a6ff",
+          "num": 1
+        },
+        {
+          "mode": "arrow",
+          "from": "gradio",
+          "to": "agent",
+          "text": "Gradio UI passes the user request to doc-gen-agent.",
+          "color": "#58a6ff",
+          "num": 2
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Load the documentation style guide into the agent prompt.",
+          "color": "#d2a8ff",
+          "from": "knowledge",
+          "num": 3
+        },
+        {
+          "mode": "arrow",
+          "to": "ai",
+          "text": "Send the user request and documentation guidance to Qwen; ask which repository tools are needed. OGX uses the AI Gateway and MaaS API key.",
+          "color": "#58a6ff",
+          "from": "agent",
+          "num": 4
+        },
+        {
+          "mode": "lightup",
+          "target": "ai",
+          "text": "MaaS authentication and model access policy allow the request.",
+          "badge": "OK",
+          "errColor": "#3fb950"
+        },
+        {
+          "mode": "arrow",
+          "to": "model",
+          "text": "AI Gateway forwards the authorized request to external OpenShift AI MaaS.",
+          "color": "#58a6ff",
+          "from": "ai",
+          "num": 6
+        },
+        {
+          "mode": "arrow",
+          "to": "ai",
+          "text": "Qwen responds successfully with repository tool calls; model access is confirmed.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "model",
+          "num": 7
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Deliver the model’s tool-call request to doc-gen-agent.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "ai",
+          "num": 8
+        },
+        {
+          "mode": "arrow",
+          "to": "mcp",
+          "text": "Request repository tools with a projected service-account token and github-tools virtual server.",
+          "color": "#58a6ff",
+          "from": "agent",
+          "num": 9
+        },
+        {
+          "mode": "lightup",
+          "target": "mcp",
+          "text": "MCP Gateway authorizes the agent to use github-tools.",
+          "badge": "OK",
+          "errColor": "#3fb950"
+        },
+        {
+          "mode": "arrow",
+          "to": "github_mcp",
+          "text": "Forward the authorized MCP tool call to GitHub MCP.",
+          "color": "#58a6ff",
+          "from": "mcp",
+          "num": 11
+        },
+        {
+          "mode": "arrow",
+          "to": "github",
+          "text": "Read repository metadata, file tree and selected Java source through the GitHub API.",
+          "color": "#58a6ff",
+          "from": "github_mcp",
+          "num": 12
+        },
+        {
+          "mode": "arrow",
+          "to": "github_mcp",
+          "text": "Return repository evidence.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "github",
+          "num": 13
+        },
+        {
+          "mode": "arrow",
+          "to": "mcp",
+          "text": "Return the tool result through MCP Gateway.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "github_mcp",
+          "num": 14
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Deliver repository evidence to the agent.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "mcp",
+          "num": 15
+        },
+        {
+          "mode": "arrow",
+          "to": "ai",
+          "text": "Send retrieved repository evidence and knowledge to Qwen to generate architecture documentation. OGX uses the AI Gateway and MaaS API key.",
+          "color": "#58a6ff",
+          "from": "agent",
+          "num": 16
+        },
+        {
+          "mode": "lightup",
+          "target": "ai",
+          "text": "MaaS authentication and model access policy allow the request.",
+          "badge": "OK",
+          "errColor": "#3fb950"
+        },
+        {
+          "mode": "arrow",
+          "to": "model",
+          "text": "AI Gateway forwards the authorized request to external OpenShift AI MaaS.",
+          "color": "#58a6ff",
+          "from": "ai",
+          "num": 18
+        },
+        {
+          "mode": "arrow",
+          "to": "ai",
+          "text": "Qwen returns architecture documentation with Mermaid C4 diagrams.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "model",
+          "num": 19
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Deliver generated documentation to doc-gen-agent.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "ai",
+          "num": 20
+        },
+        {
+          "mode": "arrow",
+          "from": "agent",
+          "to": "gradio",
+          "text": "Stream the generated architecture documentation to the Gradio UI.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "num": 21
+        },
+        {
+          "mode": "arrow",
+          "from": "gradio",
+          "to": "user",
+          "text": "Display the result to the user.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "num": 22
+        }
+      ]
+    },
+    "guardrails-blocked": {
+      "label": "Blocked by guardrails",
+      "steps": [
+        {
+          "mode": "arrow",
+          "from": "user",
+          "to": "gradio",
+          "text": "User opens the Gradio UI and submits a GitHub repository URL.",
+          "color": "#58a6ff",
+          "num": 1
+        },
+        {
+          "mode": "arrow",
+          "from": "gradio",
+          "to": "agent",
+          "text": "Gradio UI passes the user request to doc-gen-agent.",
+          "color": "#58a6ff",
+          "num": 2
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Load the documentation style guide into the agent prompt.",
+          "color": "#d2a8ff",
+          "from": "knowledge",
+          "num": 3
+        },
+        {
+          "mode": "arrow",
+          "to": "ai",
+          "text": "Send the user request and documentation guidance to Qwen; ask which repository tools are needed. OGX uses the AI Gateway and MaaS API key.",
+          "color": "#58a6ff",
+          "from": "agent",
+          "num": 4
+        },
+        {
+          "mode": "lightup",
+          "target": "ai",
+          "text": "MaaS authentication and model access policy allow the request.",
+          "badge": "OK",
+          "errColor": "#3fb950"
+        },
+        {
+          "mode": "arrow",
+          "to": "model",
+          "text": "AI Gateway forwards the authorized request to external OpenShift AI MaaS.",
+          "color": "#58a6ff",
+          "from": "ai",
+          "num": 6
+        },
+        {
+          "mode": "arrow",
+          "to": "ai",
+          "text": "Qwen responds successfully with repository tool calls; model access is confirmed.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "model",
+          "num": 7
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Deliver the model’s tool-call request to doc-gen-agent.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "ai",
+          "num": 8
+        },
+        {
+          "mode": "arrow",
+          "to": "mcp",
+          "text": "Request repository tools with a projected service-account token and github-tools virtual server.",
+          "color": "#58a6ff",
+          "from": "agent",
+          "num": 9
+        },
+        {
+          "mode": "lightup",
+          "target": "mcp",
+          "text": "MCP Gateway authorizes the agent to use github-tools.",
+          "badge": "OK",
+          "errColor": "#3fb950"
+        },
+        {
+          "mode": "arrow",
+          "to": "github_mcp",
+          "text": "Forward the authorized MCP tool call to GitHub MCP.",
+          "color": "#58a6ff",
+          "from": "mcp",
+          "num": 11
+        },
+        {
+          "mode": "arrow",
+          "to": "github",
+          "text": "Read repository metadata, file tree and selected Java source through the GitHub API.",
+          "color": "#58a6ff",
+          "from": "github_mcp",
+          "num": 12
+        },
+        {
+          "mode": "arrow",
+          "to": "github_mcp",
+          "text": "Return repository evidence.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "github",
+          "num": 13
+        },
+        {
+          "mode": "arrow",
+          "to": "mcp",
+          "text": "Return the tool result through MCP Gateway.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "github_mcp",
+          "num": 14
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Deliver repository evidence to the agent.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "mcp",
+          "num": 15
+        },
+        {
+          "mode": "arrow",
+          "to": "ai",
+          "text": "Send retrieved repository evidence and knowledge to Qwen to generate architecture documentation. OGX uses the AI Gateway and MaaS API key.",
+          "color": "#58a6ff",
+          "from": "agent",
+          "num": 16
+        },
+        {
+          "mode": "lightup",
+          "target": "ai",
+          "text": "MaaS authentication and model access policy allow the request.",
+          "badge": "OK",
+          "errColor": "#3fb950"
+        },
+        {
+          "mode": "arrow",
+          "to": "model",
+          "text": "AI Gateway forwards the authorized request to external OpenShift AI MaaS.",
+          "color": "#58a6ff",
+          "from": "ai",
+          "num": 18
+        },
+        {
+          "mode": "arrow",
+          "to": "ai",
+          "text": "Qwen returns architecture documentation with Mermaid C4 diagrams.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "model",
+          "num": 19
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Deliver generated documentation to doc-gen-agent.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "ai",
+          "num": 20
+        },
+        {
+          "mode": "arrow",
+          "from": "agent",
+          "to": "guardrails",
+          "text": "Check generated documentation with NeMo Guardrails before releasing it to the user.",
+          "color": "#58a6ff",
+          "num": 21
+        },
+        {
+          "mode": "lightup",
+          "target": "guardrails",
+          "text": "Generated output contains a known secret format. The output policy denies release.",
+          "badge": "DENY",
+          "errColor": "#f85149"
+        },
+        {
+          "mode": "arrow",
+          "from": "guardrails",
+          "to": "agent",
+          "text": "Return the output-policy denial; withhold the generated document.",
+          "color": "#f85149",
+          "yOff": 17,
+          "num": 23
+        },
+        {
+          "mode": "arrow",
+          "from": "agent",
+          "to": "gradio",
+          "text": "Show a guardrails denial message without exposing the blocked document.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "num": 24
+        },
+        {
+          "mode": "arrow",
+          "from": "gradio",
+          "to": "user",
+          "text": "Display the result to the user.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "num": 25
+        }
+      ]
+    },
+    "guardrails-allowed": {
+      "label": "Allowed by guardrails",
+      "steps": [
+        {
+          "mode": "arrow",
+          "from": "user",
+          "to": "gradio",
+          "text": "User opens the Gradio UI and submits a GitHub repository URL.",
+          "color": "#58a6ff",
+          "num": 1
+        },
+        {
+          "mode": "arrow",
+          "from": "gradio",
+          "to": "agent",
+          "text": "Gradio UI passes the user request to doc-gen-agent.",
+          "color": "#58a6ff",
+          "num": 2
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Load the documentation style guide into the agent prompt.",
+          "color": "#d2a8ff",
+          "from": "knowledge",
+          "num": 3
+        },
+        {
+          "mode": "arrow",
+          "to": "ai",
+          "text": "Send the user request and documentation guidance to Qwen; ask which repository tools are needed. OGX uses the AI Gateway and MaaS API key.",
+          "color": "#58a6ff",
+          "from": "agent",
+          "num": 4
+        },
+        {
+          "mode": "lightup",
+          "target": "ai",
+          "text": "MaaS authentication and model access policy allow the request.",
+          "badge": "OK",
+          "errColor": "#3fb950"
+        },
+        {
+          "mode": "arrow",
+          "to": "model",
+          "text": "AI Gateway forwards the authorized request to external OpenShift AI MaaS.",
+          "color": "#58a6ff",
+          "from": "ai",
+          "num": 6
+        },
+        {
+          "mode": "arrow",
+          "to": "ai",
+          "text": "Qwen responds successfully with repository tool calls; model access is confirmed.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "model",
+          "num": 7
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Deliver the model’s tool-call request to doc-gen-agent.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "ai",
+          "num": 8
+        },
+        {
+          "mode": "arrow",
+          "to": "mcp",
+          "text": "Request repository tools with a projected service-account token and github-tools virtual server.",
+          "color": "#58a6ff",
+          "from": "agent",
+          "num": 9
+        },
+        {
+          "mode": "lightup",
+          "target": "mcp",
+          "text": "MCP Gateway authorizes the agent to use github-tools.",
+          "badge": "OK",
+          "errColor": "#3fb950"
+        },
+        {
+          "mode": "arrow",
+          "to": "github_mcp",
+          "text": "Forward the authorized MCP tool call to GitHub MCP.",
+          "color": "#58a6ff",
+          "from": "mcp",
+          "num": 11
+        },
+        {
+          "mode": "arrow",
+          "to": "github",
+          "text": "Read repository metadata, file tree and selected Java source through the GitHub API.",
+          "color": "#58a6ff",
+          "from": "github_mcp",
+          "num": 12
+        },
+        {
+          "mode": "arrow",
+          "to": "github_mcp",
+          "text": "Return repository evidence.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "github",
+          "num": 13
+        },
+        {
+          "mode": "arrow",
+          "to": "mcp",
+          "text": "Return the tool result through MCP Gateway.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "github_mcp",
+          "num": 14
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Deliver repository evidence to the agent.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "mcp",
+          "num": 15
+        },
+        {
+          "mode": "arrow",
+          "to": "ai",
+          "text": "Send retrieved repository evidence and knowledge to Qwen to generate architecture documentation. OGX uses the AI Gateway and MaaS API key.",
+          "color": "#58a6ff",
+          "from": "agent",
+          "num": 16
+        },
+        {
+          "mode": "lightup",
+          "target": "ai",
+          "text": "MaaS authentication and model access policy allow the request.",
+          "badge": "OK",
+          "errColor": "#3fb950"
+        },
+        {
+          "mode": "arrow",
+          "to": "model",
+          "text": "AI Gateway forwards the authorized request to external OpenShift AI MaaS.",
+          "color": "#58a6ff",
+          "from": "ai",
+          "num": 18
+        },
+        {
+          "mode": "arrow",
+          "to": "ai",
+          "text": "Qwen returns architecture documentation with Mermaid C4 diagrams.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "model",
+          "num": 19
+        },
+        {
+          "mode": "arrow",
+          "to": "agent",
+          "text": "Deliver generated documentation to doc-gen-agent.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "from": "ai",
+          "num": 20
+        },
+        {
+          "mode": "arrow",
+          "from": "agent",
+          "to": "guardrails",
+          "text": "Check generated documentation with NeMo Guardrails before releasing it to the user.",
+          "color": "#58a6ff",
+          "num": 21
+        },
+        {
+          "mode": "lightup",
+          "target": "guardrails",
+          "text": "Generated documentation passes the output policy checks.",
+          "badge": "OK",
+          "errColor": "#3fb950"
+        },
+        {
+          "mode": "arrow",
+          "from": "guardrails",
+          "to": "agent",
+          "text": "Approve the checked documentation for release.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "num": 23
+        },
+        {
+          "mode": "arrow",
+          "from": "agent",
+          "to": "gradio",
+          "text": "Stream the approved architecture documentation to the Gradio UI.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "num": 24
+        },
+        {
+          "mode": "arrow",
+          "from": "gradio",
+          "to": "user",
+          "text": "Display the result to the user.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "num": 25
+        }
+      ]
+    }
+  },
+  "flowOrder": [
+    "basic",
+    "tooling-blocked",
+    "tooling-allowed",
+    "ai-blocked",
+    "ai-allowed",
+    "guardrails-blocked",
+    "guardrails-allowed"
+  ],
+  "defaultFlow": "basic",
+  "legend": [
+    {
+      "label": "Request",
+      "color": "#58a6ff"
+    },
+    {
+      "label": "Allowed / response",
+      "color": "#3fb950"
+    },
+    {
+      "label": "Blocked",
+      "color": "#f85149"
+    },
+    {
+      "label": "Knowledge / guardrails",
+      "color": "#d2a8ff"
+    }
+  ]
+};
+const viz = new FlowStory(document.getElementById('fs-canvas'), {
+  stepsContainer: document.getElementById('fs-steps-container'),
+  inspectorTitle: document.getElementById('fs-inspector-title'),
+  inspectorContent: document.getElementById('fs-inspector-content'),
+  overlay: document.getElementById('fs-overlay'),
+  overlayCard: document.getElementById('fs-overlay-card'),
+  overlayTitle: document.getElementById('fs-overlay-title'),
+  overlayDesc: document.getElementById('fs-overlay-desc'),
+  overlayDetails: document.getElementById('fs-overlay-details'),
+  overlayAccent: document.getElementById('fs-overlay-accent'),
+  overlayClose: document.getElementById('fs-overlay-close'),
+  overlayResume: document.getElementById('fs-overlay-resume'),
+  highlightBox: document.getElementById('fs-highlight-box'),
+  brand: document.getElementById('fs-brand'),
+  title: document.getElementById('fs-title'),
+  legend: document.getElementById('fs-legend'),
+  flowSelect: document.getElementById('fs-flow-select'),
+  playBtn: document.getElementById('fs-play'),
+  speedBtn: document.getElementById('fs-speed'),
+  loopBtn: document.getElementById('fs-loop'),
+  resetBtn: document.getElementById('fs-reset'),
+  themeBtn: document.getElementById('fs-theme'),
+});
+
+window.__flowstory = viz;
+
+try {
+  await viz.load(diagram);
+
+  // Derive the visible nodes from activeFlow so manual selection, replay,
+  // and automatic loop transitions all use the same visibility rules.
+  const hiddenNodesByFlow = {
+    basic: ['mcp', 'ai', 'guardrails'],
+    'tooling-blocked': ['ai', 'guardrails'],
+    'tooling-allowed': ['ai', 'guardrails'],
+    'ai-blocked': ['guardrails'],
+    'ai-allowed': ['guardrails'],
+    'guardrails-blocked': [],
+    'guardrails-allowed': [],
+  };
+  const allNodes = viz.state.nodes;
+  const nodesByFlow = Object.fromEntries(diagram.flowOrder.map(flow => [
+    flow,
+    Object.fromEntries(Object.entries(allNodes).filter(
+      ([id]) => !hiddenNodesByFlow[flow].includes(id)
+    )),
+  ]));
+  Object.defineProperty(viz.state, 'nodes', {
+    configurable: true,
+    get() { return nodesByFlow[this.activeFlow] ?? allNodes; },
+  });
+
+  // Auto-play with loop on page load
+  viz.state.loopMode = true;
+  const loopBtn = document.getElementById('fs-loop');
+  if (loopBtn) {
+    loopBtn.textContent = '⟳ Loop ON';
+    loopBtn.style.borderColor = '#3fb950';
+    loopBtn.style.color = '#3fb950';
+  }
+  viz.play();
+} catch (e) {
+  console.error('FlowStory load error:', e);
+  const error = document.createElement('pre');
+  error.style.cssText = 'padding:40px;color:#f85149;white-space:pre-wrap';
+  error.textContent = 'FlowStory could not load. Check internet access to noyitz.github.io.\n' + e.message;
+  document.body.replaceChildren(error);
+}
+</script>
+</body>
+</html>
