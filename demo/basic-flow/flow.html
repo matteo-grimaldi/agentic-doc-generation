@@ -11,7 +11,8 @@
 .fs-flow-bar { position: fixed; top: 0; left: 0; right: 0; z-index: 220; background: var(--fs-bg-surface); justify-content: center; padding: 10px 65px; }
 .fs-flow-bar select { flex: 0 1 260px; }
 .fs-title { top: 68px; }
-.fs-theme-toggle { top: 68px; }
+.fs-flow-bar .fs-theme-toggle { position: static; width: auto; height: auto; }
+#fs-canvas { position: fixed; top: 112px; left: 0; }
 .fs-panel { top: 110px; height: auto; max-height: calc(100vh - 120px); overflow: visible; border: 1px solid var(--fs-border); border-radius: 8px 0 0 8px; }
 .fs-panel summary { padding: 13px 16px; font-weight: 700; cursor: pointer; }
 .fs-panel[open] { display: flex; }
@@ -25,7 +26,7 @@
 </head>
 <body>
 
-<button class="fs-theme-toggle" aria-label="Toggle color theme" id="fs-theme">&#9790;</button>
+
 
 <div class="fs-brand" id="fs-brand"></div>
 <div class="fs-title" id="fs-title"></div>
@@ -36,6 +37,7 @@
     <button id="fs-speed">1x</button>
     <button id="fs-loop" style="border-color:#79c0ff;color:#79c0ff">&#8635; Loop</button>
     <button class="fs-reset" id="fs-reset">Reset</button>
+    <button class="fs-theme-toggle" aria-label="Toggle color theme" id="fs-theme">&#9790;</button>
   </div>
 <details class="fs-panel" open>
   <summary>Flow Steps <span style="font-weight:400;font-size:11px;color:var(--fs-text-dim)">· click to expand or collapse</span></summary>
@@ -1301,6 +1303,16 @@ try {
 
   // FlowStory reserves panelWidth on its canvas; resize it when the panel
   // collapses so the graph can use the recovered horizontal space.
+  // Reserve the heading area above the canvas on every resize.
+  const engine = viz._engine;
+  engine.resize = function () {
+    this.W = this.canvas.width = Math.max(1, innerWidth - this.panelWidth);
+    this.H = this.canvas.height = Math.max(1, innerHeight - 112);
+    this._sc = Math.min(this.W / this.logicalWidth, this.H / this.logicalHeight) * 0.98;
+    this._ox = (this.W - this.logicalWidth * this._sc) / 2;
+    this._oy = (this.H - this.logicalHeight * this._sc) * 0.04;
+    this.draw();
+  };
   const stepsPanel = document.querySelector('.fs-panel');
   const syncPanelWidth = () => {
     const panelWidth = stepsPanel.open ? 380 : 44;
