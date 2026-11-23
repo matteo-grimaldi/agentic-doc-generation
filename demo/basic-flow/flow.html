@@ -60,13 +60,13 @@ const diagram = {
     "title": "Doc generation · access & guardrails"
   },
   "canvas": {
-    "width": 1540,
-    "height": 760
+    "width": 1100,
+    "height": 1250
   },
   "nodes": {
     "knowledge": {
-      "x": 365,
-      "y": 110,
+      "x": 115,
+      "y": 315,
       "w": 215,
       "h": 72,
       "label": "Knowledge.md",
@@ -75,9 +75,9 @@ const diagram = {
       "fontSize": 17
     },
     "agent": {
-      "x": 365,
-      "y": 335,
-      "w": 215,
+      "x": 440,
+      "y": 315,
+      "w": 220,
       "h": 72,
       "label": "doc-gen-agent",
       "sublabel": "Agent + OGX sidecar",
@@ -85,8 +85,8 @@ const diagram = {
       "fontSize": 17
     },
     "mcp": {
-      "x": 675,
-      "y": 210,
+      "x": 125,
+      "y": 475,
       "w": 220,
       "h": 72,
       "label": "MCP Gateway",
@@ -95,9 +95,9 @@ const diagram = {
       "fontSize": 17
     },
     "github_mcp": {
-      "x": 985,
-      "y": 210,
-      "w": 215,
+      "x": 125,
+      "y": 605,
+      "w": 220,
       "h": 72,
       "label": "GitHub MCP",
       "sublabel": "Repository browsing tools",
@@ -105,9 +105,9 @@ const diagram = {
       "fontSize": 17
     },
     "github": {
-      "x": 1285,
-      "y": 210,
-      "w": 210,
+      "x": 125,
+      "y": 750,
+      "w": 220,
       "h": 72,
       "label": "GitHub",
       "sublabel": "Java source repository",
@@ -115,8 +115,8 @@ const diagram = {
       "fontSize": 17
     },
     "guardrails": {
-      "x": 620,
-      "y": 485,
+      "x": 730,
+      "y": 475,
       "w": 220,
       "h": 72,
       "label": "NeMo Guardrails",
@@ -125,8 +125,8 @@ const diagram = {
       "fontSize": 17
     },
     "ai": {
-      "x": 875,
-      "y": 485,
+      "x": 730,
+      "y": 605,
       "w": 220,
       "h": 72,
       "label": "AI Gateway",
@@ -135,9 +135,9 @@ const diagram = {
       "fontSize": 17
     },
     "model": {
-      "x": 1130,
-      "y": 485,
-      "w": 365,
+      "x": 665,
+      "y": 750,
+      "w": 350,
       "h": 72,
       "label": "External OpenShift AI cluster",
       "sublabel": "MaaS · Qwen external model",
@@ -145,9 +145,9 @@ const diagram = {
       "fontSize": 17
     },
     "user": {
-      "x": 25,
-      "y": 180,
-      "w": 230,
+      "x": 440,
+      "y": 75,
+      "w": 220,
       "h": 72,
       "label": "User",
       "type": "icon",
@@ -155,9 +155,9 @@ const diagram = {
       "fontSize": 17
     },
     "gradio": {
-      "x": 25,
-      "y": 335,
-      "w": 230,
+      "x": 440,
+      "y": 190,
+      "w": 220,
       "h": 72,
       "label": "Gradio UI",
       "sublabel": "Repository URL · chat",
@@ -247,56 +247,60 @@ const diagram = {
           "to": "model",
           "text": "Send the user request and documentation guidance to Qwen; ask which repository tools are needed. OGX connects directly to external MaaS.",
           "color": "#58a6ff",
-          "fromBottom": true,
-          "toBottom": true,
+          "from": "agent",
+          "num": 5,
           "waypoints": [
             {
-              "x": 472,
-              "y": 640
+              "x": 1050,
+              "y": 351
             },
             {
-              "x": 1312,
-              "y": 640
+              "x": 1050,
+              "y": 786
             }
-          ],
-          "from": "agent",
-          "num": 5
+          ]
         },
         {
           "mode": "arrow",
           "to": "agent",
           "text": "Qwen responds successfully with repository tool calls; model access is confirmed.",
           "color": "#3fb950",
-          "fromTop": true,
-          "toRight": true,
+          "from": "model",
+          "num": 6,
           "waypoints": [
             {
-              "x": 1312,
-              "y": 371
+              "x": 610,
+              "y": 786
+            },
+            {
+              "x": 610,
+              "y": 420
             }
-          ],
-          "from": "model",
-          "num": 6
+          ]
         },
         {
           "mode": "arrow",
           "to": "github_mcp",
           "text": "Call GitHub MCP directly.",
           "color": "#58a6ff",
+          "from": "agent",
+          "num": 7,
           "waypoints": [
             {
-              "x": 610,
-              "y": 315
+              "x": 550,
+              "y": 435
             },
             {
-              "x": 1090,
-              "y": 315
+              "x": 400,
+              "y": 435
+            },
+            {
+              "x": 400,
+              "y": 641
             }
           ],
-          "fromRight": true,
-          "toBottom": true,
-          "from": "agent",
-          "num": 7
+          "fromBottom": true,
+          "toRight": true
         },
         {
           "mode": "arrow",
@@ -311,7 +315,6 @@ const diagram = {
           "to": "github_mcp",
           "text": "Return repository evidence.",
           "color": "#3fb950",
-          "yOff": 17,
           "from": "github",
           "num": 9
         },
@@ -320,56 +323,60 @@ const diagram = {
           "to": "agent",
           "text": "Return repository evidence directly.",
           "color": "#3fb950",
+          "from": "github_mcp",
+          "num": 10,
           "waypoints": [
             {
-              "x": 1090,
-              "y": 435
+              "x": 370,
+              "y": 641
             },
             {
-              "x": 610,
-              "y": 435
+              "x": 370,
+              "y": 455
+            },
+            {
+              "x": 550,
+              "y": 455
             }
           ],
-          "fromBottom": true,
-          "toRight": true,
-          "from": "github_mcp",
-          "num": 10
+          "fromRight": true,
+          "toBottom": true
         },
         {
           "mode": "arrow",
           "to": "model",
           "text": "Send retrieved repository evidence and knowledge to Qwen to generate architecture documentation. OGX connects directly to external MaaS.",
           "color": "#58a6ff",
-          "fromBottom": true,
-          "toBottom": true,
+          "from": "agent",
+          "num": 11,
           "waypoints": [
             {
-              "x": 472,
-              "y": 640
+              "x": 1050,
+              "y": 351
             },
             {
-              "x": 1312,
-              "y": 640
+              "x": 1050,
+              "y": 786
             }
-          ],
-          "from": "agent",
-          "num": 11
+          ]
         },
         {
           "mode": "arrow",
           "to": "agent",
           "text": "Qwen returns architecture documentation with Mermaid C4 diagrams.",
           "color": "#3fb950",
-          "fromTop": true,
-          "toRight": true,
+          "from": "model",
+          "num": 12,
           "waypoints": [
             {
-              "x": 1312,
-              "y": 371
+              "x": 610,
+              "y": 786
+            },
+            {
+              "x": 610,
+              "y": 420
             }
-          ],
-          "from": "model",
-          "num": 12
+          ]
         },
         {
           "mode": "arrow",
@@ -377,7 +384,6 @@ const diagram = {
           "to": "gradio",
           "text": "Stream the generated architecture documentation to the Gradio UI.",
           "color": "#3fb950",
-          "yOff": 17,
           "num": 13
         },
         {
@@ -386,7 +392,6 @@ const diagram = {
           "to": "user",
           "text": "Display the result to the user.",
           "color": "#3fb950",
-          "yOff": 17,
           "num": 14
         }
       ]
@@ -423,36 +428,36 @@ const diagram = {
           "to": "model",
           "text": "Send the user request and documentation guidance to Qwen; ask which repository tools are needed. OGX connects directly to external MaaS.",
           "color": "#58a6ff",
-          "fromBottom": true,
-          "toBottom": true,
+          "from": "agent",
+          "num": 4,
           "waypoints": [
             {
-              "x": 472,
-              "y": 640
+              "x": 1050,
+              "y": 351
             },
             {
-              "x": 1312,
-              "y": 640
+              "x": 1050,
+              "y": 786
             }
-          ],
-          "from": "agent",
-          "num": 4
+          ]
         },
         {
           "mode": "arrow",
           "to": "agent",
           "text": "Qwen responds successfully with repository tool calls; model access is confirmed.",
           "color": "#3fb950",
-          "fromTop": true,
-          "toRight": true,
+          "from": "model",
+          "num": 5,
           "waypoints": [
             {
-              "x": 1312,
-              "y": 371
+              "x": 610,
+              "y": 786
+            },
+            {
+              "x": 610,
+              "y": 420
             }
-          ],
-          "from": "model",
-          "num": 5
+          ]
         },
         {
           "mode": "arrow",
@@ -474,7 +479,6 @@ const diagram = {
           "to": "agent",
           "text": "Return access denied; GitHub MCP and GitHub are never contacted.",
           "color": "#f85149",
-          "yOff": 17,
           "from": "mcp",
           "num": 8
         },
@@ -484,7 +488,6 @@ const diagram = {
           "to": "gradio",
           "text": "Show the tool-access denial. Repository evidence was not retrieved.",
           "color": "#3fb950",
-          "yOff": 17,
           "num": 9
         },
         {
@@ -493,7 +496,6 @@ const diagram = {
           "to": "user",
           "text": "Display the result to the user.",
           "color": "#3fb950",
-          "yOff": 17,
           "num": 10
         }
       ]
@@ -530,36 +532,36 @@ const diagram = {
           "to": "model",
           "text": "Send the user request and documentation guidance to Qwen; ask which repository tools are needed. OGX connects directly to external MaaS.",
           "color": "#58a6ff",
-          "fromBottom": true,
-          "toBottom": true,
+          "from": "agent",
+          "num": 4,
           "waypoints": [
             {
-              "x": 472,
-              "y": 640
+              "x": 1050,
+              "y": 351
             },
             {
-              "x": 1312,
-              "y": 640
+              "x": 1050,
+              "y": 786
             }
-          ],
-          "from": "agent",
-          "num": 4
+          ]
         },
         {
           "mode": "arrow",
           "to": "agent",
           "text": "Qwen responds successfully with repository tool calls; model access is confirmed.",
           "color": "#3fb950",
-          "fromTop": true,
-          "toRight": true,
+          "from": "model",
+          "num": 5,
           "waypoints": [
             {
-              "x": 1312,
-              "y": 371
+              "x": 610,
+              "y": 786
+            },
+            {
+              "x": 610,
+              "y": 420
             }
-          ],
-          "from": "model",
-          "num": 5
+          ]
         },
         {
           "mode": "arrow",
@@ -597,7 +599,6 @@ const diagram = {
           "to": "github_mcp",
           "text": "Return repository evidence.",
           "color": "#3fb950",
-          "yOff": 17,
           "from": "github",
           "num": 10
         },
@@ -606,7 +607,6 @@ const diagram = {
           "to": "mcp",
           "text": "Return the tool result through MCP Gateway.",
           "color": "#3fb950",
-          "yOff": 17,
           "from": "github_mcp",
           "num": 11
         },
@@ -615,7 +615,6 @@ const diagram = {
           "to": "agent",
           "text": "Deliver repository evidence to the agent.",
           "color": "#3fb950",
-          "yOff": 17,
           "from": "mcp",
           "num": 12
         },
@@ -624,36 +623,36 @@ const diagram = {
           "to": "model",
           "text": "Send retrieved repository evidence and knowledge to Qwen to generate architecture documentation. OGX connects directly to external MaaS.",
           "color": "#58a6ff",
-          "fromBottom": true,
-          "toBottom": true,
+          "from": "agent",
+          "num": 13,
           "waypoints": [
             {
-              "x": 472,
-              "y": 640
+              "x": 1050,
+              "y": 351
             },
             {
-              "x": 1312,
-              "y": 640
+              "x": 1050,
+              "y": 786
             }
-          ],
-          "from": "agent",
-          "num": 13
+          ]
         },
         {
           "mode": "arrow",
           "to": "agent",
           "text": "Qwen returns architecture documentation with Mermaid C4 diagrams.",
           "color": "#3fb950",
-          "fromTop": true,
-          "toRight": true,
+          "from": "model",
+          "num": 14,
           "waypoints": [
             {
-              "x": 1312,
-              "y": 371
+              "x": 610,
+              "y": 786
+            },
+            {
+              "x": 610,
+              "y": 420
             }
-          ],
-          "from": "model",
-          "num": 14
+          ]
         },
         {
           "mode": "arrow",
@@ -661,7 +660,6 @@ const diagram = {
           "to": "gradio",
           "text": "Stream the generated architecture documentation to the Gradio UI.",
           "color": "#3fb950",
-          "yOff": 17,
           "num": 15
         },
         {
@@ -670,7 +668,6 @@ const diagram = {
           "to": "user",
           "text": "Display the result to the user.",
           "color": "#3fb950",
-          "yOff": 17,
           "num": 16
         }
       ]
@@ -722,7 +719,6 @@ const diagram = {
           "to": "agent",
           "text": "Return model access denied; no model generation occurs.",
           "color": "#f85149",
-          "yOff": 17,
           "from": "ai",
           "num": 6
         },
@@ -732,7 +728,6 @@ const diagram = {
           "to": "gradio",
           "text": "Show the model-access denial. No GitHub tool call was attempted.",
           "color": "#3fb950",
-          "yOff": 17,
           "num": 7
         },
         {
@@ -741,7 +736,6 @@ const diagram = {
           "to": "user",
           "text": "Display the result to the user.",
           "color": "#3fb950",
-          "yOff": 17,
           "num": 8
         }
       ]
@@ -801,7 +795,6 @@ const diagram = {
           "to": "ai",
           "text": "Qwen responds successfully with repository tool calls; model access is confirmed.",
           "color": "#3fb950",
-          "yOff": 17,
           "from": "model",
           "num": 7
         },
@@ -810,7 +803,6 @@ const diagram = {
           "to": "agent",
           "text": "Deliver the model’s tool-call request to doc-gen-agent.",
           "color": "#3fb950",
-          "yOff": 17,
           "from": "ai",
           "num": 8
         },
@@ -850,7 +842,6 @@ const diagram = {
           "to": "github_mcp",
           "text": "Return repository evidence.",
           "color": "#3fb950",
-          "yOff": 17,
           "from": "github",
           "num": 13
         },
@@ -859,7 +850,6 @@ const diagram = {
           "to": "mcp",
           "text": "Return the tool result through MCP Gateway.",
           "color": "#3fb950",
-          "yOff": 17,
           "from": "github_mcp",
           "num": 14
         },
@@ -868,7 +858,6 @@ const diagram = {
           "to": "agent",
           "text": "Deliver repository evidence to the agent.",
           "color": "#3fb950",
-          "yOff": 17,
           "from": "mcp",
           "num": 15
         },
@@ -900,7 +889,6 @@ const diagram = {
           "to": "ai",
           "text": "Qwen returns architecture documentation with Mermaid C4 diagrams.",
           "color": "#3fb950",
-          "yOff": 17,
           "from": "model",
           "num": 19
         },
@@ -909,7 +897,6 @@ const diagram = {
           "to": "agent",
           "text": "Deliver generated documentation to doc-gen-agent.",
           "color": "#3fb950",
-          "yOff": 17,
           "from": "ai",
           "num": 20
         },
@@ -919,7 +906,6 @@ const diagram = {
           "to": "gradio",
           "text": "Stream the generated architecture documentation to the Gradio UI.",
           "color": "#3fb950",
-          "yOff": 17,
           "num": 21
         },
         {
@@ -928,7 +914,6 @@ const diagram = {
           "to": "user",
           "text": "Display the result to the user.",
           "color": "#3fb950",
-          "yOff": 17,
           "num": 22
         }
       ]
@@ -981,7 +966,6 @@ const diagram = {
           "to": "agent",
           "text": "Return the input-policy denial. Stop before any model or GitHub tool access.",
           "color": "#f85149",
-          "yOff": 17,
           "num": 6
         },
         {
@@ -990,7 +974,6 @@ const diagram = {
           "to": "gradio",
           "text": "Show the input guardrails denial. No model or GitHub tool was called.",
           "color": "#f85149",
-          "yOff": 17,
           "num": 7
         },
         {
@@ -999,7 +982,6 @@ const diagram = {
           "to": "user",
           "text": "Display the denial to the user.",
           "color": "#f85149",
-          "yOff": 17,
           "num": 8
         }
       ]
@@ -1049,19 +1031,10 @@ const diagram = {
         {
           "mode": "arrow",
           "from": "guardrails",
-          "to": "agent",
-          "text": "Allow doc-gen-agent to invoke AI Gateway.",
-          "color": "#3fb950",
-          "yOff": 17,
-          "num": 6
-        },
-        {
-          "mode": "arrow",
           "to": "ai",
-          "text": "Send the user request and documentation guidance to Qwen; ask which repository tools are needed. OGX uses the AI Gateway and MaaS API key.",
+          "text": "The approved request continues through NeMo Guardrails to AI Gateway.",
           "color": "#58a6ff",
-          "from": "agent",
-          "num": 7
+          "num": 6
         },
         {
           "mode": "lightup",
@@ -1076,24 +1049,30 @@ const diagram = {
           "text": "AI Gateway forwards the authorized request to external OpenShift AI MaaS.",
           "color": "#58a6ff",
           "from": "ai",
-          "num": 9
+          "num": 8
         },
         {
           "mode": "arrow",
           "to": "ai",
           "text": "Qwen responds successfully with repository tool calls; model access is confirmed.",
           "color": "#3fb950",
-          "yOff": 17,
           "from": "model",
+          "num": 9
+        },
+        {
+          "mode": "arrow",
+          "to": "guardrails",
+          "text": "AI Gateway returns the model response through NeMo Guardrails.",
+          "color": "#3fb950",
+          "from": "ai",
           "num": 10
         },
         {
           "mode": "arrow",
+          "from": "guardrails",
           "to": "agent",
-          "text": "Deliver the model’s tool-call request to doc-gen-agent.",
+          "text": "NeMo Guardrails passes the model response back to doc-gen-agent.",
           "color": "#3fb950",
-          "yOff": 17,
-          "from": "ai",
           "num": 11
         },
         {
@@ -1132,7 +1111,6 @@ const diagram = {
           "to": "github_mcp",
           "text": "Return repository evidence.",
           "color": "#3fb950",
-          "yOff": 17,
           "from": "github",
           "num": 16
         },
@@ -1141,7 +1119,6 @@ const diagram = {
           "to": "mcp",
           "text": "Return the tool result through MCP Gateway.",
           "color": "#3fb950",
-          "yOff": 17,
           "from": "github_mcp",
           "num": 17
         },
@@ -1150,17 +1127,24 @@ const diagram = {
           "to": "agent",
           "text": "Deliver repository evidence to the agent.",
           "color": "#3fb950",
-          "yOff": 17,
           "from": "mcp",
           "num": 18
         },
         {
           "mode": "arrow",
-          "to": "ai",
-          "text": "Send retrieved repository evidence and knowledge to Qwen to generate architecture documentation. OGX uses the AI Gateway and MaaS API key.",
+          "to": "guardrails",
+          "text": "Send repository evidence and documentation guidance through NeMo Guardrails for the next model request.",
           "color": "#58a6ff",
           "from": "agent",
           "num": 19
+        },
+        {
+          "mode": "arrow",
+          "from": "guardrails",
+          "to": "ai",
+          "text": "Forward the approved model request to AI Gateway.",
+          "color": "#58a6ff",
+          "num": 20
         },
         {
           "mode": "lightup",
@@ -1175,25 +1159,31 @@ const diagram = {
           "text": "AI Gateway forwards the authorized request to external OpenShift AI MaaS.",
           "color": "#58a6ff",
           "from": "ai",
-          "num": 21
+          "num": 22
         },
         {
           "mode": "arrow",
           "to": "ai",
           "text": "Qwen returns architecture documentation with Mermaid C4 diagrams.",
           "color": "#3fb950",
-          "yOff": 17,
           "from": "model",
-          "num": 22
+          "num": 23
         },
         {
           "mode": "arrow",
-          "to": "agent",
-          "text": "Deliver generated documentation to doc-gen-agent.",
+          "to": "guardrails",
+          "text": "AI Gateway returns the model response through NeMo Guardrails.",
           "color": "#3fb950",
-          "yOff": 17,
           "from": "ai",
-          "num": 23
+          "num": 24
+        },
+        {
+          "mode": "arrow",
+          "from": "guardrails",
+          "to": "agent",
+          "text": "NeMo Guardrails passes the model response back to doc-gen-agent.",
+          "color": "#3fb950",
+          "num": 25
         },
         {
           "mode": "arrow",
@@ -1201,8 +1191,7 @@ const diagram = {
           "to": "gradio",
           "text": "Stream the generated architecture documentation to the Gradio UI.",
           "color": "#3fb950",
-          "yOff": 17,
-          "num": 24
+          "num": 26
         },
         {
           "mode": "arrow",
@@ -1210,8 +1199,7 @@ const diagram = {
           "to": "user",
           "text": "Display the result to the user.",
           "color": "#3fb950",
-          "yOff": 17,
-          "num": 25
+          "num": 27
         }
       ]
     }
