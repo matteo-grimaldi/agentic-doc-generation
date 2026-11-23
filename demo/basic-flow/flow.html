@@ -29,7 +29,7 @@
     <div class="fs-steps-title">Flow Steps <span style="font-weight:400;font-size:11px;color:var(--fs-text-dim)">· click to jump</span></div>
     <div id="fs-steps-container"></div>
   </div>
-  <p class="scenario-note">Seven illustrative scenarios. Basic shows direct access; the deployed architecture uses both gateways. Every scenario starts with User → Gradio UI → doc-gen-agent. Model access precedes tool access; guardrail scenarios check the generated output. The agent includes OGX. Click a component for details.</p>
+  <p class="scenario-note">Seven illustrative scenarios. Basic shows direct access; the deployed architecture uses both gateways. Every scenario starts with User → Gradio UI → doc-gen-agent. Model access precedes tool access; guardrail scenarios check input before model access. The agent includes OGX. Click a component for details.</p>
   <div class="fs-inspector" id="fs-inspector">
     <div class="fs-inspector-title" id="fs-inspector-title" style="color:var(--fs-accent)">Request</div>
     <div id="fs-inspector-content"></div>
@@ -962,156 +962,16 @@ const diagram = {
         },
         {
           "mode": "arrow",
-          "to": "ai",
-          "text": "Send the user request and documentation guidance to Qwen; ask which repository tools are needed. OGX uses the AI Gateway and MaaS API key.",
-          "color": "#58a6ff",
           "from": "agent",
+          "to": "guardrails",
+          "text": "Check the user input with NeMo Guardrails before the first AI Gateway invocation.",
+          "color": "#58a6ff",
           "num": 4
         },
         {
           "mode": "lightup",
-          "target": "ai",
-          "text": "MaaS authentication and model access policy allow the request.",
-          "badge": "OK",
-          "errColor": "#3fb950"
-        },
-        {
-          "mode": "arrow",
-          "to": "model",
-          "text": "AI Gateway forwards the authorized request to external OpenShift AI MaaS.",
-          "color": "#58a6ff",
-          "from": "ai",
-          "num": 6
-        },
-        {
-          "mode": "arrow",
-          "to": "ai",
-          "text": "Qwen responds successfully with repository tool calls; model access is confirmed.",
-          "color": "#3fb950",
-          "yOff": 17,
-          "from": "model",
-          "num": 7
-        },
-        {
-          "mode": "arrow",
-          "to": "agent",
-          "text": "Deliver the model’s tool-call request to doc-gen-agent.",
-          "color": "#3fb950",
-          "yOff": 17,
-          "from": "ai",
-          "num": 8
-        },
-        {
-          "mode": "arrow",
-          "to": "mcp",
-          "text": "Request repository tools with a projected service-account token and github-tools virtual server.",
-          "color": "#58a6ff",
-          "from": "agent",
-          "num": 9
-        },
-        {
-          "mode": "lightup",
-          "target": "mcp",
-          "text": "MCP Gateway authorizes the agent to use github-tools.",
-          "badge": "OK",
-          "errColor": "#3fb950"
-        },
-        {
-          "mode": "arrow",
-          "to": "github_mcp",
-          "text": "Forward the authorized MCP tool call to GitHub MCP.",
-          "color": "#58a6ff",
-          "from": "mcp",
-          "num": 11
-        },
-        {
-          "mode": "arrow",
-          "to": "github",
-          "text": "Read repository metadata, file tree and selected Java source through the GitHub API.",
-          "color": "#58a6ff",
-          "from": "github_mcp",
-          "num": 12
-        },
-        {
-          "mode": "arrow",
-          "to": "github_mcp",
-          "text": "Return repository evidence.",
-          "color": "#3fb950",
-          "yOff": 17,
-          "from": "github",
-          "num": 13
-        },
-        {
-          "mode": "arrow",
-          "to": "mcp",
-          "text": "Return the tool result through MCP Gateway.",
-          "color": "#3fb950",
-          "yOff": 17,
-          "from": "github_mcp",
-          "num": 14
-        },
-        {
-          "mode": "arrow",
-          "to": "agent",
-          "text": "Deliver repository evidence to the agent.",
-          "color": "#3fb950",
-          "yOff": 17,
-          "from": "mcp",
-          "num": 15
-        },
-        {
-          "mode": "arrow",
-          "to": "ai",
-          "text": "Send retrieved repository evidence and knowledge to Qwen to generate architecture documentation. OGX uses the AI Gateway and MaaS API key.",
-          "color": "#58a6ff",
-          "from": "agent",
-          "num": 16
-        },
-        {
-          "mode": "lightup",
-          "target": "ai",
-          "text": "MaaS authentication and model access policy allow the request.",
-          "badge": "OK",
-          "errColor": "#3fb950"
-        },
-        {
-          "mode": "arrow",
-          "to": "model",
-          "text": "AI Gateway forwards the authorized request to external OpenShift AI MaaS.",
-          "color": "#58a6ff",
-          "from": "ai",
-          "num": 18
-        },
-        {
-          "mode": "arrow",
-          "to": "ai",
-          "text": "Qwen returns architecture documentation with Mermaid C4 diagrams.",
-          "color": "#3fb950",
-          "yOff": 17,
-          "from": "model",
-          "num": 19
-        },
-        {
-          "mode": "arrow",
-          "to": "agent",
-          "text": "Deliver generated documentation to doc-gen-agent.",
-          "color": "#3fb950",
-          "yOff": 17,
-          "from": "ai",
-          "num": 20
-        },
-        {
-          "mode": "arrow",
-          "from": "agent",
-          "to": "guardrails",
-          "text": "Check generated documentation with NeMo Guardrails before releasing it to the user.",
-          "color": "#58a6ff",
-          "num": 21
-        },
-        {
-          "mode": "lightup",
           "target": "guardrails",
-          "text": "Generated output contains a known secret format. The output policy denies release.",
+          "text": "Input contains a prompt-injection instruction or a known secret format. The input policy denies the request.",
           "badge": "DENY",
           "errColor": "#f85149"
         },
@@ -1119,28 +979,28 @@ const diagram = {
           "mode": "arrow",
           "from": "guardrails",
           "to": "agent",
-          "text": "Return the output-policy denial; withhold the generated document.",
+          "text": "Return the input-policy denial. Stop before any model or GitHub tool access.",
           "color": "#f85149",
           "yOff": 17,
-          "num": 23
+          "num": 6
         },
         {
           "mode": "arrow",
           "from": "agent",
           "to": "gradio",
-          "text": "Show a guardrails denial message without exposing the blocked document.",
-          "color": "#3fb950",
+          "text": "Show the input guardrails denial. No model or GitHub tool was called.",
+          "color": "#f85149",
           "yOff": 17,
-          "num": 24
+          "num": 7
         },
         {
           "mode": "arrow",
           "from": "gradio",
           "to": "user",
-          "text": "Display the result to the user.",
-          "color": "#3fb950",
+          "text": "Display the denial to the user.",
+          "color": "#f85149",
           "yOff": 17,
-          "num": 25
+          "num": 8
         }
       ]
     },
@@ -1173,11 +1033,35 @@ const diagram = {
         },
         {
           "mode": "arrow",
+          "from": "agent",
+          "to": "guardrails",
+          "text": "Check the user input with NeMo Guardrails before the first AI Gateway invocation.",
+          "color": "#58a6ff",
+          "num": 4
+        },
+        {
+          "mode": "lightup",
+          "target": "guardrails",
+          "text": "Input passes the policy checks.",
+          "badge": "OK",
+          "errColor": "#3fb950"
+        },
+        {
+          "mode": "arrow",
+          "from": "guardrails",
+          "to": "agent",
+          "text": "Allow doc-gen-agent to invoke AI Gateway.",
+          "color": "#3fb950",
+          "yOff": 17,
+          "num": 6
+        },
+        {
+          "mode": "arrow",
           "to": "ai",
           "text": "Send the user request and documentation guidance to Qwen; ask which repository tools are needed. OGX uses the AI Gateway and MaaS API key.",
           "color": "#58a6ff",
           "from": "agent",
-          "num": 4
+          "num": 7
         },
         {
           "mode": "lightup",
@@ -1192,7 +1076,7 @@ const diagram = {
           "text": "AI Gateway forwards the authorized request to external OpenShift AI MaaS.",
           "color": "#58a6ff",
           "from": "ai",
-          "num": 6
+          "num": 9
         },
         {
           "mode": "arrow",
@@ -1201,7 +1085,7 @@ const diagram = {
           "color": "#3fb950",
           "yOff": 17,
           "from": "model",
-          "num": 7
+          "num": 10
         },
         {
           "mode": "arrow",
@@ -1210,7 +1094,7 @@ const diagram = {
           "color": "#3fb950",
           "yOff": 17,
           "from": "ai",
-          "num": 8
+          "num": 11
         },
         {
           "mode": "arrow",
@@ -1218,7 +1102,7 @@ const diagram = {
           "text": "Request repository tools with a projected service-account token and github-tools virtual server.",
           "color": "#58a6ff",
           "from": "agent",
-          "num": 9
+          "num": 12
         },
         {
           "mode": "lightup",
@@ -1233,7 +1117,7 @@ const diagram = {
           "text": "Forward the authorized MCP tool call to GitHub MCP.",
           "color": "#58a6ff",
           "from": "mcp",
-          "num": 11
+          "num": 14
         },
         {
           "mode": "arrow",
@@ -1241,7 +1125,7 @@ const diagram = {
           "text": "Read repository metadata, file tree and selected Java source through the GitHub API.",
           "color": "#58a6ff",
           "from": "github_mcp",
-          "num": 12
+          "num": 15
         },
         {
           "mode": "arrow",
@@ -1250,7 +1134,7 @@ const diagram = {
           "color": "#3fb950",
           "yOff": 17,
           "from": "github",
-          "num": 13
+          "num": 16
         },
         {
           "mode": "arrow",
@@ -1259,7 +1143,7 @@ const diagram = {
           "color": "#3fb950",
           "yOff": 17,
           "from": "github_mcp",
-          "num": 14
+          "num": 17
         },
         {
           "mode": "arrow",
@@ -1268,7 +1152,7 @@ const diagram = {
           "color": "#3fb950",
           "yOff": 17,
           "from": "mcp",
-          "num": 15
+          "num": 18
         },
         {
           "mode": "arrow",
@@ -1276,7 +1160,7 @@ const diagram = {
           "text": "Send retrieved repository evidence and knowledge to Qwen to generate architecture documentation. OGX uses the AI Gateway and MaaS API key.",
           "color": "#58a6ff",
           "from": "agent",
-          "num": 16
+          "num": 19
         },
         {
           "mode": "lightup",
@@ -1291,7 +1175,7 @@ const diagram = {
           "text": "AI Gateway forwards the authorized request to external OpenShift AI MaaS.",
           "color": "#58a6ff",
           "from": "ai",
-          "num": 18
+          "num": 21
         },
         {
           "mode": "arrow",
@@ -1300,7 +1184,7 @@ const diagram = {
           "color": "#3fb950",
           "yOff": 17,
           "from": "model",
-          "num": 19
+          "num": 22
         },
         {
           "mode": "arrow",
@@ -1309,37 +1193,13 @@ const diagram = {
           "color": "#3fb950",
           "yOff": 17,
           "from": "ai",
-          "num": 20
-        },
-        {
-          "mode": "arrow",
-          "from": "agent",
-          "to": "guardrails",
-          "text": "Check generated documentation with NeMo Guardrails before releasing it to the user.",
-          "color": "#58a6ff",
-          "num": 21
-        },
-        {
-          "mode": "lightup",
-          "target": "guardrails",
-          "text": "Generated documentation passes the output policy checks.",
-          "badge": "OK",
-          "errColor": "#3fb950"
-        },
-        {
-          "mode": "arrow",
-          "from": "guardrails",
-          "to": "agent",
-          "text": "Approve the checked documentation for release.",
-          "color": "#3fb950",
-          "yOff": 17,
           "num": 23
         },
         {
           "mode": "arrow",
           "from": "agent",
           "to": "gradio",
-          "text": "Stream the approved architecture documentation to the Gradio UI.",
+          "text": "Stream the generated architecture documentation to the Gradio UI.",
           "color": "#3fb950",
           "yOff": 17,
           "num": 24
