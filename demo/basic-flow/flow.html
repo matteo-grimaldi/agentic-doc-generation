@@ -8,6 +8,19 @@
 <style>
 .scenario-note { margin: 14px 18px; color: var(--fs-text-dim, #8b949e); font: 12px/1.6 system-ui; }
 .fs-inspector { display: none; }
+.fs-flow-bar { position: fixed; top: 0; left: 0; right: 0; z-index: 220; background: var(--fs-bg-surface); justify-content: center; padding: 10px 65px; }
+.fs-flow-bar select { flex: 0 1 260px; }
+.fs-title { top: 68px; }
+.fs-theme-toggle { top: 68px; }
+.fs-panel { top: 110px; height: auto; max-height: calc(100vh - 120px); overflow: visible; border: 1px solid var(--fs-border); border-radius: 8px 0 0 8px; }
+.fs-panel summary { padding: 13px 16px; font-weight: 700; cursor: pointer; }
+.fs-panel[open] { display: flex; }
+.fs-panel:not([open]) { display: block; width: 44px; }
+.fs-panel:not([open]) summary { writing-mode: vertical-rl; padding: 14px 12px; white-space: nowrap; }
+.fs-panel:not([open]) summary span { display: none; }
+.fs-panel:not([open]) summary::marker { content: '◂ '; }
+.fs-steps { flex: initial; max-height: calc(100vh - 270px); overflow-y: auto; }
+
 </style>
 </head>
 <body>
@@ -17,16 +30,17 @@
 <div class="fs-brand" id="fs-brand"></div>
 <div class="fs-title" id="fs-title"></div>
 
-<div class="fs-panel">
-  <div class="fs-flow-bar">
+<div class="fs-flow-bar">
     <select aria-label="Scenario" id="fs-flow-select"></select>
     <button class="fs-start" id="fs-play">&#9654; Start</button>
     <button id="fs-speed">1x</button>
     <button id="fs-loop" style="border-color:#79c0ff;color:#79c0ff">&#8635; Loop</button>
     <button class="fs-reset" id="fs-reset">Reset</button>
   </div>
+<details class="fs-panel" open>
+  <summary>Flow Steps <span style="font-weight:400;font-size:11px;color:var(--fs-text-dim)">· click to expand or collapse</span></summary>
   <div class="fs-steps" id="fs-steps">
-    <div class="fs-steps-title">Flow Steps <span style="font-weight:400;font-size:11px;color:var(--fs-text-dim)">· click to jump</span></div>
+    <div class="fs-steps-title">Click a step to jump</div>
     <div id="fs-steps-container"></div>
   </div>
   <p class="scenario-note">Seven illustrative scenarios. Basic shows direct access; the deployed architecture uses both gateways. Every scenario starts with User → Gradio UI → doc-gen-agent. Model access precedes tool access; guardrail scenarios check input before model access. The agent includes OGX. Click a component for details.</p>
@@ -34,7 +48,7 @@
     <div class="fs-inspector-title" id="fs-inspector-title" style="color:var(--fs-accent)">Request</div>
     <div id="fs-inspector-content"></div>
   </div>
-</div>
+</details>
 
 <div id="fs-highlight-box" style="display:none;position:fixed;z-index:350;border-radius:10px;pointer-events:none"></div>
 <div id="fs-overlay" style="display:none;position:fixed;top:0;left:0;right:380px;bottom:0;z-index:300;background:rgba(0,0,0,0.6)">
@@ -61,12 +75,12 @@ const diagram = {
   },
   "canvas": {
     "width": 1100,
-    "height": 1250
+    "height": 1340
   },
   "nodes": {
     "knowledge": {
       "x": 115,
-      "y": 315,
+      "y": 405,
       "w": 215,
       "h": 72,
       "label": "Knowledge.md",
@@ -76,7 +90,7 @@ const diagram = {
     },
     "agent": {
       "x": 440,
-      "y": 315,
+      "y": 405,
       "w": 220,
       "h": 72,
       "label": "doc-gen-agent",
@@ -86,7 +100,7 @@ const diagram = {
     },
     "mcp": {
       "x": 125,
-      "y": 475,
+      "y": 565,
       "w": 220,
       "h": 72,
       "label": "MCP Gateway",
@@ -96,7 +110,7 @@ const diagram = {
     },
     "github_mcp": {
       "x": 125,
-      "y": 605,
+      "y": 695,
       "w": 220,
       "h": 72,
       "label": "GitHub MCP",
@@ -106,7 +120,7 @@ const diagram = {
     },
     "github": {
       "x": 125,
-      "y": 750,
+      "y": 840,
       "w": 220,
       "h": 72,
       "label": "GitHub",
@@ -116,7 +130,7 @@ const diagram = {
     },
     "guardrails": {
       "x": 730,
-      "y": 475,
+      "y": 565,
       "w": 220,
       "h": 72,
       "label": "NeMo Guardrails",
@@ -126,7 +140,7 @@ const diagram = {
     },
     "ai": {
       "x": 730,
-      "y": 605,
+      "y": 695,
       "w": 220,
       "h": 72,
       "label": "AI Gateway",
@@ -136,7 +150,7 @@ const diagram = {
     },
     "model": {
       "x": 665,
-      "y": 750,
+      "y": 840,
       "w": 350,
       "h": 72,
       "label": "External OpenShift AI cluster",
@@ -146,7 +160,7 @@ const diagram = {
     },
     "user": {
       "x": 440,
-      "y": 75,
+      "y": 165,
       "w": 220,
       "h": 72,
       "label": "User",
@@ -156,7 +170,7 @@ const diagram = {
     },
     "gradio": {
       "x": 440,
-      "y": 190,
+      "y": 280,
       "w": 220,
       "h": 72,
       "label": "Gradio UI",
@@ -252,11 +266,11 @@ const diagram = {
           "waypoints": [
             {
               "x": 1050,
-              "y": 351
+              "y": 441
             },
             {
               "x": 1050,
-              "y": 786
+              "y": 876
             }
           ]
         },
@@ -270,11 +284,11 @@ const diagram = {
           "waypoints": [
             {
               "x": 610,
-              "y": 786
+              "y": 876
             },
             {
               "x": 610,
-              "y": 420
+              "y": 510
             }
           ]
         },
@@ -288,15 +302,15 @@ const diagram = {
           "waypoints": [
             {
               "x": 550,
-              "y": 435
+              "y": 525
             },
             {
               "x": 400,
-              "y": 435
+              "y": 525
             },
             {
               "x": 400,
-              "y": 641
+              "y": 731
             }
           ],
           "fromBottom": true,
@@ -328,15 +342,15 @@ const diagram = {
           "waypoints": [
             {
               "x": 370,
-              "y": 641
+              "y": 731
             },
             {
               "x": 370,
-              "y": 455
+              "y": 545
             },
             {
               "x": 550,
-              "y": 455
+              "y": 545
             }
           ],
           "fromRight": true,
@@ -352,11 +366,11 @@ const diagram = {
           "waypoints": [
             {
               "x": 1050,
-              "y": 351
+              "y": 441
             },
             {
               "x": 1050,
-              "y": 786
+              "y": 876
             }
           ]
         },
@@ -370,11 +384,11 @@ const diagram = {
           "waypoints": [
             {
               "x": 610,
-              "y": 786
+              "y": 876
             },
             {
               "x": 610,
-              "y": 420
+              "y": 510
             }
           ]
         },
@@ -433,11 +447,11 @@ const diagram = {
           "waypoints": [
             {
               "x": 1050,
-              "y": 351
+              "y": 441
             },
             {
               "x": 1050,
-              "y": 786
+              "y": 876
             }
           ]
         },
@@ -451,11 +465,11 @@ const diagram = {
           "waypoints": [
             {
               "x": 610,
-              "y": 786
+              "y": 876
             },
             {
               "x": 610,
-              "y": 420
+              "y": 510
             }
           ]
         },
@@ -537,11 +551,11 @@ const diagram = {
           "waypoints": [
             {
               "x": 1050,
-              "y": 351
+              "y": 441
             },
             {
               "x": 1050,
-              "y": 786
+              "y": 876
             }
           ]
         },
@@ -555,11 +569,11 @@ const diagram = {
           "waypoints": [
             {
               "x": 610,
-              "y": 786
+              "y": 876
             },
             {
               "x": 610,
-              "y": 420
+              "y": 510
             }
           ]
         },
@@ -628,11 +642,11 @@ const diagram = {
           "waypoints": [
             {
               "x": 1050,
-              "y": 351
+              "y": 441
             },
             {
               "x": 1050,
-              "y": 786
+              "y": 876
             }
           ]
         },
@@ -646,11 +660,11 @@ const diagram = {
           "waypoints": [
             {
               "x": 610,
-              "y": 786
+              "y": 876
             },
             {
               "x": 610,
-              "y": 420
+              "y": 510
             }
           ]
         },
@@ -1284,6 +1298,20 @@ try {
     configurable: true,
     get() { return nodesByFlow[this.activeFlow] ?? allNodes; },
   });
+
+  // FlowStory reserves panelWidth on its canvas; resize it when the panel
+  // collapses so the graph can use the recovered horizontal space.
+  const stepsPanel = document.querySelector('.fs-panel');
+  const syncPanelWidth = () => {
+    const panelWidth = stepsPanel.open ? 380 : 44;
+    viz._engine.panelWidth = panelWidth;
+    document.getElementById('fs-overlay').style.right = panelWidth + 'px';
+    document.getElementById('fs-title').style.right = panelWidth + 'px';
+    viz._engine.resize();
+    viz._engine.draw();
+  };
+  stepsPanel.addEventListener('toggle', syncPanelWidth);
+  syncPanelWidth();
 
   // Auto-play with loop on page load
   viz.state.loopMode = true;
